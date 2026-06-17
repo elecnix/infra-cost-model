@@ -4,7 +4,7 @@ DAG-based infrastructure cost modeling: deriving resource consumption from highe
 
 ## Why
 
-Existing IaC cost tools (Infracost, terracost, OpenInfraQuote) treat usage as static overrides — you manually specify "1000 requests/month" for each resource. This breaks down when resource consumption is *derived* from traffic flowing through a dependency graph of services.
+Existing infrastructure-as-code cost tools (Infracost, terracost, OpenInfraQuote) treat usage as static overrides — you manually specify "1000 requests/month" for each resource. This breaks down when resource consumption is *derived* from traffic flowing through a dependency graph of services.
 
 This project specifies a model where usage flows through the graph: a frontend receiving 10k requests/sec propagates demand to downstream services based on call frequency and data dependencies. Cost is then computed from derived usage × pricing.
 
