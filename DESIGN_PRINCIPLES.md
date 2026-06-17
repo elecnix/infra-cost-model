@@ -1,6 +1,8 @@
 # Design Principles
 
 > **Terminology note:** This document uses the canonical terms defined in [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md). When in doubt about a term, refer there.
+>
+> **Numbering note:** Principles are numbered for reference. New principles are appended at the end; existing numbers are never reordered.
 
 ## 1. Usage is derived, not specified
 
@@ -185,6 +187,7 @@ api.calls("aws_api_gateway_rest_api.my_api", [
 
 Same mental model, three surfaces. Learn one, know all three.
 
+<<<<<<< HEAD
 ## 12. The engine is Python
 
 The cost engine — directed acyclic graph traversal, workload derivation, pricing, and sensitivity analysis — is implemented in Python. This follows from the other principles:
@@ -195,3 +198,22 @@ The cost engine — directed acyclic graph traversal, workload derivation, prici
 - **YAML is a first-class surface** (Principle 11). Python has the most mature handling (ruamel.yaml preserves comments and formatting).
 
 If the TypeScript surface later needs a standalone engine, it reimplements the same core logic. Both must pass the same test fixtures — this is a correctness contract, not a code-sharing contract.
+
+## 13. Pricing is queried, not hardcoded
+
+Cloud prices change monthly. Hard-coded prices in source code go stale. The pricing layer exposes a query interface — `catalog.query(vendor, service, region, usage_metric, usage_quantity)` — and the engine never knows or cares where the data comes from.
+
+A local SQLite cache stores prices for offline use and low-latency lookups. The cache is seeded from the Infracost Cloud Pricing API (3M+ prices, multi-cloud, validated, tiered) and falls back to raw cloud provider APIs (AWS Bulk API, Azure Retail Prices, GCP Billing Catalog) when Infracost auth is unavailable. Prices refresh weekly — cloud pricing changes monthly at most, so weekly freshness is sufficient.
+
+```mermaid
+graph TD
+    Engine[Cost Engine] --> Catalog[Pricing Catalog<br/>SQLite cache]
+    Catalog -->|primary| Infracost[Infracost API<br/>GraphQL, auth<br/>3M+ prices, validated]
+    Catalog -->|fallback| RawAPIs[Raw Cloud APIs<br/>AWS: no auth<br/>Azure: no auth<br/>GCP: API key]
+    Catalog -->|weekly| Refresh[Refresh Schedule]
+```
+
+The Infracost API is the primary source because it normalizes AWS, Azure, and GCP into a single GraphQL schema with consistent tiered pricing (`startUsageAmount`/`endUsageAmount`). Auth friction is minimal — one `infracost auth login` per developer — and the completeness gain (validated multi-cloud prices, tiered pricing, free tiers) is worth it. The raw cloud APIs exist as fallback for CI environments and offline use.
+
+A plugin architecture (separate gRPC service per cloud provider) is premature. The Infracost API already normalizes three cloud providers. Add a provider plugin system only when Infracost doesn't cover a needed provider.
+>>>>>>> 0e9f4e7 (Add Principle 9: Pricing is queried, not hardcoded)
