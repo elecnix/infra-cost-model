@@ -1,5 +1,7 @@
 # Design Principles
 
+> **Terminology note:** This document uses the canonical terms defined in [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md). When in doubt about a term, refer there.
+
 ## 1. Usage is derived, not specified
 
 Resource consumption flows from high-level parameters (traffic, frequency, payload size) through a dependency graph. Individual resource usage is never a free variable — it is computed from the graph topology and propagation rules.

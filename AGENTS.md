@@ -1,6 +1,6 @@
 # Agents
 
-This repository specifies a DAG-based infrastructure cost model. See [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md) for the foundational concepts and constraints that guide all work here.
+This repository specifies a DAG-based infrastructure cost model. See [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md) for the foundational concepts and constraints. See [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md) for the canonical glossary — use those terms consistently in all code, docs, and discussion.
 
 ## What to work on
 
