@@ -38,6 +38,17 @@
 | **Sensitivity analysis** | Identifying which parameters have the greatest effect on total cost | Cost sensitivity, parameter importance, critical path |
 | **Node type** | A category determining which usage metrics a node accepts and whether it can have outgoing edges (e.g., compute, storage, routing) | Resource category, resource type, kind |
 
+## Implementation
+
+| Term | Definition | Aliases to avoid |
+|------|-----------|-----------------|
+| **Cost engine** | The Python library that performs workload derivation, cost aggregation, and sensitivity analysis | calculator, estimator, computation layer |
+| **Cost model representation** | The JSON Schema document describing the directed acyclic graph, call rates, and per-node usage metrics | Cost Model IR, usage model, workflow definition |
+| **Resource representation** | The intermediate representation of what infrastructure exists, produced by parsing .tf files, Pulumi exports, or CDK synth | Resource IR, infrastructure representation, infrastructure-as-code output, resource definition |
+| **Surface** | A user-facing interface for declaring a cost model (YAML, TypeScript SDK, or Python SDK) | Interface, API, front-end, binding |
+| **Flat override** | A per-resource usage value specified directly without directed acyclic graph propagation; exists for migration and edge cases | Manual override, usage override, direct usage, static usage |
+| **Code generation** | The process of producing typed SDK classes from .tf files or Pulumi exports so that resource addresses and usage metrics are compile-time checked | Codegen, type generation |
+
 ## Relationships
 
 - A **Flow** starts at exactly one **Entry node** and traverses **Edges** weighted by **Call rates**
@@ -45,6 +56,7 @@
 - **Resource representation** and **Cost model representation** are separate inputs to the cost engine: `resource representation × cost model representation → derived usage × pricing = cost`
 - A **Node** belongs to exactly one **Node type**, which determines its valid **Usage metrics**
 - A **Leaf node** has no outgoing **Edges**; a **Compute node** or **Routing node** may have outgoing **Edges**
+- The **Cost engine** is implemented in **Python**; the **TypeScript surface** may reimplement the same core logic for browser or IDE use, but both must pass the same test fixtures
 
 ## Flagged ambiguities
 

@@ -187,3 +187,48 @@ api.calls("aws_api_gateway_rest_api.my_api", [
 ```
 
 Same mental model, three surfaces. Learn one, know all three.
+
+## 12. The engine is Python
+
+The cost engine — directed acyclic graph traversal, workload derivation, pricing multiplication, and sensitivity analysis — is implemented in Python. This is not arbitrary; it follows from the other principles:
+
+- **Sensitivity analysis requires data tooling** (Principle 7). Running 10,000 what-if scenarios, plotting cost curves, and exploring parameter spaces is native work in Python (pandas, numpy, matplotlib, Jupyter). No other language matches this.
+- **Three surfaces share a JSON Schema contract** (Principle 11). The Python engine reads the cost model representation. TypeScript and YAML surfaces produce it. The contract ensures correctness — all implementations must produce identical output for the same input, testable via shared test fixtures.
+- **The core computation is small** (~200 lines: topological sort, multiply by call rates, aggregate by node type). Reimplementing it in TypeScript for browser dashboards or VS Code extensions is straightforward because the logic is simple and the JSON Schema is the source of truth.
+- **YAML is a first-class surface** (Principle 11). Python has the most mature YAML handling (ruamel.yaml preserves comments and formatting).
+
+If the TypeScript surface later needs a standalone engine (for browser dashboards or offline VS Code extensions), it reimplements the same core logic from the JSON Schema contract. Both engines must pass the same test fixtures — this is a correctness contract, not a code-sharing contract.
+
+```
+                    ┌─────────────────────┐
+                    │   Cost Engine       │
+                    │   (Python)          │
+                    │   - directed acyclic│
+                    │     graph walk      │
+                    │   - workload        │
+                    │     derivation      │
+                    │   - pricing         │
+                    │   - sensitivity     │
+                    └────────┬────────────┘
+                             │ reads
+                    ┌────────▼─────────────┐
+                    │ Cost model            │
+                    │ representation        │
+                    │ (JSON Schema)         │
+                    └────────┬─────────────┘
+                             │ produced by
+              ┌──────────────┼──────────────┐
+              │              │              │
+     ┌────────▼───┐  ┌──────▼──────┐  ┌──▼──────────┐
+     │ YAML file   │  │ TS SDK      │  │ Python SDK   │
+     │             │  │ (types from │  │ (types from  │
+     │             │  │  .tf files) │  │  .tf files)  │
+     └─────────────┘  └─────────────┘  └──────────────┘
+              │              │              │
+              ▼              ▼              ▼
+     ┌─────────────────────────────────────────────┐
+     │          Sensitivity and Analysis           │
+     │          (Python: pandas, matplotlib,       │
+     │           Jupyter, what-if loops)          │
+     └─────────────────────────────────────────────┘
+```
