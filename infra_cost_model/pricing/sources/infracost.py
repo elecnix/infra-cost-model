@@ -143,6 +143,7 @@ class InfracostClient:
 def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
                          fallback: bool = False) -> tuple[int, str]:
     from infra_cost_model.pricing.cache import PricingCache
+    from .aws_pricing import aws_fallback_prices
     
     cache = PricingCache()
     
@@ -181,98 +182,13 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
 
 
 def _sync_fallback(vendor: str, services: list[str], cache) -> tuple[int, str]:
-    from infra_cost_model.pricing.cache import Price
-    now = datetime.now().isoformat()
+    from .aws_pricing import aws_fallback_prices
     
-    fallback_prices = {
-        "AWSLambda": [
-            Price(
-                vendor="aws", service="AWSLambda", region="us-east-1",
-                product_family="Serverless", attributes={},
-                usage_metric="Lambda-Request", unit="requests",
-                price_usd=0.0,
-                start_usage_amount=0, end_usage_amount=1_000_000,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-            Price(
-                vendor="aws", service="AWSLambda", region="us-east-1",
-                product_family="Serverless", attributes={},
-                usage_metric="Lambda-Request", unit="requests",
-                price_usd=0.20e-6,
-                start_usage_amount=1_000_000, end_usage_amount=None,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-            Price(
-                vendor="aws", service="AWSLambda", region="us-east-1",
-                product_family="Serverless", attributes={},
-                usage_metric="Lambda-GB-Second", unit="GB-s",
-                price_usd=0.0000166667,
-                start_usage_amount=0, end_usage_amount=6_000_000_000,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-        ],
-        "AmazonDynamoDB": [
-            Price(
-                vendor="aws", service="AmazonDynamoDB", region="us-east-1",
-                product_family="OnDemand", attributes={},
-                usage_metric="Dynamo-ReadRequest", unit="requests",
-                price_usd=1.25e-6,
-                start_usage_amount=0, end_usage_amount=None,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-            Price(
-                vendor="aws", service="AmazonDynamoDB", region="us-east-1",
-                product_family="OnDemand", attributes={},
-                usage_metric="Dynamo-WriteRequest", unit="requests",
-                price_usd=6.25e-6,
-                start_usage_amount=0, end_usage_amount=None,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-            Price(
-                vendor="aws", service="AmazonDynamoDB", region="us-east-1",
-                product_family="Storage", attributes={},
-                usage_metric="Dynamo-Storage", unit="GB-Mo",
-                price_usd=0.25,
-                start_usage_amount=0, end_usage_amount=None,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-        ],
-        "AmazonAPIGatewayHTTP": [
-            Price(
-                vendor="aws", service="AmazonAPIGatewayHTTP", region="us-east-1",
-                product_family="APIGateway", attributes={},
-                usage_metric="APIGateway-HTTP-Request", unit="requests",
-                price_usd=1.00e-6,
-                start_usage_amount=0, end_usage_amount=None,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-        ],
-        "AmazonBedrock": [
-            Price(
-                vendor="aws", service="AmazonBedrock", region="us-east-1",
-                product_family="LLM", attributes={},
-                usage_metric="Bedrock-Input-Token", unit="tokens",
-                price_usd=0.003 / 1000,
-                start_usage_amount=0, end_usage_amount=None,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-            Price(
-                vendor="aws", service="AmazonBedrock", region="us-east-1",
-                product_family="LLM", attributes={},
-                usage_metric="Bedrock-Output-Token", unit="tokens",
-                price_usd=0.015 / 1000,
-                start_usage_amount=0, end_usage_amount=None,
-                source="aws-fallback", effective_date=now, fetched_at=now
-            ),
-        ],
-    }
+    if vendor != "aws":
+        return 0, "fallback-unsupported"
     
-    count = 0
-    services_to_sync = services or list(fallback_prices.keys())
+    if services is None:
+        services = ["AWSLambda", "AmazonDynamoDB", "AmazonAPIGatewayHTTP", "AmazonBedrock"]
     
-    for service in services_to_sync:
-        for price in fallback_prices.get(service, []):
-            cache.upsert(price)
-            count += 1
-    
-    return count, "fallback"
+    count = aws_fallback_prices(services, cache)
+    return count, "aws-pricelist"

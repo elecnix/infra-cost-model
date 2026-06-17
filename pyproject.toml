@@ -7,7 +7,11 @@ dependencies = [
     "jsonschema>=4.0",
     "pyyaml>=6.0",
     "requests>=2.0",
+    "rich>=13.0",
 ]
+
+[project.scripts]
+infra-cost-model = "infra_cost_model.cli:main"
 
 [project.optional-dependencies]
 dev = [
