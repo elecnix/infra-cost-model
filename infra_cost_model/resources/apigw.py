@@ -1,13 +1,12 @@
 """API Gateway HTTP API v2 resource model implementation."""
 
-from typing import Optional
 from .types import RoutingResource, ResourceExtract
 
 
 class APIGatewayHTTP(RoutingResource):
     """API Gateway HTTP API v2 - routing node (can have outgoing edges).
     
-    HTTP API v2 is ~71% cheaper than REST API v1 at $3.50/1M requests.
+    HTTP API v2 pricing: $1.00/1M requests.
     """
     
     @property
@@ -15,7 +14,7 @@ class APIGatewayHTTP(RoutingResource):
         return ["requests", "dataOutGb"]
     
     @classmethod
-    def from_address(cls, resource_address: str) -> Optional["APIGatewayHTTP"]:
+    def from_address(cls, resource_address: str) -> ResourceExtract | None:
         """Parse resource address to determine if it's HTTP API v2."""
         if resource_address.startswith("aws_apigatewayv2_api.") or \
            resource_address.startswith("aws.apigatewayv2.Api:") or \
@@ -63,8 +62,6 @@ class APIGatewayHTTP(RoutingResource):
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
         """Extract from CDK CloudFormation APIGatewayV2::Api."""
         properties = resource.get("Properties", {})
-        
-        # HTTP vs REST API type
         protocol_type = properties.get("ProtocolType", "HTTP")
         
         return ResourceExtract(
@@ -73,15 +70,12 @@ class APIGatewayHTTP(RoutingResource):
             provider="aws",
             service="AmazonAPIGatewayHTTP",
             region=None,
-            config={
-                "protocolType": protocol_type,
-            }
+            config={"protocolType": protocol_type}
         )
 
 
-def apigw_cost(requests: float, data_out_gb: float = 0.0,
-               catalog=None) -> float:
-    """Calculate API Gateway HTTP API cost.
+def apigw_total_cost(requests: float, data_out_gb: float = 0.0, catalog=None) -> float:
+    """Calculate total API Gateway HTTP API cost including egress.
     
     Args:
         requests: Monthly API requests
@@ -89,41 +83,52 @@ def apigw_cost(requests: float, data_out_gb: float = 0.0,
         catalog: Optional PricingCatalog for pricing lookup
         
     Returns:
-        Total monthly cost in USD.
+        Total monthly cost in USD (requests + egress).
     """
+    request_cost = _request_cost(requests, catalog)
+    egress_cost = _egress_cost(data_out_gb, catalog)
+    return request_cost + egress_cost
+
+
+def _request_cost(requests: float, catalog=None) -> float:
+    """Calculate API Gateway request cost."""
     if catalog:
-        result = catalog.query("aws", "AmazonAPIGatewayHTTP", "us-east-1", 
-                              "APIGateway-HTTP-Request", requests)
-        cost = result.total_cost if result and hasattr(result, 'total_cost') else 0.0
-    else:
-        # HTTP API v2: $1.00 per million requests
-        cost = requests * 1.00e-6
+        result = catalog.query("aws", "AmazonAPIGatewayHTTP", "us-east-1",
+                             "APIGateway-HTTP-Request", requests)
+        return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
     
-    return cost
+    return requests * 1.00e-6
 
 
-def apigw_egress_cost(data_out_gb: float, catalog=None) -> float:
-    """Calculate API Gateway data transfer egress cost.
+def _egress_cost(data_out_gb: float, catalog=None) -> float:
+    """Calculate API Gateway egress cost with tiered pricing.
     
-    Args:
-        data_out_gb: Data transfer in GB (first 10TB at $0.09/GB)
-        
-    Returns:
-        Monthly egress cost in USD.
+    Tiered egress (first 10TB at $0.09/GB):
+    - 1-10 TB: $0.09/GB
+    - Next 40 TB: $0.085/GB
+    - Next 100 TB: $0.07/GB
+    - Next 350 TB: $0.05/GB
     """
     if data_out_gb <= 0:
         return 0.0
     
     if catalog:
-        # Would query egress pricing
-        pass
+        result = catalog.query("aws", "AmazonAPIGateway", "us-east-1",
+                             "APIGateway-Egress", data_out_gb)
+        return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
     
-    # HTTP API egress: $0.09/GB (first 10TB)
-    # Tiered pricing for egress
+    # Tiered egress pricing
     if data_out_gb <= 10_000:
-        rate = 0.09
+        return data_out_gb * 0.09
+    elif data_out_gb <= 50_000:
+        return 10_000 * 0.09 + (data_out_gb - 10_000) * 0.085
+    elif data_out_gb <= 150_000:
+        return 10_000 * 0.09 + 40_000 * 0.085 + (data_out_gb - 50_000) * 0.07
     else:
-        # Subsequent tiers would be higher
-        rate = 0.085  # Simplified
-    
-    return data_out_gb * rate
+        return (10_000 * 0.09 + 40_000 * 0.085 + 100_000 * 0.07 +
+                (data_out_gb - 150_000) * 0.05)
+
+
+def apigw_egress_cost(data_out_gb: float, catalog=None) -> float:
+    """Alias for egress cost calculation."""
+    return _egress_cost(data_out_gb, catalog)

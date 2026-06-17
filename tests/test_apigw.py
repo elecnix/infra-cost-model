@@ -1,7 +1,9 @@
 """Tests for API Gateway HTTP API v2 resource model."""
 
 import pytest
-from infra_cost_model.resources.apigw import APIGatewayHTTP, apigw_cost, apigw_egress_cost
+from infra_cost_model.resources.apigw import (
+    APIGatewayHTTP, apigw_total_cost, apigw_egress_cost, _request_cost, _egress_cost
+)
 
 
 def test_apigw_from_address_terraform():
@@ -64,20 +66,42 @@ def test_apigw_extract_cdk():
     assert result.config["protocolType"] == "HTTP"
 
 
-def test_apigw_cost():
-    """Test API Gateway HTTP API cost calculation."""
-    cost = apigw_cost(1_000_000)  # 1M requests
+def test_apigw_request_cost():
+    """Test API Gateway HTTP API request cost calculation."""
+    cost = _request_cost(1_000_000)  # 1M requests
     
-    # $1.00 per million
     assert cost == pytest.approx(1.00, rel=0.01)
 
 
 def test_apigw_egress_cost():
     """Test API Gateway egress cost calculation."""
-    cost = apigw_egress_cost(100)  # 100GB out
+    cost = apigw_egress_cost(100)  # 100GB out (first tier)
     
-    # $0.09/GB
     assert cost == pytest.approx(9.00, rel=0.01)
+
+
+def test_apigw_egress_tiered_10tb():
+    """Test egress cost at exactly 10TB boundary."""
+    cost = apigw_egress_cost(10_000)
+    
+    assert cost == pytest.approx(900.00, rel=0.01)
+
+
+def test_apigw_egress_tiered_50tb():
+    """Test egress cost in second tier (10-50TB)."""
+    cost = apigw_egress_cost(25_000)  # 25TB
+    
+    # 10TB at $0.09 + 15TB at $0.085
+    expected = 10_000 * 0.09 + 15_000 * 0.085
+    assert cost == pytest.approx(expected, rel=0.01)
+
+
+def test_apigw_total_cost():
+    """Test total cost includes both requests and egress."""
+    cost = apigw_total_cost(1_000_000, 100)
+    
+    expected = 1.00 + 9.00  # $1 requests + $9 egress
+    assert cost == pytest.approx(expected, rel=0.01)
 
 
 def test_apigw_routing_node():
