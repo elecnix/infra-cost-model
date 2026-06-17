@@ -2,7 +2,8 @@
 
 import pytest
 from infra_cost_model.resources.lambda_func import (
-    LambdaFunction, calculate_gb_seconds, apply_free_tier, lambda_cost
+    LambdaFunction, calculate_gb_seconds, apply_free_tier, lambda_cost,
+    provisioned_concurrency_cost
 )
 from infra_cost_model.resources.types import ResourceExtract
 
@@ -136,3 +137,17 @@ def test_lambda_cost_calculation():
     
     assert cost > 0
     assert cost < 10  # Should be reasonable
+
+def test_provisioned_concurrency_cost():
+    """Test fixed provisioned concurrency cost plus request charges."""
+    cost = provisioned_concurrency_cost(
+        provisioned_concurrency=10,
+        hours=24,
+        memory_mb=256,
+        invocations=5_000,
+    )
+
+    fixed = 10 * (256 / 1024) * 24 * 3600 * 0.000003606
+    requests = 5_000 * 0.20e-6
+
+    assert cost == pytest.approx(fixed + requests, rel=0.01)
