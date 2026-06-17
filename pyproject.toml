@@ -1,0 +1,27 @@
+[project]
+name = "infra-cost-model"
+version = "0.1.0"
+description = "DAG-based infrastructure cost model with usage derivation and pricing"
+requires-python = ">=3.10"
+dependencies = [
+    "jsonschema>=4.0",
+    "pyyaml>=6.0",
+    "requests>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["infra_cost_model*"]
