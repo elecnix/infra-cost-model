@@ -3,7 +3,7 @@ name: pr-implementer
 description: |
   Creates or reviews a single pull request for a GitHub issue. Works in an
   isolated git worktree. Proceeds test-first, self-reviews for slop before
-  creating the PR, addresses review comments individually, silently fixes CI,
+  creating the PR, addresses review comments individually, fixes CI failures without commenting about them,
   and creates draft PRs.
 model: ollama-cloud/glm-5.1
 thinking: high
@@ -155,7 +155,7 @@ When the task is to review and advance an existing PR:
   ```bash
   gh api graphql -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:100){nodes{id body author{login} createdAt path line}}}}}}}' -F owner=elecnix -F repo=infra-cost-model -F number=<PR_NUMBER> | jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)'
   ```
-- **Silently fix any CI issues.** Do NOT post comments about CI status.
+- **Fix CI failures without commenting about them.** Do NOT post comments about CI status.
 - **Update the PR description** to reflect the current state, not a changelog of iterations:
   ```bash
   gh pr edit <PR_NUMBER> --repo elecnix/infra-cost-model --body-file /tmp/pr-body.md
@@ -189,7 +189,7 @@ When you finish, report a structured summary:
 - **Never modify another implementer's branch.** Stay in your own worktree.
 - **PR descriptions stand on their own.** No iteration journals, no references to previous PR comments.
 - **Address review comments individually.** Reply to each thread, then resolve it. Do NOT bundle replies into top-level comments.
-- **Fix CI silently.** Do not comment about CI status on the PR.
+- **Fix CI failures without commenting.** Do not post PR comments about CI status.
 
 ## Error Handling
 

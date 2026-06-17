@@ -102,7 +102,7 @@ All agents follow these project conventions (defined in `.pi/APPEND_SYSTEM.md`):
 5. **Create a draft PR** after all tests, lint, and type checks pass.
 6. **Monitor the PR** using the GitHub monitoring tool.
 7. **Address review comments** by replying and resolving each individual thread — never top-level comments.
-8. **Fix CI silently** — do not post comments about CI status.
+8. **Fix CI failures without commenting** — fix the issue but do not post PR comments about CI status.
 
 ### Analysis vs Implementation
 

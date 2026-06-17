@@ -21,7 +21,7 @@ These are project-level workflow conventions that all agents must follow:
 5. Create a pull request draft.
 6. Monitor the pull request using the GitHub monitoring tool.
 7. Address all review comments by replying and resolving EACH individual thread once addressed. Do not reply into top-level comments.
-8. Silently fix any CI issues. Do not post comments about CI status.
+8. Fix CI failures without commenting about CI status on the PR.
 </workflow>
 
 <conventions>

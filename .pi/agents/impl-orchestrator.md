@@ -78,7 +78,7 @@ subagent({
       agent: "pr-implementer",
       context: "fresh",
       async: true,
-      task: "Implement or advance PR for issue #<NUMBER>: <title>. Repository: elecnix/infra-cost-model. You work in an isolated worktree so you don't conflict with other implementers. Start by pulling origin main, then create your branch from it. Proceed test-first. Create a draft PR if none exists, or advance the existing PR #<PR_NUMBER>. Address all review comments individually. Fix CI silently. Self-review your diff for slop patterns before creating the PR. Acceptance: all tests pass, lint and type checks pass, PR is a draft with priority label, PR description references the issue, and no slop patterns remain in the diff.",
+      task: "Implement or advance PR for issue #<NUMBER>: <title>. Repository: elecnix/infra-cost-model. You work in an isolated worktree so you don't conflict with other implementers. Start by pulling origin main, then create your branch from it. Proceed test-first. Create a draft PR if none exists, or advance the existing PR #<PR_NUMBER>. Address all review comments individually. Fix CI failures without commenting about them. Self-review your diff for slop patterns before creating the PR. Acceptance: all tests pass, lint and type checks pass, PR is a draft with priority label, PR description references the issue, and no slop patterns remain in the diff.",
       worktree: true
     },
     // ... one per issue
