@@ -1,6 +1,8 @@
 # Design Principles
 
 > **Terminology note:** This document uses the canonical terms defined in [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md). When in doubt about a term, refer there.
+>
+> **Numbering note:** Principles are numbered for reference. New principles are appended at the end; existing numbers are never reordered.
 
 ## 1. Usage is derived, not specified
 
@@ -195,3 +197,11 @@ The cost engine — directed acyclic graph traversal, workload derivation, prici
 - **YAML is a first-class surface** (Principle 11). Python has the most mature handling (ruamel.yaml preserves comments and formatting).
 
 If the TypeScript surface later needs a standalone engine, it reimplements the same core logic. Both must pass the same test fixtures — this is a correctness contract, not a code-sharing contract.
+
+## 13. Pricing is queried, not hardcoded
+
+Cloud prices change monthly. Hard-coded prices in source code go stale. The pricing layer exposes a query interface and the engine never knows or cares where the data comes from.
+
+The catalog must handle tiered pricing (e.g., Lambda GB-seconds has three price tiers), free tiers (first 1M requests free), and regional variation. It must work offline after an initial seed. Prices refresh on a schedule — cloud pricing changes monthly at most.
+
+A provider plugin architecture is premature. Use a normalized multi-cloud source until it doesn't cover a needed provider.
