@@ -2,7 +2,8 @@
 
 import pytest
 from infra_cost_model.resources.bedrock import (
-    BedrockModel, bedrock_cost, model_cost_comparison, MODEL_RATES, is_economic_sink
+    BedrockModel, bedrock_cost, cached_prompt_bedrock_cost,
+    streaming_bedrock_cost, model_cost_comparison, MODEL_RATES, is_economic_sink
 )
 
 
@@ -76,3 +77,25 @@ def test_economic_sink_classification():
     assert is_economic_sink("compute", "bedrock") is True
     assert is_economic_sink("compute", "openai") is True
     assert is_economic_sink("storage", "aws") is False
+
+def test_cached_prompt_cost_discount():
+    """Test prompt caching discount for cached input tokens."""
+    cost = cached_prompt_bedrock_cost(
+        input_tokens=1_000_000,
+        cached_input_tokens=500_000,
+        output_tokens=1_000_000,
+        model="claude-3-5-sonnet",
+    )
+
+    expected = (
+        500_000 * 0.003 / 1000
+        + 500_000 * 0.003 * 0.5 / 1000
+        + 1_000_000 * 0.015 / 1000
+    )
+
+    assert cost == pytest.approx(expected, rel=0.01)
+
+
+def test_streaming_cost_matches_total_tokens():
+    """Streaming changes delivery, not total token cost."""
+    assert streaming_bedrock_cost(1_000_000, 2_000_000) == bedrock_cost(1_000_000, 2_000_000)

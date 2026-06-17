@@ -85,40 +85,60 @@ class BedrockModel(ComputeResource):
 
 def bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet",
                  catalog=None) -> float:
-    """Calculate Bedrock/LLM model cost.
-    
-    Args:
-        input_tokens: Monthly input (prompt) tokens
-        output_tokens: Monthly output (completion) tokens
-        model: Model name (claude-3-5-sonnet, claude-3-5-haiku, etc.)
-        catalog: Optional PricingCatalog for pricing lookup
-        
-    Returns:
-        Total monthly cost in USD.
-    """
+    """Calculate Bedrock/LLM model cost."""
+    return _bedrock_token_cost(input_tokens, 0.0, output_tokens, model, catalog)
+
+
+def cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
+                               output_tokens: float,
+                               model: str = "claude-3-5-sonnet",
+                               catalog=None) -> float:
+    """Calculate Bedrock cost with cached prompt input discounted at 50%."""
+    cached_input_tokens = min(max(cached_input_tokens, 0), input_tokens)
+    uncached_input_tokens = input_tokens - cached_input_tokens
+    return _bedrock_token_cost(uncached_input_tokens, cached_input_tokens, output_tokens, model, catalog)
+
+
+def streaming_bedrock_cost(input_tokens: float, output_tokens: float,
+                           model: str = "claude-3-5-sonnet",
+                           catalog=None) -> float:
+    """Streaming delivery does not change total token cost."""
+    return bedrock_cost(input_tokens, output_tokens, model, catalog)
+
+
+def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float,
+                        output_tokens: float, model: str, catalog=None) -> float:
     rates = MODEL_RATES.get(model, MODEL_RATES["claude-3-5-sonnet"])
-    
+
     if catalog:
         input_cost = 0.0
+        cached_cost = 0.0
         output_cost = 0.0
-        
-        result = catalog.query("aws", "AmazonBedrock", "us-east-1", 
-                              "Bedrock-Input-Token", input_tokens)
+
+        result = catalog.query("aws", "AmazonBedrock", "us-east-1",
+                              "Bedrock-Input-Token", uncached_input_tokens)
         if result and hasattr(result, 'total_cost'):
             input_cost = result.total_cost
-            
+
+        result = catalog.query("aws", "AmazonBedrock", "us-east-1",
+                              "Bedrock-Cached-Input-Token", cached_input_tokens)
+        if result and hasattr(result, 'total_cost'):
+            cached_cost = result.total_cost
+        elif cached_input_tokens:
+            cached_cost = cached_input_tokens * rates["input"] * 0.5 / 1000
+
         result = catalog.query("aws", "AmazonBedrock", "us-east-1",
                               "Bedrock-Output-Token", output_tokens)
         if result and hasattr(result, 'total_cost'):
             output_cost = result.total_cost
-            
-        return input_cost + output_cost
-    
-    # Fallback: calculate from rates (per 1K tokens)
-    input_cost = input_tokens * rates["input"] / 1000
+
+        return input_cost + cached_cost + output_cost
+
+    input_cost = uncached_input_tokens * rates["input"] / 1000
+    cached_cost = cached_input_tokens * rates["input"] * 0.5 / 1000
     output_cost = output_tokens * rates["output"] / 1000
-    
-    return input_cost + output_cost
+
+    return input_cost + cached_cost + output_cost
 
 
 def model_cost_comparison(input_tokens: float, output_tokens: float) -> dict:
