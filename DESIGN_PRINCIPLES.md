@@ -28,12 +28,12 @@ Traffic rates, payload sizes, call frequencies, and other workload parameters ar
 
 ## 5. Two inputs, one engine
 
-The cost engine joins two separate IRs:
+The cost engine joins two separate intermediate representations:
 
-- **Resource IR** — what infrastructure exists (from parsing .tf files, Pulumi exports, or CDK synth). Contains resource types, configurations, regions, and attributes.
-- **Cost Model IR** — how infrastructure is used (from YAML, TypeScript, or Python SDK). Contains DAG topology, call frequencies, and per-node usage metrics.
+- **Resource representation** — what infrastructure exists (from parsing .tf files, Pulumi exports, or CDK synth). Contains resource types, configurations, regions, and attributes.
+- **Cost model representation** — how infrastructure is used (from YAML, TypeScript, or Python SDK). Contains DAG topology, call frequencies, and per-node usage metrics.
 
-Changing your infrastructure (add an RDS instance) changes the Resource IR. Changing your assumptions (double traffic, add a region) changes the Cost Model IR. The engine joins them: `Cost Model IR × Resource IR → derived usage × pricing = cost`.
+Changing your infrastructure (add an RDS instance) changes the Resource representation. Changing your assumptions (double traffic, add a region) changes the Cost model representation. The engine joins them: `Cost model representation × Resource representation → derived usage × pricing = cost`.
 
 This means you can run the same cost model against different environments (dev, staging, prod) or run different scenarios (1 user vs 100K) against the same infrastructure.
 
@@ -49,11 +49,11 @@ Given the graph and parameters, the model must answer: "Which parameter changes 
 
 > Academic basis: CostHat's what-if analysis (§4); Skyler's cost prediction queries (§6); GARMA's bounded best/worst-case estimation.
 
-## 8. The model accommodates LLM token costs
+## 8. The model accommodates large language model token costs
 
-Token consumption in LLM API calls follows the same propagation pattern as traditional cloud resources: input tokens flow into a node, processing produces output tokens, and those flow to downstream nodes. The model must not assume only traditional cloud metrics.
+Token consumption in large language model API calls follows the same propagation pattern as traditional cloud resources: input tokens flow into a node, processing produces output tokens, and those flow to downstream nodes. The model must not assume only traditional cloud metrics.
 
-> This is a novel contribution; existing academic work does not explicitly model LLM token economics in DAG-based cost derivation.
+> This is a novel contribution; existing academic work does not explicitly model large language model token economics in DAG-based cost derivation.
 
 ## 9. DAG-first UX with flat overrides as escape hatch
 
@@ -67,7 +67,7 @@ The DAG is the primary interface. Flat per-resource overrides exist for migratio
 
 > The anti-pattern is Infracost's `infracost-usage.yml`, where every usage value is a manual override with no relationships between resources.
 
-## 10. Type-safe SDK from IaC code generation
+## 10. Type-safe SDK from infrastructure-as-code type generation
 
 The SDK generates types from your infrastructure definition, so you cannot reference non-existent resources or attributes:
 
@@ -100,12 +100,12 @@ Code generation is the standard approach (CDKTF, Pulumi, AWS CDK all do it). No 
 
 ## 11. Three surfaces, one schema
 
-Users declare cost models through three interfaces, all producing the same Cost Model IR:
+Users declare cost models through three interfaces, all producing the same Cost model representation:
 
 | Interface | For | Strengths |
 |-----------|-----|-----------|
 | **YAML** | Terraform users, quick sketches, CI pipelines | Familiar, diffable, easy in reviews |
-| **TypeScript SDK** | Pulumi/CDK users, complex scenarios | Type-safe, programmatic what-if loops, integrates with IaC code |
+| **TypeScript SDK** | Pulumi/CDK users, complex scenarios | Type-safe, programmatic what-if loops, integrates with infrastructure-as-code code |
 | **Python SDK** | Data teams, Jupyter notebooks, automation | Scriptable, pandas integration, sensitivity analysis |
 
 All three share a JSON Schema as the single source of truth. The YAML validates against it. The SDKs generate types from it. The engine consumes it.
@@ -116,7 +116,7 @@ All three share a JSON Schema as the single source of truth. The YAML validates 
                     └────────┬─────────┘
                              │
                     ┌────────▼─────────┐
-                    │ Cost Model IR    │
+                    │ Cost model representation    │
                     │ (JSON Schema)    │
                     └────────┬─────────┘
                              │

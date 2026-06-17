@@ -25,8 +25,8 @@
 
 | Term | Definition | Aliases to avoid |
 |------|-----------|-----------------|
-| **Resource IR** | The intermediate representation of what infrastructure exists, produced by parsing .tf files, Pulumi exports, or CDK synth | Infrastructure IR, IaC output, resource definition |
-| **Cost Model IR** | The intermediate representation of how infrastructure is used, produced by YAML or SDK from the DAG definition | Usage model, cost model, workflow definition |
+| **Resource representation** | The intermediate representation of what infrastructure exists, produced by parsing .tf files, Pulumi exports, or CDK synth | Infrastructure representation, infrastructure-as-code output, resource definition |
+| **Cost model representation** | The intermediate representation of how infrastructure is used, produced by YAML or SDK from the DAG definition | Usage model, cost model, workflow definition |
 | **Surface** | A user-facing interface for declaring a cost model (YAML, TypeScript SDK, or Python SDK) | Interface, API, front-end, binding |
 | **Flat override** | A per-resource usage value specified directly without DAG propagation; exists for migration and edge cases | Manual override, usage override, direct usage, static usage |
 
@@ -42,14 +42,14 @@
 
 - A **Flow** starts at exactly one **Entry node** and traverses **Edges** weighted by **Call rates**
 - **Workload derivation** produces **Derived usage** for each **Node** by multiplying **Entry node frequency** by the product of **Call rates** along each path
-- **Resource IR** and **Cost Model IR** are separate inputs to the cost engine: `Resource IR × Cost Model IR → derived usage × pricing = cost`
+- **Resource representation** and **Cost model representation** are separate inputs to the cost engine: `resource representation × cost model representation → derived usage × pricing = cost`
 - A **Node** belongs to exactly one **Node type**, which determines its valid **Usage metrics**
 - A **Leaf node** has no outgoing **Edges**; a **Compute node** or **Routing node** may have outgoing **Edges**
 
 ## Flagged ambiguities
 
 - **"Usage"** is used three ways in this conversation: (1) **Usage metric** — a measurable unit like compute-ms, (2) **Derived usage** — the computed per-node consumption, (3) **Flat override** — a manually specified per-resource value. We reserve "usage" unqualified to mean **derived usage**; the others are always qualified.
-- **"Cost model"** was used interchangeably with "usage model" in early discussion. We adopt **Cost Model IR** for the full DAG definition (topology + frequency + metrics), and **derived usage** for the computed per-node consumption. "Usage model" is retired.
+- **"Cost model"** was used interchangeably with "usage model" in early discussion. We adopt **cost model representation** for the full DAG definition (topology + frequency + metrics), and **derived usage** for the computed per-node consumption. "Usage model" is retired.
 - **"Action"** (from pulumi-cost) and **"ResourceSlot"** (from Infracost) are both replaced by **Node**. An Action is a pulumi-cost implementation detail; a ResourceSlot is an Infracost implementation detail. The domain concept is a Node in a DAG.
 - **"Frequency"** in pulumi-cost meant the entry invocation rate; "call rate" was the per-edge weight. We disambiguate: **Frequency** is the entry invocation rate; **Call rate** is the per-edge weight. Never use "frequency" for per-edge weights.
 - **"Propagation"** was used for both top-down (traffic flows down) and bottom-up (costs aggregate up). We reserve **Workload derivation** for the top-down computation of per-node usage and **Cost aggregation** for the bottom-up summing of costs. Never use "propagation" unqualified.
@@ -60,9 +60,9 @@
 >
 > **Domain expert:** "Only if every **call rate** is 1. If an edge has a **call rate** of 3 — meaning the parent invokes the child three times per invocation — then the **leaf node's derived usage** scales by the product of all **call rates** along the path, times the **frequency**."
 
-> **Dev:** "So where does the **Resource IR** come in? I have my **Cost Model IR** with the DAG and **call rates** — what does the **Resource IR** add?"
+> **Dev:** "So where does the **resource representation** come in? I have my **cost model representation** with the DAG and **call rates** — what does the **resource representation** add?"
 >
-> **Domain expert:** "The **Cost Model IR** tells you *how much* each **node** is used. The **Resource IR** tells you *what* each node is — an `aws_lambda_function` with 256MB memory in `us-east-1`. The engine joins them: **derived usage** times pricing equals cost."
+> **Domain expert:** "The **cost model representation** tells you *how much* each **node** is used. The **resource representation** tells you *what* each node is — an `aws_lambda_function` with 256MB memory in `us-east-1`. The engine joins them: **derived usage** times pricing equals cost."
 
 > **Dev:** "Can I just specify monthly requests as a **flat override** on each Lambda instead of building the DAG?"
 >
