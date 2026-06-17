@@ -119,3 +119,36 @@ def test_dynamodb_dynamodb_cost_provisioned():
     expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
     
     assert cost == pytest.approx(expected, rel=0.01)
+
+def test_dynamodb_gsi_on_demand_cost():
+    """Global secondary indexes add read and write request charges."""
+    cost = dynamodb_cost(
+        1_000_000,
+        1_000_000,
+        10.0,
+        gsi_read_requests=500_000,
+        gsi_write_requests=250_000,
+    )
+
+    expected = (
+        1_500_000 * 1.25e-6
+        + 1_250_000 * 6.25e-6
+        + 10 * 0.25
+    )
+
+    assert cost == pytest.approx(expected, rel=0.01)
+
+
+def test_dynamodb_gsi_provisioned_cost():
+    """Global secondary indexes add provisioned RCU/WCU-hour charges."""
+    cost = provisioned_cost(
+        1000,
+        500,
+        10.0,
+        gsi_rcu_hours=100,
+        gsi_wcu_hours=50,
+    )
+
+    expected = 1100 * 0.00013 + 550 * 0.00065 + 10 * 0.25
+
+    assert cost == pytest.approx(expected, rel=0.01)
