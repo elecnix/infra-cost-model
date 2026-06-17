@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/elecnix/infra-cost-model/blob/main/infra_cost_model/schema/cost-model.schema.json",
+  "title": "Infrastructure Cost Model Representation",
+  "description": "Single source of truth JSON Schema for YAML, TypeScript, and Python interfaces",
+
+  "type": "object",
+  "required": ["version", "workflow", "nodes"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version"
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["name", "entry", "frequency"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Workflow identifier"
+        },
+        "entry": {
+          "type": "string",
+          "description": "Address of the entry node (receives external traffic)"
+        },
+        "frequency": {
+          "type": "object",
+          "required": ["unit", "value"],
+          "properties": {
+            "unit": {
+              "type": "string",
+              "enum": ["perSecond", "perMinute", "perHour", "perDay"],
+              "description": "Time unit for entry frequency"
+            },
+            "value": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Invocation rate at the entry node"
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Symbolic variables for what-if analysis"
+        }
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/edge"
+      }
+    }
+  },
+
+  "definitions": {
+    "nodeType": {
+      "type": "string",
+      "enum": ["compute", "storage", "routing"],
+      "description": "Node type determines valid usage metrics and edge permissions"
+    },
+
+    "node": {
+      "type": "object",
+      "required": ["nodeType", "resourceAddress"],
+      "properties": {
+        "nodeType": { "$ref": "#/definitions/nodeType" },
+        "resourceAddress": {
+          "type": "string",
+          "description": "Infrastructure resource address (Terraform: aws_lambda_function.foo, Pulumi: aws:lambda:Function:foo, CDK: AWS::Lambda::Function/myApi/getItems)"
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["aws", "azure", "gcp", "bedrock", "openai"],
+          "description": "Cloud provider"
+        },
+        "service": {
+          "type": "string",
+          "description": "Service name (e.g., AWSLambda, DynamoDB)"
+        },
+        "region": {
+          "type": "string",
+          "description": "Cloud region (e.g., us-east-1)"
+        },
+        "usageMetrics": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/usageMetric"
+          }
+        },
+        "derivedMetrics": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/derivedMetric"
+          }
+        },
+        "pricingModel": {
+          "type": "string",
+          "enum": ["tiered", "flat", "token_based"],
+          "description": "Pricing model type"
+        },
+        "pricingRates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pricing rates per usage metric (used when price catalog unavailable)"
+        }
+      }
+    },
+
+    "usageMetric": {
+      "type": "object",
+      "required": ["unit"],
+      "properties": {
+        "unit": {
+          "type": "string",
+          "description": "Unit of measurement (e.g., requests, ms, MB, tokens)"
+        },
+        "description": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number",
+          "description": "Override value (flat override - discouraged)"
+        }
+      }
+    },
+
+    "derivedMetric": {
+      "type": "object",
+      "required": ["formula", "unit"],
+      "properties": {
+        "formula": {
+          "type": "string",
+          "description": "Mathematical expression to compute this metric (e.g., '(memoryMb / 1024) * (avgDurationMs / 1000) * invocations')"
+        },
+        "unit": {
+          "type": "string"
+        }
+      }
+    },
+
+    "edge": {
+      "type": "object",
+      "required": ["from", "to", "rate"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Source node resource address"
+        },
+        "to": {
+          "type": "string",
+          "description": "Target node resource address"
+        },
+        "rate": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Call rate: how many times parent invokes child per parent invocation"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["read", "write", "invoke"],
+          "default": "invoke",
+          "description": "Type of call (read/write for database operations, invoke for compute)"
+        },
+        "dataSize": {
+          "type": "object",
+          "properties": {
+            "unit": { "type": "string" },
+            "average": { "type": "number", "description": "Average bytes per call" },
+            "minimum": { "type": "number" },
+            "maximum": { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "tieredPrice": {
+      "type": "object",
+      "required": ["start", "price"],
+      "properties": {
+        "start": { "type": "number", "minimum": 0 },
+        "end": { "type": ["number", "null"], "minimum": 0 },
+        "price": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}
