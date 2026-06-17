@@ -6,7 +6,6 @@ description: |
   findings. This agent does NOT make code changes or merge decisions — it
   only reviews and reports. The calling orchestrator makes the merge/iterate
   decision based on the findings.
-model: ollama-cloud/glm-5.1
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true

@@ -4,7 +4,6 @@ description: |
   Creates GitHub issues for design principle violations that have no existing
   issue. Receives a gap report from design-principles-gap-finder and creates one issue per
   new violation, with proper labels, references, and formatting.
-model: ollama-cloud/glm-5.1
 thinking: low
 tools: read, grep, find, ls, bash
 systemPromptMode: append

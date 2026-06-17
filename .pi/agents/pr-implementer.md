@@ -5,7 +5,6 @@ description: |
   isolated git worktree. Proceeds test-first, self-reviews for slop before
   creating the PR, addresses review comments individually, fixes CI failures without commenting about them,
   and creates draft PRs.
-model: ollama-cloud/glm-5.1
 thinking: high
 systemPromptMode: append
 inheritProjectContext: true

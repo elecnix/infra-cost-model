@@ -5,7 +5,6 @@ description: |
   runs quality gate reviews as each finishes, merges PRs that pass 100%, resumes
   implementers for merge conflicts and review feedback, and closes or rejects
   issues as needed. Completes when all issues are addressed.
-model: ollama-cloud/glm-5.1
 thinking: high
 systemPromptMode: append
 inheritProjectContext: true

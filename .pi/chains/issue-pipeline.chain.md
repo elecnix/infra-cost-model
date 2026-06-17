@@ -12,7 +12,6 @@ label: Identify top 5 priority issues
 as: priorities
 output: priorities.json
 outputMode: file-only
-model: ollama-cloud/glm-5.1
 reads:
   - DESIGN_PRINCIPLES.md
   - UBIQUITOUS_LANGUAGE.md
@@ -87,7 +86,6 @@ Analyze all open GitHub issues in elecnix/infra-cost-model. Spawn one scout suba
 ## impl-orchestrator
 phase: Implementation
 label: Implement, review, and merge top 5 priorities
-model: ollama-cloud/glm-5.1
 progress: true
 output: implementation-summary.md
 outputMode: file-only

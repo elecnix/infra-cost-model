@@ -1,7 +1,6 @@
 ---
 name: design-principles-reviewer
 description: Reviews code for violations of the project's design principles (DESIGN_PRINCIPLES.md). Asks "Are there design principles violations?" and provides evidence-backed findings.
-model: ollama-cloud/glm-5.1
 thinking: high
 systemPromptMode: append
 inheritProjectContext: true

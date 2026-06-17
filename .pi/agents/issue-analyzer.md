@@ -5,7 +5,6 @@ description: |
   Considers the product owner's priorities alongside technical urgency. Spawns
   parallel scout subagents to assess each issue. Emits a prioritized list of
   exactly 5 issues with rationale. Does NOT apply labels.
-model: ollama-cloud/glm-5.1
 thinking: high
 systemPromptMode: append
 inheritProjectContext: true

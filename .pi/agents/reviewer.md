@@ -4,7 +4,6 @@ description: |
   Reviews a pull request from a specific angle (correctness, tests, simplicity,
   DP compliance) and returns a list of concerns with severity levels. Any concern
   — even minor — means the PR should not merge until addressed.
-model: ollama-cloud/glm-5.1
 thinking: high
 tools: read, grep, find, ls, bash
 systemPromptMode: replace

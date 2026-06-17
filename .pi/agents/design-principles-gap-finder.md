@@ -5,7 +5,6 @@ description: |
   in the repo. Produces a report identifying which violations are already
   tracked and which are new (no existing issue covers them). Uses gh CLI to
   search open and closed issues by label and keyword.
-model: ollama-cloud/glm-5.1
 thinking: low
 tools: read, grep, find, ls, bash
 systemPromptMode: append
