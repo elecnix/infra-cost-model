@@ -2,7 +2,7 @@
 
 import pytest
 from infra_cost_model.resources.dynamodb import (
-    DynamoDBTable, dynamodb_cost, _on_demand_cost
+    DynamoDBTable, dynamodb_cost, _on_demand_cost, provisioned_cost
 )
 
 
@@ -99,5 +99,23 @@ def test_dynamodb_leaf_node_validation():
     """Test that DynamoDB is a leaf node (storage type)."""
     result = DynamoDBTable.from_address("aws_dynamodb_table.test")
     assert result is not None
-    # Storage nodes are leaf nodes - they cannot have outgoing edges
     assert result.node_type == "storage"
+
+
+def test_dynamodb_provisioned_cost():
+    """Test provisioned cost from RCU/WCU hours."""
+    cost = provisioned_cost(1000, 500, 10.0, None)
+    
+    # 1000 RCU-hours * $0.00013, 500 WCU-hours * $0.00065, 10GB * $0.25
+    expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
+    
+    assert cost == pytest.approx(expected, rel=0.01)
+
+
+def test_dynamodb_dynamodb_cost_provisioned():
+    """Test dynamodb_cost with PROVISIONED billing mode."""
+    cost = dynamodb_cost(1000, 500, 10.0, billing_mode="PROVISIONED", catalog=None)
+    
+    expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
+    
+    assert cost == pytest.approx(expected, rel=0.01)
