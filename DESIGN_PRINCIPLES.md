@@ -187,33 +187,10 @@ api.calls("aws_api_gateway_rest_api.my_api", [
 
 Same mental model, three surfaces. Learn one, know all three.
 
-<<<<<<< HEAD
-## 12. The engine is Python
-
-The cost engine — directed acyclic graph traversal, workload derivation, pricing, and sensitivity analysis — is implemented in Python. This follows from the other principles:
-
-- **Sensitivity analysis requires data tooling** (Principle 7). pandas, numpy, matplotlib, Jupyter — no other language matches this for running 10,000 what-if scenarios and plotting cost curves.
-- **Three surfaces share a JSON Schema contract** (Principle 11). The Python engine reads the cost model representation; TypeScript and YAML produce it. Correctness is ensured by shared test fixtures, not shared code.
-- **The core computation is small** (~200 lines). Reimplementing in TypeScript for browser or IDE use is straightforward because the JSON Schema is the source of truth.
-- **YAML is a first-class surface** (Principle 11). Python has the most mature handling (ruamel.yaml preserves comments and formatting).
-
-If the TypeScript surface later needs a standalone engine, it reimplements the same core logic. Both must pass the same test fixtures — this is a correctness contract, not a code-sharing contract.
-
 ## 13. Pricing is queried, not hardcoded
 
-Cloud prices change monthly. Hard-coded prices in source code go stale. The pricing layer exposes a query interface — `catalog.query(vendor, service, region, usage_metric, usage_quantity)` — and the engine never knows or cares where the data comes from.
+Cloud prices change monthly. Hard-coded prices in source code go stale. The pricing layer exposes a query interface and the engine never knows or cares where the data comes from.
 
-A local SQLite cache stores prices for offline use and low-latency lookups. The cache is seeded from the Infracost Cloud Pricing API (3M+ prices, multi-cloud, validated, tiered) and falls back to raw cloud provider APIs (AWS Bulk API, Azure Retail Prices, GCP Billing Catalog) when Infracost auth is unavailable. Prices refresh weekly — cloud pricing changes monthly at most, so weekly freshness is sufficient.
+The catalog must handle tiered pricing (e.g., Lambda GB-seconds has three price tiers), free tiers (first 1M requests free), and regional variation. It must work offline after an initial seed. Prices refresh on a schedule — cloud pricing changes monthly at most.
 
-```mermaid
-graph TD
-    Engine[Cost Engine] --> Catalog[Pricing Catalog<br/>SQLite cache]
-    Catalog -->|primary| Infracost[Infracost API<br/>GraphQL, auth<br/>3M+ prices, validated]
-    Catalog -->|fallback| RawAPIs[Raw Cloud APIs<br/>AWS: no auth<br/>Azure: no auth<br/>GCP: API key]
-    Catalog -->|weekly| Refresh[Refresh Schedule]
-```
-
-The Infracost API is the primary source because it normalizes AWS, Azure, and GCP into a single GraphQL schema with consistent tiered pricing (`startUsageAmount`/`endUsageAmount`). Auth friction is minimal — one `infracost auth login` per developer — and the completeness gain (validated multi-cloud prices, tiered pricing, free tiers) is worth it. The raw cloud APIs exist as fallback for CI environments and offline use.
-
-A plugin architecture (separate gRPC service per cloud provider) is premature. The Infracost API already normalizes three cloud providers. Add a provider plugin system only when Infracost doesn't cover a needed provider.
->>>>>>> 0e9f4e7 (Add Principle 9: Pricing is queried, not hardcoded)
+A provider plugin architecture is premature. Use a normalized multi-cloud source until it doesn't cover a needed provider.
