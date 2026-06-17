@@ -26,9 +26,11 @@
 | Term | Definition | Aliases to avoid |
 |------|-----------|-----------------|
 | **Resource representation** | The intermediate representation of what infrastructure exists, produced by parsing .tf files, Pulumi exports, or CDK synth | Infrastructure representation, infrastructure-as-code output, resource definition |
-| **Cost model representation** | The intermediate representation of how infrastructure is used, produced by YAML or SDK from the DAG definition | Usage model, cost model, workflow definition |
+| **Cost model representation** | The JSON Schema document describing the directed acyclic graph, call rates, and per-node usage metrics | Usage model, cost model, workflow definition |
+| **Cost engine** | The Python library that performs workload derivation, cost aggregation, and sensitivity analysis | Calculator, estimator, computation layer |
 | **Surface** | A user-facing interface for declaring a cost model (YAML, TypeScript SDK, or Python SDK) | Interface, API, front-end, binding |
-| **Flat override** | A per-resource usage value specified directly without DAG propagation; exists for migration and edge cases | Manual override, usage override, direct usage, static usage |
+| **Flat override** | A per-resource usage value specified directly without directed acyclic graph propagation; exists for migration and edge cases | Manual override, usage override, direct usage, static usage |
+| **Code generation** | The process of producing typed SDK classes from .tf files or Pulumi exports so that resource addresses and usage metrics are compile-time checked | Codegen, type generation |
 
 ## Analysis
 
@@ -37,17 +39,6 @@
 | **What-if analysis** | Varying one or more parameters to observe cost impact without changing the DAG structure | Scenario analysis, sensitivity run, parameter sweep |
 | **Sensitivity analysis** | Identifying which parameters have the greatest effect on total cost | Cost sensitivity, parameter importance, critical path |
 | **Node type** | A category determining which usage metrics a node accepts and whether it can have outgoing edges (e.g., compute, storage, routing) | Resource category, resource type, kind |
-
-## Implementation
-
-| Term | Definition | Aliases to avoid |
-|------|-----------|-----------------|
-| **Cost engine** | The Python library that performs workload derivation, cost aggregation, and sensitivity analysis | calculator, estimator, computation layer |
-| **Cost model representation** | The JSON Schema document describing the directed acyclic graph, call rates, and per-node usage metrics | Cost Model IR, usage model, workflow definition |
-| **Resource representation** | The intermediate representation of what infrastructure exists, produced by parsing .tf files, Pulumi exports, or CDK synth | Resource IR, infrastructure representation, infrastructure-as-code output, resource definition |
-| **Surface** | A user-facing interface for declaring a cost model (YAML, TypeScript SDK, or Python SDK) | Interface, API, front-end, binding |
-| **Flat override** | A per-resource usage value specified directly without directed acyclic graph propagation; exists for migration and edge cases | Manual override, usage override, direct usage, static usage |
-| **Code generation** | The process of producing typed SDK classes from .tf files or Pulumi exports so that resource addresses and usage metrics are compile-time checked | Codegen, type generation |
 
 ## Relationships
 
