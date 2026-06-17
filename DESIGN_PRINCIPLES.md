@@ -187,6 +187,17 @@ api.calls("aws_api_gateway_rest_api.my_api", [
 
 Same mental model, three surfaces. Learn one, know all three.
 
+## 12. The engine is Python
+
+The cost engine — directed acyclic graph traversal, workload derivation, pricing, and sensitivity analysis — is implemented in Python. This follows from the other principles:
+
+- **Sensitivity analysis requires data tooling** (Principle 7). pandas, numpy, matplotlib, Jupyter — no other language matches this for running 10,000 what-if scenarios and plotting cost curves.
+- **Three surfaces share a JSON Schema contract** (Principle 11). The Python engine reads the cost model representation; TypeScript and YAML produce it. Correctness is ensured by shared test fixtures, not shared code.
+- **The core computation is small** (~200 lines). Reimplementing in TypeScript for browser or IDE use is straightforward because the JSON Schema is the source of truth.
+- **YAML is a first-class surface** (Principle 11). Python has the most mature handling (ruamel.yaml preserves comments and formatting).
+
+If the TypeScript surface later needs a standalone engine, it reimplements the same core logic. Both must pass the same test fixtures — this is a correctness contract, not a code-sharing contract.
+
 ## 13. Pricing is queried, not hardcoded
 
 Cloud prices change monthly. Hard-coded prices in source code go stale. The pricing layer exposes a query interface and the engine never knows or cares where the data comes from.
