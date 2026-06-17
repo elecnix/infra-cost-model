@@ -71,10 +71,15 @@ The DAG is the primary interface. Flat per-resource overrides exist for migratio
 
 The SDK generates types from your infrastructure definition, so you cannot reference non-existent resources or attributes:
 
-```
-.tf files → terraform providers schema -json ──→ codegen → types.ts
-Pulumi   → pulumi stack export --json           ──→ codegen → types.ts
-CDK      → cdk synth                            ──→ codegen → types.ts
+```mermaid
+graph LR
+    TF[.tf files] --> SCHEMA[terraform providers schema -json]
+    PULS[Pulumi] --> EXPORT[pulumi stack export --json]
+    CDK[CDK] --> SYNTH[cdk synth]
+    SCHEMA --> CG[codegen]
+    EXPORT --> CG
+    SYNTH --> CG
+    CG --> TYPES[types.ts]
 ```
 
 Generated types provide:
@@ -110,24 +115,16 @@ Users declare cost models through three interfaces, all producing the same Cost 
 
 All three share a JSON Schema as the single source of truth. The YAML validates against it. The SDKs generate types from it. The engine consumes it.
 
-```
-                    ┌──────────────────┐
-                    │   Cost Engine    │
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │ Cost model representation    │
-                    │ (JSON Schema)    │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-     ┌────────▼───┐  ┌──────▼──────┐  ┌──▼──────────┐
-     │ YAML file   │  │ TS SDK      │  │ Python SDK   │
-     │ (validates  │  │ (codegen    │  │ (codegen     │
-     │  against    │  │  from .tf)  │  │  from .tf)   │
-     │  schema)    │  │             │  │              │
-     └─────────────┘  └─────────────┘  └──────────────┘
+```mermaid
+graph TD
+    YAML[YAML file<br/>validates against schema]
+    TS[TypeScript SDK<br/>types from .tf files]
+    PY[Python SDK<br/>types from .tf files]
+    YAML --> CMR[cost model representation<br/>JSON Schema]
+    TS --> CMR
+    PY --> CMR
+    CMR --> Engine[Cost Engine<br/>Python]
+    Engine --> Analysis[Sensitivity & Analysis<br/>pandas · matplotlib · Jupyter]
 ```
 
 The YAML syntax for DAG definition:
@@ -187,3 +184,14 @@ api.calls("aws_api_gateway_rest_api.my_api", [
 ```
 
 Same mental model, three surfaces. Learn one, know all three.
+
+## 12. The engine is Python
+
+The cost engine — directed acyclic graph traversal, workload derivation, pricing, and sensitivity analysis — is implemented in Python. This follows from the other principles:
+
+- **Sensitivity analysis requires data tooling** (Principle 7). pandas, numpy, matplotlib, Jupyter — no other language matches this for running 10,000 what-if scenarios and plotting cost curves.
+- **Three surfaces share a JSON Schema contract** (Principle 11). The Python engine reads the cost model representation; TypeScript and YAML produce it. Correctness is ensured by shared test fixtures, not shared code.
+- **The core computation is small** (~200 lines). Reimplementing in TypeScript for browser or IDE use is straightforward because the JSON Schema is the source of truth.
+- **YAML is a first-class surface** (Principle 11). Python has the most mature handling (ruamel.yaml preserves comments and formatting).
+
+If the TypeScript surface later needs a standalone engine, it reimplements the same core logic. Both must pass the same test fixtures — this is a correctness contract, not a code-sharing contract.
