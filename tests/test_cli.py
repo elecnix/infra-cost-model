@@ -493,6 +493,7 @@ def test_cli_seed_pricing():
     assert result == 0
     # Should seed prices successfully
 
+
 class TestExtractCommand:
     """Tests for the 'extract' CLI command."""
 
@@ -588,3 +589,172 @@ class TestExtractCommand:
         from infra_cost_model.cli import main
         result = main(["extract"])
         assert result == 1
+
+
+YAML_SENSITIVITY = """
+version: "1.0"
+workflow:
+  name: "cli-test"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gateway:
+    nodeType: routing
+    resourceAddress: aws_api_gateway.test
+    pricingRates:
+      base_cost: 1.0
+edges: []
+"""
+
+
+class TestCLIWhatif:
+    """Tests for the whatif CLI command."""
+
+    def test_whatif_missing_args(self):
+        """whatif with no args prints usage and returns 1."""
+        result = main(["whatif"])
+        assert result == 1
+
+    def test_whatif_missing_file(self):
+        """whatif with nonexistent file returns 1."""
+        result = main(["whatif", "/nonexistent/file.yaml"])
+        assert result == 1
+
+    def test_whatif_missing_parameter_flag(self):
+        """whatif without --parameter returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["whatif", temp_path, "--value", "2000"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_whatif_missing_value_flag(self):
+        """whatif without --value returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["whatif", temp_path, "--parameter", "frequency"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_whatif_frequency_doubling(self):
+        """whatif doubling frequency should ~double cost."""
+        import tempfile, os
+        from infra_cost_model.engine import CostEngine
+        import yaml
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["whatif", temp_path, "--parameter", "frequency", "--value", "2000"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_whatif_invalid_value(self):
+        """whatif with non-numeric value returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["whatif", temp_path, "--parameter", "frequency", "--value", "abc"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_whatif_unknown_flag(self):
+        """whatif with unknown flag returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["whatif", temp_path, "--bogus"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+
+class TestCLISensitivity:
+    """Tests for the sensitivity CLI command."""
+
+    def test_sensitivity_missing_args(self):
+        """sensitivity with no args prints usage and returns 1."""
+        result = main(["sensitivity"])
+        assert result == 1
+
+    def test_sensitivity_missing_file(self):
+        """sensitivity with nonexistent file returns 1."""
+        result = main(["sensitivity", "/nonexistent/file.yaml"])
+        assert result == 1
+
+    def test_sensitivity_missing_parameter_flag(self):
+        """sensitivity without --parameter returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["sensitivity", temp_path])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_sensitivity_frequency_sweep(self):
+        """sensitivity with frequency parameter returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["sensitivity", temp_path, "--parameter", "frequency"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_sensitivity_custom_steps(self):
+        """sensitivity with custom --steps works."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["sensitivity", temp_path, "--parameter", "frequency", "--steps", "5"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_sensitivity_invalid_steps(self):
+        """sensitivity with non-numeric steps returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["sensitivity", temp_path, "--parameter", "frequency", "--steps", "abc"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_sensitivity_unknown_flag(self):
+        """sensitivity with unknown flag returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["sensitivity", temp_path, "--bogus"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
