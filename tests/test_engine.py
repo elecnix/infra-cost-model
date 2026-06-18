@@ -368,6 +368,278 @@ class TestCostAggregator:
         
         # Expected: $10000 * 0.029 + 100 * 0.30 = $290 + $30 = $320
         assert costs["stripe"] == pytest.approx(320.0)
+    
+    def test_tiered_pricing_with_catalog(self):
+        """Test tiered pricing uses catalog when available."""
+        from infra_cost_model.pricing.cache import PricingCache, Price, TieredPrice
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+        
+        # Create a catalog with tiered S3 storage pricing
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            
+            # Tier 1: first 50 TB at $0.023/GB
+            cache.upsert(Price(
+                vendor="aws", service="AmazonS3", region="us-east-1",
+                product_family="Storage", attributes={},
+                usage_metric="storageGb", unit="GB-Mo",
+                price_usd=0.023,
+                start_usage_amount=0, end_usage_amount=50_000,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            # Tier 2: next 450 TB at $0.022/GB
+            cache.upsert(Price(
+                vendor="aws", service="AmazonS3", region="us-east-1",
+                product_family="Storage", attributes={},
+                usage_metric="storageGb", unit="GB-Mo",
+                price_usd=0.022,
+                start_usage_amount=50_000, end_usage_amount=500_000,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            # Tier 3: over 500 TB at $0.021/GB
+            cache.upsert(Price(
+                vendor="aws", service="AmazonS3", region="us-east-1",
+                product_family="Storage", attributes={},
+                usage_metric="storageGb", unit="GB-Mo",
+                price_usd=0.021,
+                start_usage_amount=500_000, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+            
+            nodes = {
+                "s3_bucket": {
+                    "nodeType": "storage",
+                    "resourceAddress": "aws_s3_bucket.data",
+                    "provider": "aws",
+                    "service": "AmazonS3",
+                    "region": "us-east-1",
+                    "pricingModel": "tiered",
+                    "usageMetrics": {
+                        "storageGb": {"unit": "GB-Mo", "value": 1000},
+                    },
+                }
+            }
+            
+            # 1000 GB storage, 1 invocation
+            derived = {"s3_bucket": DerivedUsage("s3_bucket", 1.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+            costs = aggregator.aggregate()
+            
+            # 1000 GB should all be in first tier: 1000 * $0.023 = $23.00
+            assert costs["s3_bucket"] == pytest.approx(1000 * 0.023)
+    
+    def test_tiered_pricing_crosses_tiers(self):
+        """Test tiered pricing correctly handles crossing tier boundaries."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            
+            # Tier 1: first 10 units at $1.00
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="units", unit="units",
+                price_usd=1.00,
+                start_usage_amount=0, end_usage_amount=10,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            # Tier 2: next 90 units at $0.50
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="units", unit="units",
+                price_usd=0.50,
+                start_usage_amount=10, end_usage_amount=100,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            # Tier 3: above 100 at $0.25
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="units", unit="units",
+                price_usd=0.25,
+                start_usage_amount=100, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+            
+            nodes = {
+                "svc": {
+                    "nodeType": "compute",
+                    "resourceAddress": "test.svc",
+                    "provider": "aws",
+                    "service": "TestSvc",
+                    "region": "us-east-1",
+                    "pricingModel": "tiered",
+                    "usageMetrics": {
+                        "units": {"unit": "units", "value": 25},
+                    },
+                }
+            }
+            
+            # 25 units: 10 * $1.00 + 15 * $0.50 = $10 + $7.50 = $17.50
+            derived = {"svc": DerivedUsage("svc", 1.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+            costs = aggregator.aggregate()
+            
+            assert costs["svc"] == pytest.approx(17.50)
+    
+    def test_tiered_pricing_fallback_to_flat(self):
+        """Test tiered pricing falls back to flat pricingRates when no catalog."""
+        nodes = {
+            "s3_bucket": {
+                "nodeType": "storage",
+                "resourceAddress": "aws_s3_bucket.data",
+                "provider": "aws",
+                "service": "AmazonS3",
+                "pricingModel": "tiered",
+                "usageMetrics": {
+                    "storageGb": {"unit": "GB-Mo", "value": 1000},
+                },
+                "pricingRates": {
+                    "storageGb": 0.023,
+                }
+            }
+        }
+        
+        derived = {"s3_bucket": DerivedUsage("s3_bucket", 1.0)}
+        aggregator = CostAggregator(nodes, derived, [], catalog=None)
+        costs = aggregator.aggregate()
+        
+        # Falls back to flat: 1000 * $0.023 = $23.00
+        assert costs["s3_bucket"] == pytest.approx(23.0)
+    
+    def test_tiered_pricing_with_free_tier(self):
+        """Test free-tier pricing (first N units at $0)."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            
+            # Free tier: first 5 units at $0
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="requests", unit="requests",
+                price_usd=0.0,
+                start_usage_amount=0, end_usage_amount=5,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            # Paid tier: above 5 at $0.10
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="requests", unit="requests",
+                price_usd=0.10,
+                start_usage_amount=5, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+            
+            nodes = {
+                "svc": {
+                    "nodeType": "compute",
+                    "resourceAddress": "test.svc",
+                    "provider": "aws",
+                    "service": "TestSvc",
+                    "region": "us-east-1",
+                    "pricingModel": "tiered",
+                    "usageMetrics": {
+                        "requests": {"unit": "requests", "value": 3},
+                    },
+                }
+            }
+            
+            # 3 requests, all in free tier: $0
+            derived = {"svc": DerivedUsage("svc", 1.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+            costs = aggregator.aggregate()
+            
+            assert costs["svc"] == 0.0
+            
+            # Now with 8 requests: 5 free + 3 * $0.10 = $0.30
+            nodes["svc"]["usageMetrics"]["requests"]["value"] = 8
+            derived2 = {"svc": DerivedUsage("svc", 1.0)}
+            aggregator2 = CostAggregator(nodes, derived2, [], catalog)
+            costs2 = aggregator2.aggregate()
+            
+            assert costs2["svc"] == pytest.approx(0.30)
+    
+    def test_tiered_pricing_multiple_metrics(self):
+        """Test tiered pricing with multiple metrics per node."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            
+            # Storage metric
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="storageGb", unit="GB-Mo",
+                price_usd=0.023,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            # Request metric
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="requests", unit="requests",
+                price_usd=0.005,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+            
+            nodes = {
+                "svc": {
+                    "nodeType": "compute",
+                    "resourceAddress": "test.svc",
+                    "provider": "aws",
+                    "service": "TestSvc",
+                    "region": "us-east-1",
+                    "pricingModel": "tiered",
+                    "usageMetrics": {
+                        "storageGb": {"unit": "GB-Mo", "value": 100},
+                        "requests": {"unit": "requests", "value": 1000},
+                    },
+                }
+            }
+            
+            # 100 GB storage * $0.023 + 1000 requests * $0.005 = $2.30 + $5.00
+            derived = {"svc": DerivedUsage("svc", 1.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+            costs = aggregator.aggregate()
+            
+            assert costs["svc"] == pytest.approx(2.30 + 5.00)
 
 
 class TestCostEngine:
