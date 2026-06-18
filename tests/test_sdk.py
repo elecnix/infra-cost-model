@@ -256,6 +256,64 @@ nodes:
         os.unlink(temp_path)
 
 
+def test_from_yaml_dsl_with_ascii_arrow_syntax():
+    """Test loading workflow from YAML file with ASCII arrow DSL syntax."""
+    yaml_content = """
+workflow:
+  name: "api-workflow"
+  entry: "aws_api_gateway_rest_api.my_api"
+  frequency:
+    unit: perMinute
+    value: 1000
+
+calls:
+  aws_api_gateway_rest_api.my_api:
+    data_out: 50KB
+    -> aws_lambda_function.get_user: 0.8
+    -> aws_lambda_function.create_user: 0.2
+
+  aws_lambda_function.get_user:
+    compute: 200ms
+    memory: 256MB
+    -> aws_dynamodb_table.users:
+        rate: 1
+        type: read
+
+nodes:
+  aws_api_gateway_rest_api.my_api:
+    nodeType: routing
+    resourceAddress: aws_api_gateway_rest_api.my_api
+  aws_lambda_function.get_user:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_user
+  aws_lambda_function.create_user:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.create_user
+  aws_dynamodb_table.users:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.users
+"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(yaml_content)
+        temp_path = f.name
+    
+    try:
+        workflow = Workflow.from_yaml(temp_path)
+        
+        assert workflow.entry == "aws_api_gateway_rest_api.my_api"
+        assert len(workflow._edges) == 3
+        assert workflow._edges[0]["from"] == "aws_api_gateway_rest_api.my_api"
+        assert workflow._edges[0]["to"] == "aws_lambda_function.get_user"
+        assert workflow._edges[0]["rate"] == 0.8
+        assert workflow._edges[1]["to"] == "aws_lambda_function.create_user"
+        assert workflow._edges[1]["rate"] == 0.2
+        assert workflow._edges[2]["to"] == "aws_dynamodb_table.users"
+        assert workflow._edges[2]["type"] == "read"
+    finally:
+        os.unlink(temp_path)
+
+
 def test_parse_yaml_dsl_shorthand_frequency():
     """Test parsing shorthand frequency notation."""
     yaml_content = """
@@ -333,6 +391,57 @@ calls:
     assert len(model["edges"]) == 1
     assert model["edges"][0]["type"] == "read"
     assert model["edges"][0]["rate"] == 1
+
+
+def test_parse_yaml_dsl_with_ascii_arrow_edge_config():
+    """Test parsing ASCII arrow syntax with edge configuration."""
+    yaml_content = """
+workflow:
+  name: "test"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 100
+
+calls:
+  api_gateway:
+    -> aws_dynamodb_table.users:
+        rate: 1
+        type: read
+"""
+    
+    model = parse_yaml_dsl(yaml_content)
+    
+    assert len(model["edges"]) == 1
+    assert model["edges"][0]["type"] == "read"
+    assert model["edges"][0]["rate"] == 1
+    assert model["edges"][0]["from"] == "api_gateway"
+    assert model["edges"][0]["to"] == "aws_dynamodb_table.users"
+
+
+def test_parse_yaml_dsl_mixed_arrows():
+    """Test that Unicode and ASCII arrows can be mixed in the same DSL."""
+    yaml_content = """
+workflow:
+  name: "test"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 100
+
+calls:
+  api_gateway:
+    → lambda_fn: 0.8
+    -> dynamo_db: 0.2
+"""
+    
+    model = parse_yaml_dsl(yaml_content)
+    
+    assert len(model["edges"]) == 2
+    assert model["edges"][0]["to"] == "lambda_fn"
+    assert model["edges"][0]["rate"] == 0.8
+    assert model["edges"][1]["to"] == "dynamo_db"
+    assert model["edges"][1]["rate"] == 0.2
 
 
 def test_validate_valid_workflow():

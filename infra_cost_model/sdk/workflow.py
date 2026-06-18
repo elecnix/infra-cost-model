@@ -114,9 +114,10 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
             continue
             
         for key, value in call_defs.items():
-            # Arrow syntax: "→ aws_lambda_function.foo: 1" or "→ aws_lambda_function.foo: rate: 1"
-            if key.startswith("→ ") or key.startswith("\u2192 "):
-                target_addr = key[2:]
+            # Arrow syntax: "→ aws_lambda_function.foo: 1" or "-> aws_lambda_function.foo: 1"
+            #     or "→ aws_lambda_function.foo: rate: 1" (both Unicode and ASCII accepted)
+            if key.startswith("→ ") or key.startswith("\u2192 ") or key.startswith("-> "):
+                target_addr = key[2:] if key.startswith("→ ") or key.startswith("\u2192 ") else key[3:]
                 if isinstance(value, (int, float)):
                     edges.append({"from": source_addr, "to": target_addr, "rate": float(value)})
                 elif isinstance(value, dict):
