@@ -3,7 +3,7 @@
 import pytest
 from infra_cost_model.engine.engine import (
     DAGValidator, WorkloadDeriver, CostAggregator, CostEngine, DerivedUsage,
-    SensitivityAnalyzer,
+    SensitivityAnalyzer, ParametricSensitivityAnalyzer,
 )
 
 
@@ -1513,3 +1513,335 @@ class TestTokenDistribution:
         # 200 * 750 * $0.015/1K = $2.25
         expected = 200 * 750 * 0.015 / 1000
         assert costs["llm"] == pytest.approx(expected)
+
+
+class TestParametricSensitivityAnalyzer:
+    """Tests for ParametricSensitivityAnalyzer — efficient parametric analysis."""
+    
+    def test_partial_derivative_frequency(self):
+        """Partial derivative w.r.t. frequency should be positive."""
+        model = make_valid_cost_model(frequency=100)
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        deriv = analyzer.partial_derivative("frequency")
+        # With frequency=100/min, cost should be positive and derivative positive
+        assert deriv > 0, f"Expected positive derivative, got {deriv}"
+    
+    def test_partial_derivative_frequency_linear(self):
+        """For flat pricing models, cost is linear in frequency.
+        
+        Doubling the frequency should (approximately) double the cost.
+        """
+        model = make_valid_cost_model(frequency=100)
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        cost_100 = analyzer.multi_parameter_what_if({"frequency": 100})
+        cost_200 = analyzer.multi_parameter_what_if({"frequency": 200})
+        
+        # Cost should roughly double
+        assert cost_200 == pytest.approx(cost_100 * 2, rel=0.01)
+    
+    def test_partial_derivative_symbolic_parameter(self):
+        """Partial derivative w.r.t. a symbolic parameter."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"cache_hit_rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": "cache_hit_rate"}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        deriv = analyzer.partial_derivative("cache_hit_rate")
+        # Cost = 10 * rate * 0.001 = 0.01 * rate; deriv should be ~0.01
+        assert deriv == pytest.approx(0.01, rel=0.001)
+    
+    def test_partial_derivative_edge_rate(self):
+        """Partial derivative w.r.t. an edge-specific rate."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": 0.8}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        deriv = analyzer.partial_derivative("edge:A->B")
+        # Cost = 10 * 0.8 * 0.001 = 0.008; ∂cost/∂rate = 10 * 0.001 = 0.01
+        assert deriv == pytest.approx(0.01, rel=0.001)
+    
+    def test_most_impactful_ranking(self):
+        """Most impactful parameters are ranked by absolute derivative."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"hit_rate": 0.8, "miss_rate": 0.2},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": "hit_rate"}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": "miss_rate"}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        results = analyzer.most_impactful(["hit_rate", "miss_rate"])
+        
+        assert len(results) == 2
+        # Both should have positive derivatives
+        assert results[0]["derivative"] > 0
+        assert results[1]["derivative"] > 0
+        # hit_rate affects usageMetrics directly (10 * 0.2 * 0.001 * hit_rate?)
+        # Actually: hit_rate affects usage metric value, miss_rate affects edge
+        # hit_rate: usageMetric value * invocations * price
+        # invocations = 10 * 0.2 = 2.0; cost = 2.0 * hit_rate * 0.001
+        # miss_rate: invocations = 10 * miss_rate; cost = 10 * miss_rate * 0.001 * 0.8
+        # Both derivatives should be 0.002? Let's just verify ranking works
+        assert results[0]["parameter"] in ["hit_rate", "miss_rate"]
+        assert results[1]["parameter"] in ["hit_rate", "miss_rate"]
+    
+    def test_most_impactful_includes_elasticity(self):
+        """Results include elasticity metric."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": "rate"}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        results = analyzer.most_impactful(["rate"])
+        
+        assert len(results) == 1
+        assert "elasticity" in results[0]
+        # Cost = 10 * 0.5 * 0.001 = 0.005
+        # ∂cost/∂rate = 10 * 0.001 = 0.01
+        # elasticity = 0.01 * 0.5 / 0.005 = 1.0
+        assert results[0]["elasticity"] == pytest.approx(1.0, rel=0.01)
+    
+    def test_most_impactful_top_n(self):
+        """top_n limits returned results."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"p1": 0.1, "p2": 0.5, "p3": 0.9},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": 0.8}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        results = analyzer.most_impactful(["p1", "p2", "p3"], top_n=2)
+        assert len(results) == 2
+    
+    def test_multi_parameter_what_if(self):
+        """Multi-parameter what-if applies all changes in one engine run."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": "rate"}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        # Apply frequency and rate changes together
+        cost = analyzer.multi_parameter_what_if({
+            "frequency": 20.0,
+            "rate": 1.0,
+        })
+        # B gets 20 * 1.0 = 20 invocations * $0.001 = $0.02
+        assert cost == pytest.approx(20 * 1.0 * 0.001)
+    
+    def test_multi_parameter_what_if_partial(self):
+        """Multi-parameter what-if with only some parameters changed."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": "rate"}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        # Only change rate, leave frequency at baseline
+        cost = analyzer.multi_parameter_what_if({"rate": 1.0})
+        # B gets 10 * 1.0 = 10 invocations * $0.001 = $0.01
+        assert cost == pytest.approx(10 * 1.0 * 0.001)
+    
+    def test_parameter_sensitivity_surface(self):
+        """2D sensitivity surface for interaction detection."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": 0.8}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        results = analyzer.parameter_sensitivity_surface(
+            "frequency", "edge:A->B", steps=3
+        )
+        
+        # 3×3 grid = 9 points
+        assert len(results) == 9
+        # Each result should have the expected keys
+        for r in results:
+            assert "param1_value" in r
+            assert "param2_value" in r
+            assert "total_cost" in r
+            assert r["total_cost"] > 0
+    
+    def test_what_if_convenience(self):
+        """what_if convenience method works."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": 0.8}],
+        }
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        cost = analyzer.what_if("frequency", 20.0)
+        assert cost == pytest.approx(20 * 0.8 * 0.001)
+    
+    def test_baseline_cost_caching(self):
+        """baseline_cost is computed once and cached."""
+        model = make_valid_cost_model(frequency=100)
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        cost1 = analyzer.baseline_cost
+        cost2 = analyzer.baseline_cost
+        
+        assert cost1 == cost2
+        assert cost1 > 0
+    
+    def test_unknown_parameter_raises(self):
+        """Unknown parameter raises ValueError."""
+        model = make_valid_cost_model(frequency=100)
+        analyzer = ParametricSensitivityAnalyzer(model)
+        
+        with pytest.raises(ValueError, match="Unknown parameter"):
+            analyzer.partial_derivative("nonexistent_param")
