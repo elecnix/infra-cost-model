@@ -6,6 +6,7 @@ import os
 from infra_cost_model.sdk import (
     Workflow, Call, NodeUsage,
     per_minute, per_second, per_hour, per_day,
+    parse_yaml_dsl,
 )
 
 
@@ -119,7 +120,7 @@ def test_usage_metrics():
 
 
 def test_from_yaml_loading():
-    """Test loading workflow from YAML file."""
+    """Test loading workflow from YAML file (standard format)."""
     yaml_content = """
 version: "1.0"
 workflow:
@@ -143,13 +144,116 @@ edges:
         temp_path = f.name
     
     try:
-        workflow = Workflow.from_yaml("test", temp_path)
+        workflow = Workflow.from_yaml(temp_path)
         
         assert workflow.name == "api-workflow"
         assert workflow.entry == "api_gateway"
         assert workflow.frequency.value == 1000
     finally:
         os.unlink(temp_path)
+
+
+def test_from_yaml_dsl_with_arrow_syntax():
+    """Test loading workflow from YAML file with arrow DSL syntax."""
+    yaml_content = """
+workflow:
+  name: "api-workflow"
+  entry: "aws_api_gateway_rest_api.my_api"
+  frequency:
+    unit: perMinute
+    value: 1000
+
+calls:
+  aws_api_gateway_rest_api.my_api:
+    data_out: 50KB
+    → aws_lambda_function.get_user: 0.8
+    → aws_lambda_function.create_user: 0.2
+
+  aws_lambda_function.get_user:
+    compute: 200ms
+    memory: 256MB
+    → aws_dynamodb_table.users:
+        rate: 1
+        type: read
+
+nodes:
+  aws_api_gateway_rest_api.my_api:
+    nodeType: routing
+    resourceAddress: aws_api_gateway_rest_api.my_api
+  aws_lambda_function.get_user:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_user
+  aws_lambda_function.create_user:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.create_user
+  aws_dynamodb_table.users:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.users
+"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(yaml_content)
+        temp_path = f.name
+    
+    try:
+        workflow = Workflow.from_yaml(temp_path)
+        
+        assert workflow.entry == "aws_api_gateway_rest_api.my_api"
+        assert len(workflow._edges) == 3
+        assert workflow._edges[0]["from"] == "aws_api_gateway_rest_api.my_api"
+        assert workflow._edges[0]["to"] == "aws_lambda_function.get_user"
+        assert workflow._edges[0]["rate"] == 0.8
+        assert workflow._edges[1]["to"] == "aws_lambda_function.create_user"
+        assert workflow._edges[1]["rate"] == 0.2
+        assert workflow._edges[2]["to"] == "aws_dynamodb_table.users"
+        assert workflow._edges[2]["type"] == "read"
+    finally:
+        os.unlink(temp_path)
+
+
+def test_parse_yaml_dsl_shorthand_frequency():
+    """Test parsing shorthand frequency notation."""
+    yaml_content = """
+workflow:
+  name: "test"
+  entry: "api_gateway"
+  frequency: "1000/min"
+
+calls:
+  api_gateway:
+    → lambda_fn: 1
+"""
+    
+    model = parse_yaml_dsl(yaml_content)
+    
+    assert model["workflow"]["frequency"]["unit"] == "perMinute"
+    assert model["workflow"]["frequency"]["value"] == 1000
+    assert len(model["edges"]) == 1
+    assert model["edges"][0]["to"] == "lambda_fn"
+
+
+def test_parse_yaml_dsl_with_edge_config():
+    """Test parsing arrow syntax with edge configuration."""
+    yaml_content = """
+workflow:
+  name: "test"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 100
+
+calls:
+  api_gateway:
+    → aws_dynamodb_table.users:
+        rate: 1
+        type: read
+"""
+    
+    model = parse_yaml_dsl(yaml_content)
+    
+    assert len(model["edges"]) == 1
+    assert model["edges"][0]["type"] == "read"
+    assert model["edges"][0]["rate"] == 1
 
 
 def test_validate_valid_workflow():
@@ -168,9 +272,9 @@ def test_validate_invalid_missing_entry():
     workflow.entry = "api_gateway"
     workflow.frequency = per_minute(1000)
     
-    errors = workflow.validate()
     # Schema validates structure, not semantic correctness
     # Entry node existence checking is done by engine, not schema
+    errors = workflow.validate()
     assert errors == []
 
 

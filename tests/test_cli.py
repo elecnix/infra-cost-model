@@ -169,3 +169,100 @@ edges: []
         assert all(results[i][1] <= results[i+1][1] for i in range(len(results)-1))
     finally:
         os.unlink(temp_path)
+
+
+def test_cli_graph_command():
+    """Test graph command renders DAG."""
+    import tempfile
+    import os
+    
+    yaml_content = """
+workflow:
+  name: "graph-test"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gateway:
+    nodeType: routing
+    resourceAddress: aws_api_gateway.test
+  lambda_fn:
+    nodeType: compute
+    resourceAddress: aws_lambda.test
+edges:
+  - from: api_gateway
+    to: lambda_fn
+    rate: 1.0
+"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(yaml_content)
+        temp_path = f.name
+    
+    try:
+        result = main(["graph", temp_path])
+        assert result == 0
+    finally:
+        os.unlink(temp_path)
+
+
+def test_cli_graph_flat_override_warning():
+    """Test graph command warns about flat override conflict."""
+    import tempfile
+    import os
+    import io
+    import sys
+    
+    # Use standard format (not DSL) since DSL transforms the structure
+    yaml_content = """
+version: "1.0"
+workflow:
+  name: "conflict-test"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gateway:
+    nodeType: routing
+    resourceAddress: aws_api_gateway.test
+  lambda_fn:
+    nodeType: compute
+    resourceAddress: aws_lambda.test
+    usageMetrics:
+      invocations:
+        value: 1000
+        unit: requests
+edges:
+  - from: api_gateway
+    to: lambda_fn
+    rate: 1.0
+"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(yaml_content)
+        temp_path = f.name
+    
+    try:
+        # Capture stdout
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        
+        result = main(["graph", temp_path])
+        
+        output = sys.stdout.getvalue()
+        sys.stdout = old_stdout
+        
+        # Should warn about conflict
+        assert "Conflict" in output or "flat override" in output.lower()
+        assert result == 0
+    finally:
+        os.unlink(temp_path)
+
+
+def test_cli_seed_pricing():
+    """Test seed-pricing command."""
+    result = main(["seed-pricing"])
+    assert result == 0
+    # Should seed prices successfully

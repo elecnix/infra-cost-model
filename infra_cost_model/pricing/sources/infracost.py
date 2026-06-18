@@ -154,9 +154,23 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
     try:
         client._ensure_auth()
         if not client._token:
-            return _sync_fallback(vendor, services, cache)
-    except Exception:
-        return _sync_fallback(vendor, services, cache)
+            # No auth - use seed file
+            count = aws_fallback_prices(services, cache, seed_only=True)
+            if count > 0:
+                return count, "seed-pricelist"
+            raise RuntimeError(
+                "No INFRACOST_API_KEY configured and seed file not found. "
+                "Run 'infra-cost-model seed-pricing' first."
+            )
+    except (RuntimeError, Exception):
+        # Auth failed - use seed file
+        count = aws_fallback_prices(services, cache, seed_only=True)
+        if count > 0:
+            return count, "seed-pricelist"
+        raise RuntimeError(
+            "Pricing catalog unavailable: no INFRACOST_API_KEY configured and seed file not found. "
+            "Run 'infra-cost-model seed-pricing' to initialize pricing from seed data."
+        )
     
     if services is None:
         services = ["AWSLambda", "AmazonDynamoDB", "AmazonAPIGatewayHTTP", "AmazonBedrock"]
@@ -179,6 +193,27 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
                 return _sync_fallback(vendor, services, cache)
     
     return total, "infracost"
+
+
+def seed_pricing_catalog(services: list[str] = None) -> tuple[int, str]:
+    """Seed pricing catalog from the seed file.
+    
+    Args:
+        services: Optional list of services to seed (seeds all if None)
+        
+    Returns:
+        Tuple of (count, source) where source is 'seed-pricelist'
+    """
+    from infra_cost_model.pricing.cache import PricingCache
+    from .aws_pricing import aws_fallback_prices
+    
+    cache = PricingCache()
+    
+    if services is None:
+        services = ["AWSLambda", "AmazonDynamoDB", "AmazonAPIGatewayHTTP", "AmazonBedrock"]
+    
+    count = aws_fallback_prices(services, cache, seed_only=True)
+    return count, "seed-pricelist"
 
 
 def _sync_fallback(vendor: str, services: list[str], cache) -> tuple[int, str]:

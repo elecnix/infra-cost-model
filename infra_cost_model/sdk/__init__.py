@@ -9,6 +9,7 @@ from .workflow import (
     per_minute,
     per_hour,
     per_day,
+    parse_yaml_dsl,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "per_minute",
     "per_hour",
     "per_day",
+    "parse_yaml_dsl",
 ]
