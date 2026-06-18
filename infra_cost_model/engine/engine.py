@@ -241,18 +241,34 @@ class CostAggregator:
         
         total_cost = 0.0
         invocations = usage.invocation_count
+        provider = node.get("provider", "aws")
+        service = node.get("service", "")
+        region = node.get("region", "us-east-1")
         
         # Apply usage metrics with pricing rates.
         # Each metric value is a per-invocation quantity; multiply by
         # invocation_count to get total consumption, then by pricing rate.
+        # Prefer catalog over embedded pricingRates (Principle 13).
         for metric_name, metric_def in node_metrics.items():
             if isinstance(metric_def, dict):
                 per_invocation = metric_def.get("value", 0)
             else:
                 per_invocation = metric_def
             
+            total_quantity = invocations * per_invocation
+            
+            # Query catalog first (preferred path per Principle 13)
+            if self.catalog is not None:
+                result = self.catalog.query(
+                    provider, service, region, metric_name, total_quantity
+                )
+                if result is not None:
+                    total_cost += result.total_cost
+                    continue
+            
+            # Fallback: embedded pricingRates (deprecated per Principle 13)
             if metric_name in pricing_rates:
-                total_cost += invocations * per_invocation * pricing_rates[metric_name]
+                total_cost += total_quantity * pricing_rates[metric_name]
         
         return total_cost
     
