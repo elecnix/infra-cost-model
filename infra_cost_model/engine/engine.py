@@ -167,7 +167,14 @@ class WorkloadDeriver:
             "perHour": 3600.0,  # per hour -> per second (divide)
             "perDay": 86400.0,  # per day -> per second (divide)
         }
-        return value / divisors.get(unit, 1.0)
+        
+        if unit not in divisors:
+            raise ValueError(
+                f"Unknown frequency unit '{unit}'. "
+                f"Valid units: {', '.join(sorted(divisors.keys()))}"
+            )
+        
+        return value / divisors[unit]
 
 
 class CostAggregator:

@@ -193,6 +193,35 @@ class TestWorkloadDeriver:
         
         with pytest.raises(ValueError, match="Available nodes"):
             deriver.derive()
+    
+    def test_unknown_frequency_unit_raises(self):
+        """Test that unknown frequency unit raises ValueError."""
+        model = make_valid_cost_model()
+        model["workflow"]["frequency"] = {"unit": "perWeek", "value": 1}
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        
+        with pytest.raises(ValueError, match="Unknown frequency unit 'perWeek'"):
+            deriver.derive()
+    
+    def test_unknown_frequency_unit_lists_valid_units(self):
+        """Test that error message lists valid units."""
+        model = make_valid_cost_model()
+        model["workflow"]["frequency"] = {"unit": "perMonth", "value": 1}
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        
+        with pytest.raises(ValueError, match="Valid units"):
+            deriver.derive()
+    
+    def test_known_frequency_units_work(self):
+        """Test that all known frequency units work without error."""
+        for unit in ["perSecond", "perMinute", "perHour", "perDay"]:
+            model = make_valid_cost_model()
+            model["workflow"]["frequency"] = {"unit": unit, "value": 10}
+            deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+            derived = deriver.derive()
+            assert "api_gateway" in derived
 
 
 class TestCostAggregator:
