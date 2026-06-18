@@ -104,7 +104,14 @@ def cmd_compute(args: list[str]) -> int:
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    
+
+    errors = validate_cost_model(model)
+    if errors:
+        print("Schema validation errors:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+
     catalog = PricingCatalog() if use_catalog else None
     engine = CostEngine(model, catalog=catalog)
     
@@ -145,7 +152,14 @@ def cmd_analyze(args: list[str]) -> int:
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    
+
+    errors = validate_cost_model(model)
+    if errors:
+        print("Schema validation errors:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+
     engine = CostEngine(model, time_basis="monthly")
     
     try:
@@ -222,7 +236,14 @@ def cmd_graph(args: list[str]) -> int:
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    
+
+    errors = validate_cost_model(model)
+    if errors:
+        print("Schema validation errors:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+
     # Check for flat override conflicts (Principle 9)
     warnings = []
     nodes = model.get("nodes", {})
