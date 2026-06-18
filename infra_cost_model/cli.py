@@ -27,7 +27,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("Commands:")
         print("  validate <yaml-file>  - Validate a cost model YAML file")
         print("  compute <yaml-file>   - Compute costs from a cost model")
-        print("  analyze <yaml-file>   - Full analysis with derived usage")
+        print("  analyze <yaml-file> [--json]  - Full analysis with derived usage")
         print("  seed-pricing          - Seed pricing cache from seed file")
         print("  graph <yaml-file>     - Render DAG visualization")
         return 0
@@ -128,7 +128,15 @@ def cmd_compute(args: list[str]) -> int:
 def cmd_analyze(args: list[str]) -> int:
     """Full analysis including derived usage and costs."""
     if not args:
-        print("Usage: analyze <yaml-file>", file=sys.stderr)
+        print("Usage: analyze <yaml-file> [--json]", file=sys.stderr)
+        return 1
+    
+    # Parse --json flag
+    json_output = "--json" in args
+    args = [a for a in args if a != "--json"]
+    
+    if not args:
+        print("Usage: analyze <yaml-file> [--json]", file=sys.stderr)
         return 1
     
     yaml_path = Path(args[0])
@@ -152,22 +160,7 @@ def cmd_analyze(args: list[str]) -> int:
         costs = engine.compute()
         derived = engine.get_derived_usage()
         
-        print(f"Analysis: {model['workflow']['name']}")
-        print("=" * 50)
-        
-        print("\nDerived Usage (per second):")
-        for addr, usage in sorted(derived.items()):
-            print(f"  {addr}: {usage.invocation_count:.4f} invocations/sec")
-        
-        print("\nCosts:")
         total = sum(costs.values())
-        for node, cost in sorted(costs.items()):
-            print(f"  {node}: ${cost:.6f}")
-        
-        print("-" * 50)
-        print(f"Total Monthly Cost: ${total:.6f}")
-        
-        # Also output JSON for programmatic use
         output = {
             "workflow": model["workflow"]["name"],
             "derived_usage": {
@@ -177,7 +170,23 @@ def cmd_analyze(args: list[str]) -> int:
             "costs": costs,
             "total_cost": total,
         }
-        print("\n(JSON output available with --json flag)")
+        
+        if json_output:
+            print(json.dumps(output, indent=2))
+        else:
+            print(f"Analysis: {model['workflow']['name']}")
+            print("=" * 50)
+            
+            print("\nDerived Usage (per second):")
+            for addr, usage in sorted(derived.items()):
+                print(f"  {addr}: {usage.invocation_count:.4f} invocations/sec")
+            
+            print("\nCosts:")
+            for node, cost in sorted(costs.items()):
+                print(f"  {node}: ${cost:.6f}")
+            
+            print("-" * 50)
+            print(f"Total Monthly Cost: ${total:.6f}")
         
         return 0
     except ValueError as e:
