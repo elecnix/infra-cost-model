@@ -149,6 +149,9 @@ class Workflow:
         self.entry: Optional[str] = None
         self.frequency: Optional[Frequency] = None
         self.parameters: dict[str, float] = {}
+        # Resource representation: extracted infrastructure configs (from IaC)
+        self._resources: dict[str, dict] = {}
+        # Cost model annotations: usage metrics, pricing overrides, etc.
         self._nodes: dict[str, dict] = {}
         self._edges: list[dict] = []
     
@@ -178,11 +181,11 @@ class Workflow:
         workflow.entry = entry
         workflow.frequency = frequency
         
-        # Auto-extract nodes from Terraform
+        # Auto-extract nodes from Terraform into resource representation
         if use_state_file:
-            workflow._nodes = cls._extract_from_state(use_state_file)
+            workflow._resources = cls._extract_from_state(use_state_file)
         else:
-            workflow._nodes = cls._extract_from_infra(infra_path)
+            workflow._resources = cls._extract_from_infra(infra_path)
         
         return workflow
     
@@ -325,7 +328,7 @@ class Workflow:
                 ) from e
         
         from infra_cost_model.resources.registry import extract_resources_from_pulumi
-        workflow._nodes = extract_resources_from_pulumi(pulumi_json)
+        workflow._resources = extract_resources_from_pulumi(pulumi_json)
         return workflow
     
     @classmethod
@@ -383,7 +386,7 @@ class Workflow:
                 ) from e
         
         from infra_cost_model.resources.registry import extract_resources_from_cdk
-        workflow._nodes = extract_resources_from_cdk(cdk_json)
+        workflow._resources = extract_resources_from_cdk(cdk_json)
         return workflow
     
     @classmethod
@@ -459,8 +462,85 @@ class Workflow:
         self.parameters[name] = value
         return self
     
+    def assemble(self) -> dict[str, dict]:
+        """Join resource representation with cost model annotations.
+        
+        Per Principle 5 (Two inputs, one engine), the resource representation
+        (what infrastructure exists) and cost model annotations (how it's used)
+        are separate inputs joined by the engine.
+        
+        The join: resource configs form the base; cost model annotations
+        (usageMetrics, pricingModel, pricingRates, flatOverride) overlay on top.
+        Nodes defined only in the cost model (e.g., external services like
+        Stripe that have no IaC representation) are included directly.
+        
+        Returns:
+            Merged dict mapping resource addresses to complete node configs.
+        """
+        nodes: dict[str, dict] = {}
+        
+        # Start with resources (from IaC extraction)
+        for addr, resource in self._resources.items():
+            node = dict(resource)
+            # Overlay cost model annotations
+            if addr in self._nodes:
+                node.update(self._nodes[addr])
+            nodes[addr] = node
+        
+        # Add pure cost-model nodes (no IaC resource, e.g., external services)
+        for addr, annotation in self._nodes.items():
+            if addr not in nodes:
+                nodes[addr] = dict(annotation)
+        
+        return nodes
+    
+    @property
+    def resource_representation(self) -> dict[str, dict]:
+        """The resource representation: extracted infrastructure configs.
+        
+        This is the 'what infrastructure exists' half of the cost model.
+        It can be swapped independently of the cost model annotations
+        to run the same cost model against different environments.
+        """
+        return dict(self._resources)
+    
+    @property
+    def cost_model_annotations(self) -> dict[str, dict]:
+        """The cost model annotations: usage metrics, pricing overrides, etc.
+        
+        This is the 'how it's used' half. It can be held constant while
+        the resource representation is swapped for different environments.
+        """
+        return dict(self._nodes)
+    
+    def with_resources(self, resources: dict[str, dict]) -> "Workflow":
+        """Create a copy with a different resource representation.
+        
+        Enables the Principle 5 workflow: run the same cost model
+        (edges, usage, parameters) against different infrastructure
+        (dev, staging, prod).
+        
+        Args:
+            resources: New resource representation dict.
+            
+        Returns:
+            New Workflow with the same cost model but different resources.
+        """
+        clone = Workflow(self.name)
+        clone.entry = self.entry
+        clone.frequency = self.frequency
+        clone.parameters = dict(self.parameters)
+        clone._resources = dict(resources)
+        clone._nodes = dict(self._nodes)
+        clone._edges = list(self._edges)
+        return clone
+    
     def to_cost_model(self) -> dict:
-        """Export to cost model representation JSON Schema."""
+        """Export to cost model representation JSON Schema.
+        
+        Calls assemble() to join the resource representation with
+        cost model annotations before export.
+        """
         workflow_dict = {
             "name": self.name,
             "entry": self.entry,
@@ -474,7 +554,7 @@ class Workflow:
         return {
             "version": "1.0",
             "workflow": workflow_dict,
-            "nodes": self._nodes,
+            "nodes": self.assemble(),
             "edges": self._edges,
         }
     
