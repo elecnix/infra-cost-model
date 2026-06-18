@@ -265,9 +265,28 @@ class CostAggregator:
         # When flatOverride is true, treat invocation_count as 1.0 — the
         # usageMetrics values are flat monthly totals (escape hatch per DP#9).
         invocations = usage.invocation_count if not flat_override else 1.0
-        provider = node.get("provider", "aws")
+        provider = node.get("provider")
         service = node.get("service", "")
-        region = node.get("region", "us-east-1")
+        region = node.get("region")
+        
+        # Validate provider/region when a catalog query path is possible (DP#6).
+        # The engine must not silently assume a specific provider or region.
+        # Validation only fires when a catalog is available and would be queried;
+        # embedded pricingRates (flat fallback) do not depend on provider/region.
+        if self.catalog is not None and node_metrics:
+            if provider is None:
+                raise ValueError(
+                    f"Node '{address}' is missing required 'provider' field. "
+                    f"Per Principle 6, the cost engine is provider-agnostic: "
+                    f"provider must be specified explicitly on each node "
+                    f"(e.g., 'aws', 'gcp', 'azure')."
+                )
+            if region is None:
+                raise ValueError(
+                    f"Node '{address}' is missing required 'region' field. "
+                    f"Region must be specified explicitly on each node "
+                    f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
+                )
         
         # Apply usage metrics with pricing rates.
         # Each metric value is a per-invocation quantity; multiply by
@@ -309,9 +328,27 @@ class CostAggregator:
         """
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
-        provider = node.get("provider", "aws")
+        provider = node.get("provider")
         service = node.get("service", "")
-        region = node.get("region", "us-east-1")
+        region = node.get("region")
+        
+        # Validate provider/region when a catalog query path is possible (DP#6).
+        # Validation only fires when a catalog is available and would be queried;
+        # embedded pricingRates (flat fallback) do not depend on provider/region.
+        if self.catalog is not None and node_metrics:
+            if provider is None:
+                raise ValueError(
+                    f"Node '{address}' is missing required 'provider' field. "
+                    f"Per Principle 6, the cost engine is provider-agnostic: "
+                    f"provider must be specified explicitly on each node "
+                    f"(e.g., 'aws', 'gcp', 'azure')."
+                )
+            if region is None:
+                raise ValueError(
+                    f"Node '{address}' is missing required 'region' field. "
+                    f"Region must be specified explicitly on each node "
+                    f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
+                )
         
         total_cost = 0.0
         catalog_used = False

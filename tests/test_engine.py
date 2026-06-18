@@ -883,3 +883,156 @@ class TestCostEngine:
         
         with pytest.raises(ValueError, match="Entry node 'mistyped_entry' not found"):
             engine.compute()
+
+
+class TestProviderRegionValidation:
+    """Tests for DP#6: provider/region must be explicit, no AWS defaults."""
+
+    def test_missing_provider_with_catalog_raises(self):
+        """Node with usageMetrics and catalog but no provider raises ValueError."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="requests", unit="requests",
+                price_usd=0.001,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+
+            nodes = {
+                "svc": {
+                    "nodeType": "compute",
+                    "resourceAddress": "test.svc",
+                    # provider intentionally missing
+                    "service": "TestSvc",
+                    "region": "us-east-1",
+                    "usageMetrics": {
+                        "requests": {"unit": "requests", "value": 100},
+                    },
+                }
+            }
+            derived = {"svc": DerivedUsage("svc", 1.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+
+            with pytest.raises(ValueError, match="missing required 'provider'"):
+                aggregator.aggregate()
+
+    def test_missing_region_with_catalog_raises(self):
+        """Node with usageMetrics and catalog but no region raises ValueError."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="requests", unit="requests",
+                price_usd=0.001,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+
+            nodes = {
+                "svc": {
+                    "nodeType": "compute",
+                    "resourceAddress": "test.svc",
+                    "provider": "gcp",
+                    "service": "TestSvc",
+                    # region intentionally missing
+                    "usageMetrics": {
+                        "requests": {"unit": "requests", "value": 100},
+                    },
+                }
+            }
+            derived = {"svc": DerivedUsage("svc", 1.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+
+            with pytest.raises(ValueError, match="missing required 'region'"):
+                aggregator.aggregate()
+
+    def test_missing_provider_without_catalog_ok(self):
+        """Without catalog, missing provider is fine (uses embedded pricingRates)."""
+        nodes = {
+            "svc": {
+                "nodeType": "compute",
+                "resourceAddress": "test.svc",
+                "usageMetrics": {
+                    "requests": {"unit": "requests", "value": 100},
+                },
+                "pricingRates": {
+                    "requests": 0.001,
+                }
+            }
+        }
+        derived = {"svc": DerivedUsage("svc", 1.0)}
+        aggregator = CostAggregator(nodes, derived, [], catalog=None)
+        costs = aggregator.aggregate()
+        # Should compute cost using embedded pricingRates
+        assert costs["svc"] == pytest.approx(100 * 0.001)
+
+    def test_missing_provider_no_usage_metrics_ok(self):
+        """Nodes without usageMetrics don't need provider (e.g., routing nodes)."""
+        nodes = {
+            "router": {
+                "nodeType": "routing",
+                "resourceAddress": "route",
+            }
+        }
+        derived = {"router": DerivedUsage("router", 100.0)}
+        aggregator = CostAggregator(nodes, derived, [], catalog=None)
+        costs = aggregator.aggregate()
+        # Routing node with no usageMetrics should have zero cost
+        assert "router" in costs
+
+    def test_tiered_missing_provider_with_catalog_raises(self):
+        """Tiered pricing with catalog but no provider raises ValueError."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            cache.upsert(Price(
+                vendor="aws", service="TestSvc", region="us-east-1",
+                product_family="Test", attributes={},
+                usage_metric="storage", unit="GB",
+                price_usd=0.023,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+
+            nodes = {
+                "svc": {
+                    "nodeType": "storage",
+                    "resourceAddress": "test.svc",
+                    # provider intentionally missing
+                    "service": "TestSvc",
+                    "region": "us-east-1",
+                    "pricingModel": "tiered",
+                    "usageMetrics": {
+                        "storage": {"unit": "GB", "value": 1000},
+                    },
+                }
+            }
+            derived = {"svc": DerivedUsage("svc", 1.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+
+            with pytest.raises(ValueError, match="missing required 'provider'"):
+                aggregator.aggregate()
