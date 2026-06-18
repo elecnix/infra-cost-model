@@ -103,10 +103,10 @@ def apply_free_tier(invocations: float, gb_seconds: float,
     return billed_invocations, billed_gb_seconds
 
 
-def provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
-                                 memory_mb: float = 128,
-                                 invocations: float = 0,
-                                 catalog=None) -> float:
+def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
+                                  memory_mb: float = 128,
+                                  invocations: float = 0,
+                                  catalog=None) -> float:
     """Calculate fixed provisioned-concurrency cost plus request charges.
     
     Args:
@@ -136,8 +136,8 @@ def provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
     return fixed_cost + request_price.total_cost
 
 
-def lambda_cost(invocations: float, memory_mb: float, avg_duration_ms: float,
-                catalog=None, region: str = "us-east-1") -> float:
+def _lambda_cost(invocations: float, memory_mb: float, avg_duration_ms: float,
+                 catalog=None, region: str = "us-east-1") -> float:
     """Calculate Lambda cost with pricing catalog lookup.
     
     Args:

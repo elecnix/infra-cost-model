@@ -5,7 +5,6 @@ not hand-written. This module generates Python resource handler classes
 with from_address, extract_tf, extract_pulumi, and extract_cdk methods.
 """
 
-import textwrap
 from typing import Optional
 
 from .schema_reader import ResourceSchema, SchemaAttribute

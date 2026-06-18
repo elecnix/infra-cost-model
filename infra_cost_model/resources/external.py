@@ -105,11 +105,11 @@ class ExternalNode(ExternalResource):
         )
 
 
-def external_cost(transactions: float, volume: float,
-                  percentage_rate: float = 0.0,
-                  fixed_per_transaction: float = 0.0,
-                  per_call: float = 0.0,
-                  catalog=None) -> float:
+def _external_cost(transactions: float, volume: float,
+                   percentage_rate: float = 0.0,
+                   fixed_per_transaction: float = 0.0,
+                   per_call: float = 0.0,
+                   catalog=None) -> float:
     """Calculate external service cost.
     
     Args:
@@ -150,7 +150,7 @@ STRIPE_STANDARD = {"percentage_rate": 0.029, "fixed_per_transaction": 0.30}
 STRIPE_INTERNATIONAL = {"percentage_rate": 0.039, "fixed_per_transaction": 0.30}
 
 
-def stripe_cost(transactions: float, volume: float, international: bool = False) -> float:
+def _stripe_cost(transactions: float, volume: float, international: bool = False) -> float:
     """Calculate Stripe cost.
     
     Args:
@@ -174,7 +174,7 @@ def stripe_cost(transactions: float, volume: float, international: bool = False)
 TWILIO_SMS_RATES = {"per_call": 0.0075}  # $0.0075 per SMS
 
 
-def twilio_sms_cost(messages: float) -> float:
+def _twilio_sms_cost(messages: float) -> float:
     """Calculate Twilio SMS cost.
     
     Args:
@@ -189,7 +189,7 @@ def twilio_sms_cost(messages: float) -> float:
 SENDGRID_RATES = {"per_call": 0.0001}  # $0.0001 per email (approximate)
 
 
-def sendgrid_cost(emails: float) -> float:
+def _sendgrid_cost(emails: float) -> float:
     """Calculate SendGrid cost.
     
     Args:
