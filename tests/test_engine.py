@@ -222,6 +222,78 @@ class TestWorkloadDeriver:
             deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
             derived = deriver.derive()
             assert "api_gateway" in derived
+    
+    def test_unreachable_nodes_warning(self):
+        """Test that unreachable nodes emit a warning."""
+        model = make_valid_cost_model()
+        # Add a disconnected node with no edges pointing to it
+        model["nodes"]["orphaned_cache"] = {
+            "nodeType": "storage",
+            "resourceAddress": "aws_elasticache_cluster.cache",
+            "provider": "aws",
+            "service": "AmazonElastiCache",
+        }
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        
+        with pytest.warns(UserWarning, match="orphaned_cache"):
+            deriver.derive()
+    
+    def test_unreachable_nodes_not_in_derived_usage(self):
+        """Test that unreachable nodes are not included in derived usage."""
+        model = make_valid_cost_model()
+        model["nodes"]["orphaned_cache"] = {
+            "nodeType": "storage",
+            "resourceAddress": "aws_elasticache_cluster.cache",
+            "provider": "aws",
+            "service": "AmazonElastiCache",
+        }
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        derived = deriver.derive()
+        
+        assert "orphaned_cache" not in derived
+        assert "api_gateway" in derived  # reachable nodes still derived
+    
+    def test_no_warning_when_all_nodes_reachable(self):
+        """Test that no warning is emitted when all nodes are reachable."""
+        model = make_valid_cost_model()
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        
+        import warnings
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            deriver.derive()
+        
+        # Filter out any unrelated warnings
+        unreachable_warnings = [w for w in record if "unreachable" in str(w.message).lower()]
+        assert len(unreachable_warnings) == 0
+    
+    def test_multiple_unreachable_nodes(self):
+        """Test warning lists all unreachable node names."""
+        model = make_valid_cost_model()
+        model["nodes"]["orphaned_a"] = {
+            "nodeType": "compute",
+            "resourceAddress": "orphan_a",
+            "provider": "aws",
+            "service": "AWSLambda",
+        }
+        model["nodes"]["orphaned_b"] = {
+            "nodeType": "storage",
+            "resourceAddress": "orphan_b",
+            "provider": "aws",
+            "service": "AmazonS3",
+        }
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        
+        with pytest.warns(UserWarning, match="orphaned_a") as w:
+            deriver.derive()
+        
+        # Warning should mention both orphaned nodes
+        warning_msg = str(w[0].message)
+        assert "orphaned_a" in warning_msg
+        assert "orphaned_b" in warning_msg
 
 
 class TestCostAggregator:
