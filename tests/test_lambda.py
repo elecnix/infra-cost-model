@@ -2,7 +2,8 @@
 
 import pytest
 from infra_cost_model.resources.lambda_func import (
-    LambdaFunction, calculate_gb_seconds, apply_free_tier, _lambda_cost,
+    LambdaFunction, calculate_gb_seconds, apply_free_tier,
+    get_lambda_free_tier_limits, _lambda_cost,
     _provisioned_concurrency_cost
 )
 from infra_cost_model.pricing.catalog import PricingCatalog
@@ -125,16 +126,48 @@ def test_free_tier_below_threshold():
 
 
 def test_lambda_cost_calculation():
-    """Test Lambda cost calculation with catalog."""
+    """Test Lambda cost calculation with catalog (free tier from tiered pricing).
+    
+    The seed data models the free tier as a $0 first tier for both
+    Lambda-Request and Lambda-GB-Second (DP#4: limits are data, not code).
+    _lambda_cost passes full quantities; the catalog applies the free tier
+    automatically via tiered pricing.
+    """
     cost = _lambda_cost(10_000_000, 256, 200)
     
-    # After free tier: 9M invocations, 100K GB-s billed
-    # Using seed prices: $0.20/M requests + $0.00001667/GB-s
+    # Full quantities: 10M invocations, 500K GB-s (from 256MB, 200ms, 10M calls)
+    # Catalog tiered pricing:
+    #   Lambda-Request:  Tier 0 (0-1M at $0) + Tier 1 (1M+ at $0.20/M)
+    #   Lambda-GB-Second: Tier 0 (0-400K at $0) + Tier 1 (400K+ at $0.0166667/GB-s)
+    # Result: 9M requests = $1.80, 100K GB-s ≈ $1.67
     expected_invocations_cost = 9_000_000 * 0.20e-6  # $1.80
     expected_duration_cost = 100_000 * 0.0000166667  # ~$1.67
     
     expected = expected_invocations_cost + expected_duration_cost
     assert cost == pytest.approx(expected, rel=0.01)
+
+
+def test_get_lambda_free_tier_limits():
+    """Test that free tier limits are queryable from the catalog (DP#4)."""
+    from infra_cost_model.pricing.catalog import PricingCatalog
+    
+    catalog = PricingCatalog()
+    limits = get_lambda_free_tier_limits(catalog)
+    
+    assert limits is not None, "Free tier limits should be available from seed data"
+    assert limits["requests"] == 1_000_000
+    assert limits["gb_seconds"] == 400_000
+
+
+def test_apply_free_tier_with_catalog():
+    """Test that apply_free_tier uses catalog limits when available (DP#4)."""
+    from infra_cost_model.pricing.catalog import PricingCatalog
+    
+    catalog = PricingCatalog()
+    billed = apply_free_tier(2_000_000, 500_000, catalog=catalog)
+    
+    assert billed[0] == 1_000_000  # 2M - 1M free (from catalog)
+    assert billed[1] == 100_000  # 500K - 400K free (from catalog)
 
 
 def test_provisioned_concurrency_cost():
