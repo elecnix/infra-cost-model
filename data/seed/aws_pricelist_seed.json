@@ -15,5 +15,9 @@
   {"vendor": "aws", "service": "AmazonBedrock", "region": "us-east-1", "usage_metric": "Bedrock-Cached-Input-Token", "unit": "tokens", "price_usd": 0.0000015, "source": "seed", "description": "Bedrock cached input token pricing ($0.0015 per 1K tokens, 50% discount)"},
   {"vendor": "aws", "service": "AmazonBedrock", "region": "us-east-1", "usage_metric": "Bedrock-Output-Token", "unit": "tokens", "price_usd": 0.000015, "source": "seed", "description": "Bedrock output token pricing ($0.015 per 1K tokens)"},
   {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "external_percentage", "unit": "USD", "price_usd": 0.029, "source": "seed", "description": "Stripe standard percentage rate (2.9%)"},
-  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "external_fixed_per_tx", "unit": "USD", "price_usd": 0.3, "source": "seed", "description": "Stripe fixed fee per transaction ($0.30)"}
+  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "external_fixed_per_tx", "unit": "USD", "price_usd": 0.3, "source": "seed", "description": "Stripe fixed fee per transaction ($0.30)"},
+  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "stripe_international_percentage", "unit": "USD", "price_usd": 0.039, "source": "seed", "description": "Stripe international card rate (3.9%)"},
+  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "stripe_international_fixed_per_tx", "unit": "USD", "price_usd": 0.30, "source": "seed", "description": "Stripe fixed fee per international transaction ($0.30)"},
+  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "twilio_sms", "unit": "messages", "price_usd": 0.0075, "source": "seed", "description": "Twilio SMS per-message pricing ($0.0075/SMS)"},
+  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "sendgrid_email", "unit": "emails", "price_usd": 0.0001, "source": "seed", "description": "SendGrid email per-message pricing ($0.0001/email)"}
 ]
