@@ -40,6 +40,16 @@ def per_day(value: float) -> Frequency:
     return Frequency(value=value, unit="perDay")
 
 
+def per_week(value: float) -> Frequency:
+    """Create per-week frequency."""
+    return Frequency(value=value, unit="perWeek")
+
+
+def per_month(value: float) -> Frequency:
+    """Create per-month frequency."""
+    return Frequency(value=value, unit="perMonth")
+
+
 @dataclass
 class Call:
     """Call edge definition in the DAG."""
@@ -90,7 +100,7 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
         # Parse "1000/min" -> {"unit": "perMinute", "value": 1000}
         if "/" in freq:
             value, unit = freq.split("/")
-            unit_map = {"sec": "perSecond", "min": "perMinute", "hr": "perHour", "day": "perDay"}
+            unit_map = {"sec": "perSecond", "min": "perMinute", "hr": "perHour", "day": "perDay", "week": "perWeek", "month": "perMonth"}
             workflow["frequency"] = {"value": float(value), "unit": unit_map.get(unit, "perMinute")}
     
     # Check if we have edges (standard format) or calls (DSL format)

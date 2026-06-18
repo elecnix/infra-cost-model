@@ -30,7 +30,7 @@
           "properties": {
             "unit": {
               "type": "string",
-              "enum": ["perSecond", "perMinute", "perHour", "perDay"],
+              "enum": ["perSecond", "perMinute", "perHour", "perDay", "perWeek", "perMonth"],
               "description": "Time unit for entry frequency"
             },
             "value": {
