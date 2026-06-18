@@ -241,3 +241,24 @@ class TestCostEngine:
         
         with pytest.raises(ValueError, match="Invalid DAG"):
             engine.compute()
+    
+    def test_monthly_time_basis(self):
+        """Test that monthly time_basis converts per-second costs to monthly."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+        
+        model = make_valid_cost_model(frequency=100)
+        
+        # Per-second engine
+        per_second = CostEngine(model, time_basis="perSecond")
+        ps_costs = per_second.compute()
+        ps_total = per_second.total_cost()
+        
+        # Monthly engine
+        monthly = CostEngine(model, time_basis="monthly")
+        mo_costs = monthly.compute()
+        mo_total = monthly.total_cost()
+        
+        # Monthly should be SECONDS_PER_MONTH × per-second
+        assert mo_total == pytest.approx(ps_total * SECONDS_PER_MONTH)
+        for addr in ps_costs:
+            assert mo_costs[addr] == pytest.approx(ps_costs[addr] * SECONDS_PER_MONTH)
