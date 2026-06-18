@@ -218,10 +218,6 @@ class CostAggregator:
     
     def aggregate(self) -> dict[str, float]:
         """Aggregate costs. Returns node costs."""
-        outgoing: dict[str, int] = defaultdict(int)
-        for edge in self.edges:
-            outgoing[edge["from"]] += 1
-        
         # Compute costs for all nodes in derived_usage
         for addr, usage in self.derived_usage.items():
             if addr in self.nodes:
