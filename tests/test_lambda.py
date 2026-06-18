@@ -5,7 +5,7 @@ from infra_cost_model.resources.lambda_func import (
     LambdaFunction, calculate_gb_seconds, apply_free_tier, lambda_cost,
     provisioned_concurrency_cost
 )
-from infra_cost_model.resources.types import ResourceExtract
+from infra_cost_model.pricing.catalog import PricingCatalog
 
 
 def test_lambda_from_address_terraform():
@@ -126,9 +126,6 @@ def test_free_tier_below_threshold():
 
 def test_lambda_cost_calculation():
     """Test Lambda cost calculation with catalog."""
-    # 10M invocations, 256MB, 200ms
-    gb_s = calculate_gb_seconds(10_000_000, 200, 256)  # 500K GB-s
-    
     cost = lambda_cost(10_000_000, 256, 200)
     
     # After free tier: 9M invocations, 100K GB-s billed

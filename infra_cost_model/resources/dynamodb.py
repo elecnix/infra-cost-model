@@ -1,6 +1,5 @@
 """DynamoDB resource model implementation."""
 
-from typing import Optional
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 from .types import StorageResource, ResourceExtract

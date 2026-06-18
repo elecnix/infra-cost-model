@@ -187,7 +187,6 @@ class CostAggregator:
         - percentage: External services (Stripe 2.9% + $0.30)
         """
         node = self.nodes.get(address, {})
-        node_type = node.get("nodeType", "compute")
         pricing_model = node.get("pricingModel", "flat")
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})

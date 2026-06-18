@@ -208,7 +208,6 @@ class Workflow:
     def _extract_from_state(cls, state_path: str) -> dict[str, dict]:
         """Extract resources from Terraform state JSON file."""
         import json
-        from pathlib import Path
         
         with open(state_path) as f:
             tf_json = json.load(f)

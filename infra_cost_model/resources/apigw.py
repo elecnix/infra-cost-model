@@ -1,6 +1,5 @@
 """API Gateway HTTP API v2 resource model implementation."""
 
-from typing import Optional
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 from .types import RoutingResource, ResourceExtract

@@ -1,10 +1,10 @@
 """AWS Lambda resource model implementation."""
 
-from infra_cost_model.pricing.catalog import PricingCatalog
 from typing import Optional
-from dataclasses import dataclass
 
-from .types import ComputeResource, ResourceExtract, UsageParams
+from infra_cost_model.pricing.catalog import PricingCatalog
+
+from .types import ComputeResource, ResourceExtract
 
 
 class LambdaFunction(ComputeResource):
@@ -107,7 +107,18 @@ def provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
                                  memory_mb: float = 128,
                                  invocations: float = 0,
                                  catalog=None) -> float:
-    """Calculate fixed provisioned-concurrency cost plus request charges."""
+    """Calculate fixed provisioned-concurrency cost plus request charges.
+    
+    Args:
+        provisioned_concurrency: Number of provisioned concurrent executions
+        hours: Hours of provisioned concurrency
+        memory_mb: Memory in MB (affects GB calculation)
+        invocations: Number of invocations for request pricing
+        catalog: Optional PricingCatalog (uses default if None)
+        
+    Returns:
+        Total hourly provisioned concurrency cost plus request charges.
+    """
     gb = memory_mb / 1024
     fixed_cost = provisioned_concurrency * gb * hours * 3600 * 0.000003606
     
@@ -115,7 +126,6 @@ def provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
         catalog = PricingCatalog()
     
     request_price = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request", invocations)
-    request_cost = request_price.total_cost if request_price and hasattr(request_price, 'total_cost') else 0.0
     
     if not request_price:
         raise PricingUnavailableError(
@@ -123,7 +133,7 @@ def provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
             "Run 'infra-cost-model seed-pricing' first."
         )
     
-    return fixed_cost + request_cost
+    return fixed_cost + request_price.total_cost
 
 
 def lambda_cost(invocations: float, memory_mb: float, avg_duration_ms: float,
