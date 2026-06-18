@@ -6,6 +6,7 @@ from .engine import (
     WorkloadDeriver,
     CostAggregator,
     DerivedUsage,
+    SensitivityAnalyzer,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "WorkloadDeriver",
     "CostAggregator",
     "DerivedUsage",
+    "SensitivityAnalyzer",
 ]

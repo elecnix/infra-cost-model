@@ -19,6 +19,7 @@ from infra_cost_model.engine import (
     WorkloadDeriver,
     CostAggregator,
     DerivedUsage,
+    SensitivityAnalyzer,
 )
 from infra_cost_model.sdk import (
     Workflow,
@@ -38,6 +39,7 @@ __all__ = [
     "WorkloadDeriver",
     "CostAggregator",
     "DerivedUsage",
+    "SensitivityAnalyzer",
     "Workflow",
     "Call",
     "NodeUsage",

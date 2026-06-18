@@ -243,3 +243,94 @@ class CostEngine:
         if not self.derived_usage:
             self.compute()
         return self.derived_usage
+
+
+class SensitivityAnalyzer:
+    """What-if analysis and sensitivity analysis for cost models.
+    
+    Implements Principle 7: The model supports sensitivity analysis.
+    """
+    
+    def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None):
+        self.cost_model = cost_model
+        self.catalog = catalog
+    
+    def what_if(self, parameter: str, value: float) -> float:
+        """Run what-if analysis by varying a single parameter.
+        
+        Args:
+            parameter: Parameter name (e.g., 'frequency', or edge rate like 'edge:from->to')
+            value: New value for the parameter
+            
+        Returns:
+            Total cost with the parameter change.
+        """
+        modified_model = self._modify_parameter(parameter, value)
+        engine = CostEngine(modified_model, self.catalog)
+        return engine.total_cost()
+    
+    def _modify_parameter(self, parameter: str, value: float) -> dict:
+        """Create a modified cost model with parameter changed."""
+        import copy
+        model = copy.deepcopy(self.cost_model)
+        
+        if parameter == "frequency":
+            model["workflow"]["frequency"]["value"] = value
+        elif parameter.startswith("edge:"):
+            # Format: edge:from_node->to_node
+            edge_spec = parameter[5:]
+            if "->" in edge_spec:
+                from_node, to_node = edge_spec.split("->")
+                for edge in model.get("edges", []):
+                    if edge["from"] == from_node and edge["to"] == to_node:
+                        edge["rate"] = value
+                        break
+        
+        return model
+    
+    def sensitivity(self, parameter: str, steps: int = 10) -> list[tuple[float, float]]:
+        """Calculate cost sensitivity across parameter values.
+        
+        Args:
+            parameter: Parameter to vary
+            steps: Number of steps to evaluate
+            
+        Returns:
+            List of (parameter_value, total_cost) tuples.
+        """
+        # Get baseline value
+        if parameter == "frequency":
+            baseline = self.cost_model["workflow"]["frequency"]["value"]
+        else:
+            baseline = 1.0  # Default baseline
+        
+        results = []
+        # Vary from 0.5x to 2x baseline
+        for i in range(steps):
+            multiplier = 0.5 + (i / (steps - 1))  # 0.5 to 2.0
+            value = baseline * multiplier
+            cost = self.what_if(parameter, value)
+            results.append((value, cost))
+        
+        return results
+    
+    def parameter_impact(self, parameter: str, delta: float = 0.1) -> float:
+        """Calculate cost impact of a parameter change.
+        
+        Args:
+            parameter: Parameter to vary
+            delta: Fractional change (e.g., 0.1 = 10% change)
+            
+        Returns:
+            Absolute cost difference.
+        """
+        engine = CostEngine(self.cost_model, self.catalog)
+        baseline = engine.total_cost()
+        
+        if parameter == "frequency":
+            current = self.cost_model["workflow"]["frequency"]["value"]
+            new_value = current * (1 + delta)
+            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
+            return engine_modified.total_cost() - baseline
+        
+        return 0.0
