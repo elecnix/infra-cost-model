@@ -131,20 +131,6 @@
       }
     },
 
-    "derivedMetric": {
-      "type": "object",
-      "required": ["formula", "unit"],
-      "properties": {
-        "formula": {
-          "type": "string",
-          "description": "Mathematical expression to compute this metric (e.g., '(memoryMb / 1024) * (avgDurationMs / 1000) * invocations')"
-        },
-        "unit": {
-          "type": "string"
-        }
-      }
-    },
-
     "edge": {
       "type": "object",
       "required": ["from", "to", "rate"],
