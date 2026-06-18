@@ -20,7 +20,9 @@ class APIGatewayHTTP(RoutingResource):
         """Parse resource address to determine if it's HTTP API v2."""
         if resource_address.startswith("aws_apigatewayv2_api.") or \
            resource_address.startswith("aws.apigatewayv2.Api:") or \
-           "APIGatewayV2::Api" in resource_address:
+           resource_address.startswith("aws:apigatewayv2:Api:") or \
+           "ApiGatewayV2::Api" in resource_address or \
+           "apigatewayv2::api" in resource_address.lower():
             return cls()
         return None
     

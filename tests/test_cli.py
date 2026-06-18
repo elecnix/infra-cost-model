@@ -492,3 +492,99 @@ def test_cli_seed_pricing():
     result = main(["seed-pricing"])
     assert result == 0
     # Should seed prices successfully
+
+class TestExtractCommand:
+    """Tests for the 'extract' CLI command."""
+
+    def test_extract_terraform(self):
+        """Extract resources from Terraform state JSON."""
+        import tempfile
+        import json
+        import os
+
+        tf_json = {
+            "resource": [
+                {
+                    "address": "aws_lambda_function.handler",
+                    "values": {"memory_size": 256, "timeout": 30, "region": "us-east-1"},
+                },
+            ]
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(tf_json, f)
+            temp_path = f.name
+
+        try:
+            from infra_cost_model.cli import main
+            result = main(["extract", temp_path])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_extract_pulumi(self):
+        """Extract resources from Pulumi stack export JSON."""
+        import tempfile
+        import json
+        import os
+
+        pulumi_json = {
+            "deployment": {
+                "resources": [
+                    {
+                        "id": "aws:lambda:Function:myHandler2",
+                        "type": "aws:lambda/function:Function",
+                        "inputs": {"memorySize": 256},
+                    },
+                ]
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(pulumi_json, f)
+            temp_path = f.name
+
+        try:
+            from infra_cost_model.cli import main
+            result = main(["extract", temp_path, "--from", "pulumi"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_extract_cdk(self):
+        """Extract resources from CDK template JSON."""
+        import tempfile
+        import json
+        import os
+
+        cdk_json = {
+            "Resources": {
+                "MyFn": {
+                    "Type": "AWS::Lambda::Function",
+                    "Properties": {"MemorySize": 128},
+                },
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(cdk_json, f)
+            temp_path = f.name
+
+        try:
+            from infra_cost_model.cli import main
+            result = main(["extract", temp_path, "--from", "cdk"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_extract_missing_file_returns_error(self):
+        """Extract with missing file returns error code 1."""
+        from infra_cost_model.cli import main
+        result = main(["extract", "/nonexistent.json"])
+        assert result == 1
+
+    def test_extract_no_args_returns_error(self):
+        """Extract with no args returns error code 1."""
+        from infra_cost_model.cli import main
+        result = main(["extract"])
+        assert result == 1

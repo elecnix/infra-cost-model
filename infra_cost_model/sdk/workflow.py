@@ -260,6 +260,122 @@ class Workflow:
         return nodes
     
     @classmethod
+    def from_pulumi(cls, name: str, *,
+                    entry: str, frequency: Frequency,
+                    stack_name: str = None,
+                    json_path: str = None) -> "Workflow":
+        """Create workflow from Pulumi stack export.
+        
+        Auto-extracts resources from Pulumi stack and populates nodes.
+        
+        Args:
+            name: Workflow identifier
+            entry: Entry node resource address (Pulumi URN or logical name)
+            frequency: Entry invocation rate
+            stack_name: Pulumi stack name (e.g., 'dev'). If provided, runs
+                        'pulumi stack export --json' in the current directory.
+            json_path: Path to an existing pulumi stack export JSON file.
+                       Takes precedence over stack_name.
+            
+        Returns:
+            Workflow instance ready for calls definition.
+            
+        Raises:
+            FileNotFoundError: If pulumi CLI not installed and no json_path.
+            RuntimeError: If pulumi stack export fails.
+        """
+        workflow = cls(name)
+        workflow.entry = entry
+        workflow.frequency = frequency
+        
+        if json_path:
+            import json
+            with open(json_path) as f:
+                pulumi_json = json.load(f)
+        else:
+            import json
+            import subprocess
+            try:
+                cmd = ["pulumi", "stack", "export", "--json"]
+                if stack_name:
+                    cmd.extend(["--stack", stack_name])
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, check=True,
+                )
+                pulumi_json = json.loads(result.stdout)
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    f"pulumi stack export failed: {e.stderr}"
+                ) from e
+            except FileNotFoundError as e:
+                raise FileNotFoundError(
+                    "pulumi CLI not found. Install Pulumi or use json_path to "
+                    "load an existing stack export JSON file."
+                ) from e
+        
+        from infra_cost_model.resources.registry import extract_resources_from_pulumi
+        workflow._nodes = extract_resources_from_pulumi(pulumi_json)
+        return workflow
+    
+    @classmethod
+    def from_cdk(cls, name: str, *,
+                 entry: str, frequency: Frequency,
+                 app_dir: str = None,
+                 json_path: str = None) -> "Workflow":
+        """Create workflow from CDK application.
+        
+        Auto-extracts resources from CDK-synthesized CloudFormation template.
+        
+        Args:
+            name: Workflow identifier
+            entry: Entry node resource address (CloudFormation logical ID or type:logical_id)
+            frequency: Entry invocation rate
+            app_dir: Path to CDK app directory. If provided, runs 'cdk synth --json'
+                     in that directory.
+            json_path: Path to an existing cdk.out/*.template.json file.
+                       Takes precedence over app_dir.
+            
+        Returns:
+            Workflow instance ready for calls definition.
+            
+        Raises:
+            FileNotFoundError: If CDK CLI not installed and no json_path.
+            RuntimeError: If cdk synth fails.
+        """
+        workflow = cls(name)
+        workflow.entry = entry
+        workflow.frequency = frequency
+        
+        if json_path:
+            import json
+            with open(json_path) as f:
+                cdk_json = json.load(f)
+        else:
+            import json
+            import subprocess
+            try:
+                cmd = ["cdk", "synth", "--json"]
+                result = subprocess.run(
+                    cmd,
+                    cwd=app_dir or ".",
+                    capture_output=True, text=True, check=True,
+                )
+                cdk_json = json.loads(result.stdout)
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    f"cdk synth failed: {e.stderr}"
+                ) from e
+            except FileNotFoundError as e:
+                raise FileNotFoundError(
+                    "cdk CLI not found. Install AWS CDK or use json_path to "
+                    "load an existing cdk.out template JSON file."
+                ) from e
+        
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+        workflow._nodes = extract_resources_from_cdk(cdk_json)
+        return workflow
+    
+    @classmethod
     def from_yaml(cls, yaml_path: str) -> "Workflow":
         """Load workflow from YAML file with DSL parsing.
         

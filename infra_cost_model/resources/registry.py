@@ -176,6 +176,48 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
     return results
 
 
+def extract_resources_from_cdk(cdk_json: dict) -> dict[str, dict]:
+    """Extract all resources from CDK synth --json output.
+    
+    CDK synthesizes to CloudFormation templates. The JSON output
+    contains a 'Resources' key with CloudFormation logical IDs.
+    
+    Args:
+        cdk_json: CDK synth JSON output (CloudFormation template)
+        
+    Returns:
+        Dict mapping resource addresses to extracted configs.
+        
+    Emits UserWarning if any resources could not be extracted because
+    no handler was registered for their resource type.
+    """
+    results = {}
+    unsupported: list[str] = []
+    resources = cdk_json.get("Resources", {})
+    
+    for logical_id, resource in resources.items():
+        if isinstance(resource, dict):
+            # CDK uses CloudFormation format: logical ID + Type + Properties
+            resource_type = resource.get("Type", "")
+            # Build a synthetic address from the CloudFormation type and logical ID
+            addr = f"{resource_type}:{logical_id}"
+            extracted = ResourceRegistry.extract(addr, resource, "cdk")
+            if extracted:
+                results[addr] = extracted
+            else:
+                unsupported.append(addr)
+    
+    if unsupported:
+        warnings.warn(
+            f"{len(unsupported)} resource(s) could not be extracted because no handler "
+            f"is registered for their resource type. Unsupported addresses: "
+            f"{', '.join(sorted(unsupported))}. "
+            f"Supported handlers: {sorted(h.__name__ for h in ResourceRegistry._handlers)}."
+        )
+    
+    return results
+
+
 def known_node_types() -> list[str]:
     """Return list of known node types."""
     return ["compute", "storage", "routing", "external"]

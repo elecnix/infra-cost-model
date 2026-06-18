@@ -469,3 +469,113 @@ nodes: {}
         assert result is workflow
         assert workflow.parameters["x"] == 1.0
         assert workflow.parameters["y"] == 2.0
+
+
+class TestIaCExtraction:
+    """Tests for Pulumi and CDK code generation (DP#10)."""
+
+    def test_from_pulumi_with_json_path(self):
+        """Workflow.from_pulumi() extracts resources from stack export JSON."""
+        import tempfile
+        import json
+        import os
+
+        pulumi_json = {
+            "deployment": {
+                "resources": [
+                    {
+                        "id": "aws:lambda:Function:myHandler",
+                        "type": "aws:lambda/function:Function",
+                        "inputs": {"memorySize": 256, "timeout": 30},
+                    },
+                    {
+                        "id": "aws:dynamodb:Table:myTable",
+                        "type": "aws:dynamodb/table:Table",
+                        "inputs": {"billingMode": "PAY_PER_REQUEST"},
+                    },
+                ]
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(pulumi_json, f)
+            temp_path = f.name
+
+        try:
+            workflow = Workflow.from_pulumi(
+                "my-api",
+                entry="aws:lambda:Function:myHandler",
+                frequency=per_minute(100),
+                json_path=temp_path,
+            )
+
+            assert "aws:lambda:Function:myHandler" in workflow._nodes
+            assert workflow._nodes["aws:lambda:Function:myHandler"]["nodeType"] == "compute"
+            assert "aws:dynamodb:Table:myTable" in workflow._nodes
+            assert workflow._nodes["aws:dynamodb:Table:myTable"]["nodeType"] == "storage"
+        finally:
+            os.unlink(temp_path)
+
+    def test_from_cdk_with_json_path(self):
+        """Workflow.from_cdk() extracts resources from CDK template JSON."""
+        import tempfile
+        import json
+        import os
+
+        cdk_json = {
+            "Resources": {
+                "MyFunction": {
+                    "Type": "AWS::Lambda::Function",
+                    "Properties": {
+                        "Handler": "index.handler",
+                        "Runtime": "python3.9",
+                        "MemorySize": 256,
+                    },
+                },
+                "MyTable": {
+                    "Type": "AWS::DynamoDB::Table",
+                    "Properties": {
+                        "BillingMode": "PAY_PER_REQUEST",
+                    },
+                },
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(cdk_json, f)
+            temp_path = f.name
+
+        try:
+            workflow = Workflow.from_cdk(
+                "my-api",
+                entry="AWS::Lambda::Function:MyFunction",
+                frequency=per_minute(100),
+                json_path=temp_path,
+            )
+
+            assert "AWS::Lambda::Function:MyFunction" in workflow._nodes
+            assert workflow._nodes["AWS::Lambda::Function:MyFunction"]["nodeType"] == "compute"
+            assert "AWS::DynamoDB::Table:MyTable" in workflow._nodes
+            assert workflow._nodes["AWS::DynamoDB::Table:MyTable"]["nodeType"] == "storage"
+        finally:
+            os.unlink(temp_path)
+
+    def test_from_pulumi_missing_file_raises(self):
+        """from_pulumi with nonexistent json_path raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            Workflow.from_pulumi(
+                "test",
+                entry="test",
+                frequency=per_minute(100),
+                json_path="/nonexistent/pulumi.json",
+            )
+
+    def test_from_cdk_missing_file_raises(self):
+        """from_cdk with nonexistent json_path raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            Workflow.from_cdk(
+                "test",
+                entry="test",
+                frequency=per_minute(100),
+                json_path="/nonexistent/cdk.json",
+            )
