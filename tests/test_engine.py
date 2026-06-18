@@ -114,8 +114,8 @@ class TestWorkloadDeriver:
         entry_usage = deriver.derived_usage["api_gateway"]
         assert entry_usage.invocation_count == pytest.approx(1.0)
     
-    def test_invocation_propagation(self):
-        """Test invocation propagation through edges."""
+    def test_invocation_derivation(self):
+        """Test invocation derivation through edges."""
         model = make_valid_cost_model(frequency=100)  # 100 per minute = 100/60 per second
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         derived = deriver.derive()
@@ -131,8 +131,8 @@ class TestWorkloadDeriver:
         expected_table = (100 / 60) * (0.8 * 1.0 + 1.0)
         assert derived["users_table"].invocation_count == pytest.approx(expected_table, rel=0.01)
     
-    def test_data_size_propagation(self):
-        """Test that edge dataSize is propagated to child's data_in."""
+    def test_data_size_derivation(self):
+        """Test that edge dataSize is derived to child's data_in."""
         workflow = {
             "entry": "A",
             "frequency": {"unit": "perSecond", "value": 10.0},
@@ -178,7 +178,7 @@ class TestWorkloadDeriver:
         expected = 10 * 0.6 * 10 + 5 * 1.0 * 25  # 60 + 125 = 185
         assert derived["C"].data_in == expected
 
-    def test_edge_type_propagation(self):
+    def test_edge_type_derivation(self):
         """Test that edge types are tracked on DerivedUsage."""
         workflow = {
             "entry": "A",
@@ -1256,10 +1256,10 @@ class TestParameterIntegration:
         assert impact == pytest.approx(0.0005)
 
 
-class TestTokenPropagation:
-    """Tests for DP#8: token flow propagation through DAG."""
+class TestTokenDistribution:
+    """Tests for DP#8: token flow distribution through DAG."""
 
-    def test_token_flow_propagation(self):
+    def test_token_flow_distribution(self):
         """Token flow from edges accumulates on child as input_tokens."""
         workflow = {
             "entry": "A",
@@ -1409,7 +1409,7 @@ class TestTokenPropagation:
             assert costs["llm"] == pytest.approx(expected)
 
     def test_token_flow_with_token_based_pricing(self):
-        """End-to-end: token flow propagation → token-based pricing."""
+        """End-to-end: token flow distribution → token-based pricing."""
         model = {
             "version": "1.0",
             "workflow": {

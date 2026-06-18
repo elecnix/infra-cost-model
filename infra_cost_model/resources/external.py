@@ -15,7 +15,7 @@ class ExternalPricing:
 
 
 class ExternalNode(ExternalResource):
-    """Third-party service node - economic sink with no infrastructure.
+    """Third-party service node - leaf node with no infrastructure.
     
     External nodes cannot be extracted from .tf/Pulumi/CDK since they
     represent services outside the user's infrastructure.

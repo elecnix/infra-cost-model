@@ -93,7 +93,7 @@ class ExternalResource(ResourceType):
     """External node type - leaf node for third-party services.
     
     Third-party services like Stripe, Twilio, SendGrid have no infrastructure
-    to extract. They are economic sinks with percentage-based or fixed pricing.
+    to extract. They are leaf nodes with percentage-based or fixed pricing.
     """
     
     @property

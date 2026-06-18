@@ -4,7 +4,7 @@ Cost engine: DAG traversal, workload derivation, and cost aggregation.
 This module implements Principles 1, 2, 3, 5:
 - Workload derivation: Compute derived usage by propagating frequency through DAG
 - DAG validation: Cycle detection and edge validation
-- Cost propagation: Aggregate costs bottom-up from derived usage
+- Cost aggregation: Aggregate costs bottom-up from derived usage
 - Resource x Cost Model join: Combine representations to produce costs
 """
 
@@ -176,7 +176,7 @@ class WorkloadDeriver:
                     self.derived_usage[child] = du
                 
                 indegree[child] -= 1
-                # Only enqueue for downstream propagation when ALL incoming
+                # Only enqueue for downstream derivation when ALL incoming
                 # edges have been processed, ensuring the accumulated
                 # invocation_count is final and correct.
                 if indegree[child] == 0:
@@ -473,7 +473,7 @@ class CostAggregator:
         service = node.get("service", "")
         region = node.get("region")
         
-        # Total input tokens: from token flow propagation through edges
+        # Total input tokens: from token flow distribution through edges
         total_input_tokens = usage.input_tokens
         
         # Total output tokens: invocation_count × per-invocation output tokens
