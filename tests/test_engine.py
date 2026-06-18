@@ -199,7 +199,7 @@ class TestCostAggregator:
         assert "users_table" in costs
     
     def test_cost_uses_pricing_rates(self):
-        """Test that costs use pricingRates from node definition."""
+        """Test that costs multiply invocation_count × per-invocation value × rate."""
         nodes = {
             "test_fn": {
                 "nodeType": "compute",
@@ -207,10 +207,12 @@ class TestCostAggregator:
                 "provider": "aws",
                 "service": "AWSLambda",
                 "usageMetrics": {
-                    "invocations": {"unit": "requests", "value": 1000},
+                    "invocations": {"unit": "requests", "value": 1},
+                    "gb_seconds": {"unit": "GB-seconds", "value": 0.5},
                 },
                 "pricingRates": {
-                    "invocations": 0.20e-6,  # $0.20 per million
+                    "invocations": 0.20e-6,  # $0.20 per million requests
+                    "gb_seconds": 0.0000166667,  # $0.0000166667 per GB-second
                 }
             }
         }
@@ -219,7 +221,10 @@ class TestCostAggregator:
         aggregator = CostAggregator(nodes, derived, [])
         costs = aggregator.aggregate()
         
-        assert costs["test_fn"] == pytest.approx(1000 * 0.20e-6)
+        # invocations: 1000 invocations × 1 × $0.20e-6 = $0.0002
+        # gb_seconds: 1000 invocations × 0.5 GB-sec × $0.0000166667 = $0.00833...
+        expected = 1000 * 1 * 0.20e-6 + 1000 * 0.5 * 0.0000166667
+        assert costs["test_fn"] == pytest.approx(expected)
     
     def test_percentage_pricing_cost(self):
         """Test percentage-based pricing (e.g., Stripe 2.9% + $0.30)."""

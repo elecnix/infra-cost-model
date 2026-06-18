@@ -190,10 +190,15 @@ class CostAggregator:
         """Compute direct cost for a single node.
         
         Handles multiple pricing models:
-        - flat: Simple usage × rate (default)
+        - flat: usageMetrics values are per-invocation quantities × invocation_count × rate
         - tiered: Tiered pricing from catalog
         - token_based: LLM token pricing
         - percentage: External services (Stripe 2.9% + $0.30)
+        
+        The derived invocation_count is the primary volume driver:
+        each usageMetrics value is a per-invocation quantity multiplied by
+        invocation_count to produce the total consumption that is then
+        multiplied by the pricing rate.
         """
         node = self.nodes.get(address, {})
         pricing_model = node.get("pricingModel", "flat")
@@ -205,16 +210,19 @@ class CostAggregator:
             return self._compute_percentage_cost(address, node, usage.invocation_count)
         
         total_cost = 0.0
+        invocations = usage.invocation_count
         
-        # Apply usage metrics with pricing rates
+        # Apply usage metrics with pricing rates.
+        # Each metric value is a per-invocation quantity; multiply by
+        # invocation_count to get total consumption, then by pricing rate.
         for metric_name, metric_def in node_metrics.items():
             if isinstance(metric_def, dict):
-                value = metric_def.get("value", 0)
+                per_invocation = metric_def.get("value", 0)
             else:
-                value = metric_def
+                per_invocation = metric_def
             
             if metric_name in pricing_rates:
-                total_cost += value * pricing_rates[metric_name]
+                total_cost += invocations * per_invocation * pricing_rates[metric_name]
         
         return total_cost
     
