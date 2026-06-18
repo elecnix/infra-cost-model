@@ -2,8 +2,8 @@
 
 import pytest
 from infra_cost_model.resources.lambda_func import (
-    LambdaFunction, calculate_gb_seconds, apply_free_tier, lambda_cost,
-    provisioned_concurrency_cost
+    LambdaFunction, calculate_gb_seconds, apply_free_tier, _lambda_cost,
+    _provisioned_concurrency_cost
 )
 from infra_cost_model.pricing.catalog import PricingCatalog
 
@@ -126,7 +126,7 @@ def test_free_tier_below_threshold():
 
 def test_lambda_cost_calculation():
     """Test Lambda cost calculation with catalog."""
-    cost = lambda_cost(10_000_000, 256, 200)
+    cost = _lambda_cost(10_000_000, 256, 200)
     
     # After free tier: 9M invocations, 100K GB-s billed
     # Using seed prices: $0.20/M requests + $0.00001667/GB-s
@@ -144,7 +144,7 @@ def test_provisioned_concurrency_cost():
     # Create catalog to ensure seed prices are available
     catalog = PricingCatalog()
     
-    cost = provisioned_concurrency_cost(
+    cost = _provisioned_concurrency_cost(
         provisioned_concurrency=10,
         hours=24,
         memory_mb=256,

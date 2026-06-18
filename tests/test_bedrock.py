@@ -2,8 +2,8 @@
 
 import pytest
 from infra_cost_model.resources.bedrock import (
-    BedrockModel, bedrock_cost, cached_prompt_bedrock_cost,
-    streaming_bedrock_cost, model_cost_comparison, is_economic_sink
+    BedrockModel, _bedrock_cost, _cached_prompt_bedrock_cost,
+    _streaming_bedrock_cost, _model_cost_comparison, is_economic_sink
 )
 
 
@@ -26,7 +26,7 @@ def test_bedrock_cost_calculation():
     """Test Bedrock cost calculation using catalog prices."""
     # Using seed prices: input $0.003/1K, output $0.015/1K
     # 2.16B input + 4.32B output
-    cost = bedrock_cost(2_160_000_000, 4_320_000_000, "claude-3-5-sonnet")
+    cost = _bedrock_cost(2_160_000_000, 4_320_000_000, "claude-3-5-sonnet")
     
     expected = 2_160_000_000 * 0.003 / 1000 + 4_320_000_000 * 0.015 / 1000
     # = 6480 + 64800 = $71,280
@@ -40,8 +40,8 @@ def test_bedrock_model_switching():
     input_tokens = 1_000_000_000
     output_tokens = 2_000_000_000
     
-    sonnet_cost = bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
-    haiku_cost = bedrock_cost(input_tokens, output_tokens, "claude-3-5-haiku")
+    sonnet_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
+    haiku_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-haiku")
     
     # All models currently use the same seed prices, so costs are equal
     # In a real implementation, models would have different pricing
@@ -54,7 +54,7 @@ def test_bedrock_asymmetric_pricing():
     input_tokens = 1_000_000
     output_tokens = 1_000_000
     
-    cost = bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
+    cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
     input_cost = input_tokens * 0.003 / 1000
     output_cost = output_tokens * 0.015 / 1000
     
@@ -64,7 +64,7 @@ def test_bedrock_asymmetric_pricing():
 
 def test_model_cost_comparison():
     """Test comparing costs across models."""
-    results = model_cost_comparison(1_000_000, 2_000_000)
+    results = _model_cost_comparison(1_000_000, 2_000_000)
     
     assert "claude-3-5-sonnet" in results
     assert "claude-3-5-haiku" in results
@@ -83,7 +83,7 @@ def test_leaf_node_classification():
 
 def test_cached_prompt_cost_discount():
     """Test prompt caching discount for cached input tokens."""
-    cost = cached_prompt_bedrock_cost(
+    cost = _cached_prompt_bedrock_cost(
         input_tokens=1_000_000,
         cached_input_tokens=500_000,
         output_tokens=1_000_000,
@@ -101,4 +101,4 @@ def test_cached_prompt_cost_discount():
 
 def test_streaming_cost_matches_total_tokens():
     """Streaming changes delivery, not total token cost."""
-    assert streaming_bedrock_cost(1_000_000, 2_000_000) == bedrock_cost(1_000_000, 2_000_000)
+    assert _streaming_bedrock_cost(1_000_000, 2_000_000) == _bedrock_cost(1_000_000, 2_000_000)
