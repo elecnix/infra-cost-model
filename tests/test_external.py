@@ -3,12 +3,82 @@
 import pytest
 from infra_cost_model.resources.external import (
     ExternalNode,
+    ExternalServiceRegistry,
     external_cost,
     stripe_cost,
     twilio_sms_cost,
     sendgrid_cost,
     STRIPE_STANDARD,
 )
+
+
+class TestExternalServiceRegistry:
+    """Tests for the data-driven external service registry."""
+
+    def teardown_method(self):
+        """Reset registry after each test to avoid cross-test pollution."""
+        ExternalServiceRegistry.reset()
+        ExternalServiceRegistry.register_many(["external", "stripe", "twilio", "sendgrid"])
+
+    def test_builtin_prefixes_registered(self):
+        """Built-in prefixes are registered at module load."""
+        assert "external." in ExternalServiceRegistry.known_prefixes()
+        assert "stripe." in ExternalServiceRegistry.known_prefixes()
+        assert "twilio." in ExternalServiceRegistry.known_prefixes()
+        assert "sendgrid." in ExternalServiceRegistry.known_prefixes()
+
+    def test_is_external_matches_registered_prefixes(self):
+        """is_external() returns True for addresses matching registered prefixes."""
+        assert ExternalServiceRegistry.is_external("external.stripe")
+        assert ExternalServiceRegistry.is_external("stripe.payment")
+        assert ExternalServiceRegistry.is_external("twilio.sms")
+        assert ExternalServiceRegistry.is_external("sendgrid.email")
+
+    def test_is_external_rejects_unknown(self):
+        """is_external() returns False for unrecognized addresses."""
+        assert not ExternalServiceRegistry.is_external("aws_lambda_function.test")
+        assert not ExternalServiceRegistry.is_external("postgres.database")
+
+    def test_register_new_vendor(self):
+        """Registering a new vendor makes its addresses recognized."""
+        assert not ExternalServiceRegistry.is_external("auth0.login")
+        ExternalServiceRegistry.register("auth0")
+        assert ExternalServiceRegistry.is_external("auth0.login")
+        assert ExternalServiceRegistry.is_external("auth0.user_management")
+
+    def test_register_adds_trailing_dot(self):
+        """register() adds trailing dot if missing."""
+        ExternalServiceRegistry.register("openai")
+        assert "openai." in ExternalServiceRegistry.known_prefixes()
+
+    def test_register_preserves_trailing_dot(self):
+        """register() preserves existing trailing dot."""
+        ExternalServiceRegistry.register("datadog.")
+        assert "datadog." in ExternalServiceRegistry.known_prefixes()
+
+    def test_register_many(self):
+        """register_many() registers multiple prefixes at once."""
+        ExternalServiceRegistry.register_many(["auth0", "openai", "datadog"])
+        assert ExternalServiceRegistry.is_external("auth0.login")
+        assert ExternalServiceRegistry.is_external("openai.chat")
+        assert ExternalServiceRegistry.is_external("datadog.metrics")
+
+    def test_external_node_respects_registry(self):
+        """ExternalNode.from_address() uses the registry, not hardcoded checks."""
+        # Built-in services work
+        assert ExternalNode.from_address("external.stripe") is not None
+
+        # Unknown service rejected
+        ExternalServiceRegistry.reset()
+        assert ExternalNode.from_address("external.stripe") is None
+
+        # After registering, it works
+        ExternalServiceRegistry.register("external")
+        assert ExternalNode.from_address("external.stripe") is not None
+
+        # New vendor works after registration
+        ExternalServiceRegistry.register("auth0")
+        assert ExternalNode.from_address("auth0.login") is not None
 
 
 def test_external_from_address():
