@@ -117,6 +117,127 @@ def test_extract_resources_from_tf():
     assert "aws_dynamodb_table.items" in results
 
 
+def test_extract_resources_from_tf_unsupported_warns():
+    """Test that unsupported resources emit a warning during TF extraction."""
+    import warnings
+    
+    tf_json = {
+        "resource": [
+            {
+                "address": "aws_lambda_function.get_items",
+                "type": "aws_lambda_function",
+                "values": {"memory_size": 256}
+            },
+            {
+                "address": "aws_eks_cluster.main",
+                "type": "aws_eks_cluster",
+                "values": {"name": "my-cluster"}
+            },
+            {
+                "address": "aws_s3_bucket.logs",
+                "type": "aws_s3_bucket",
+                "values": {"bucket": "my-logs"}
+            }
+        ]
+    }
+    
+    with pytest.warns(UserWarning, match="could not be extracted"):
+        results = extract_resources_from_tf(tf_json)
+    
+    # Lambda should be extracted, EKS and S3 are unsupported
+    assert "aws_lambda_function.get_items" in results
+    assert "aws_eks_cluster.main" not in results
+    assert "aws_s3_bucket.logs" not in results
+
+
+def test_extract_resources_from_tf_all_supported_no_warning():
+    """Test that no warning is emitted when all resources are supported."""
+    import warnings
+    
+    tf_json = {
+        "resource": [
+            {
+                "address": "aws_lambda_function.handler",
+                "type": "aws_lambda_function",
+                "values": {"memory_size": 256}
+            },
+            {
+                "address": "aws_dynamodb_table.users",
+                "type": "aws_dynamodb_table",
+                "values": {"billing_mode": "PAY_PER_REQUEST"}
+            }
+        ]
+    }
+    
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        results = extract_resources_from_tf(tf_json)
+    
+    unsupported_warnings = [w for w in record if "could not be extracted" in str(w.message)]
+    assert len(unsupported_warnings) == 0
+    assert len(results) == 2
+
+
+def test_extract_resources_from_tf_unsupported_lists_addresses():
+    """Test that the warning message lists unsupported resource addresses."""
+    tf_json = {
+        "resource": [
+            {
+                "address": "aws_eks_cluster.main",
+                "type": "aws_eks_cluster",
+                "values": {}
+            },
+            {
+                "address": "aws_s3_bucket.logs",
+                "type": "aws_s3_bucket",
+                "values": {}
+            }
+        ]
+    }
+    
+    with pytest.warns(UserWarning) as w:
+        extract_resources_from_tf(tf_json)
+    
+    warning_msg = str(w[0].message)
+    assert "aws_eks_cluster.main" in warning_msg
+    assert "aws_s3_bucket.logs" in warning_msg
+
+
+def test_extract_resources_from_pulumi_unsupported_warns():
+    """Test that unsupported Pulumi resources emit a warning."""
+    pulumi_json = {
+        "deployment": {
+            "resources": [
+                {
+                    "id": "aws:lambda:Function:get-items",
+                    "type": "aws:lambda:Function",
+                    "inputs": {"memorySize": 256}
+                },
+                {
+                    "id": "aws:eks:Cluster:main",
+                    "type": "aws:eks:Cluster",
+                    "inputs": {"name": "my-cluster"}
+                }
+            ]
+        }
+    }
+    
+    with pytest.warns(UserWarning, match="could not be extracted"):
+        results = extract_resources_from_pulumi(pulumi_json)
+    
+    # Lambda should be extracted, EKS is unsupported
+    assert "aws:lambda:Function:get-items" in results
+    assert "aws:eks:Cluster:main" not in results
+
+
+def test_known_prefixes():
+    """Test that known_prefixes returns handler names."""
+    prefixes = ResourceRegistry.known_prefixes()
+    assert len(prefixes) >= 5  # We have at least 5 registered handlers
+    assert "LambdaFunction" in prefixes
+    assert "DynamoDBTable" in prefixes
+
+
 def test_extract_resources_from_pulumi():
     """Test extracting multiple resources from Pulumi JSON."""
     pulumi_json = {

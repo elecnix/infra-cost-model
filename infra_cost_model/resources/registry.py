@@ -4,6 +4,7 @@ Resource type registry for auto-discovery and code generation.
 Implements Principle 10: Type-safe SDK from infrastructure-as-code type generation.
 """
 
+import warnings
 from typing import Optional, Type, Dict as DictType
 
 from .types import ResourceType
@@ -40,6 +41,17 @@ class ResourceRegistry:
                 return handler
         return None
     
+    @classmethod
+    def known_prefixes(cls) -> set[str]:
+        """Return set of resource address prefixes supported by registered handlers."""
+        prefixes = set()
+        for handler in cls._handlers:
+            # Each handler class has a pattern or set of patterns it matches.
+            # Collect the known prefixes by instantiating from known patterns.
+            # We expose handler names as a hint for unsupported-resource reporting.
+            prefixes.add(handler.__name__)
+        return prefixes
+
     @classmethod
     def extract(cls, resource_address: str, resource_data: dict, 
                 source_format: str = "terraform") -> Optional[dict]:
@@ -96,8 +108,12 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
         
     Returns:
         Dict mapping resource addresses to extracted configs.
+        
+    Emits UserWarning if any resources could not be extracted because
+    no handler was registered for their resource type.
     """
     results = {}
+    unsupported: list[str] = []
     # Terraform show -json structure
     resources = tf_json.get("resource", []) or tf_json.get("values", {}).get("root_module", {}).get("resources", [])
     
@@ -108,6 +124,17 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
                 extracted = ResourceRegistry.extract(addr, resource, "terraform")
                 if extracted:
                     results[addr] = extracted
+                else:
+                    unsupported.append(addr)
+    
+    if unsupported:
+        warnings.warn(
+            f"{len(unsupported)} resource(s) could not be extracted because no handler "
+            f"is registered for their resource type. Unsupported addresses: "
+            f"{', '.join(sorted(unsupported))}. "
+            f"Supported handlers: {sorted(h.__name__ for h in ResourceRegistry._handlers)}. "
+            f"To add support, register a new ResourceType handler for the unsupported resource(s)."
+        )
     
     return results
 
@@ -120,8 +147,12 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
         
     Returns:
         Dict mapping resource addresses to extracted configs.
+        
+    Emits UserWarning if any resources could not be extracted because
+    no handler was registered for their resource type.
     """
     results = {}
+    unsupported: list[str] = []
     resources = pulumi_json.get("deployment", {}).get("resources", [])
     
     for resource in resources:
@@ -131,6 +162,16 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
                 extracted = ResourceRegistry.extract(addr, resource, "pulumi")
                 if extracted:
                     results[addr] = extracted
+                else:
+                    unsupported.append(addr)
+    
+    if unsupported:
+        warnings.warn(
+            f"{len(unsupported)} resource(s) could not be extracted because no handler "
+            f"is registered for their resource type. Unsupported addresses: "
+            f"{', '.join(sorted(unsupported))}. "
+            f"Supported handlers: {sorted(h.__name__ for h in ResourceRegistry._handlers)}."
+        )
     
     return results
 
