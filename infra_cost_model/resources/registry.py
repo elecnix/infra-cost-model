@@ -2,6 +2,7 @@
 Resource type registry for auto-discovery and code generation.
 
 Implements Principle 10: Type-safe SDK from infrastructure-as-code type generation.
+Provides multi-cloud provider dispatch (DP#6).
 """
 
 import warnings
@@ -13,68 +14,129 @@ from .dynamodb import DynamoDBTable
 from .apigw import APIGatewayHTTP
 from .bedrock import BedrockModel
 from .external import ExternalNode
+from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
+from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
 
 class ResourceRegistry:
-    """Registry for resource type handlers.
-    
+    """Registry for resource type handlers with multi-cloud provider dispatch.
+
     Auto-registers known resource types and provides:
     - Mapping from resource addresses to handlers
+    - Provider-based dispatch (aws, gcp, azure)
     - Validation of usage metrics per resource
     - Node type classification
+
+    Per DP#6, handlers can be registered for any cloud provider. The registry
+    supports provider-qualified lookups and can list handlers by provider.
     """
-    
+
     _handlers: list[Type[ResourceType]] = []
-    
+    _provider_index: dict[str, list[Type[ResourceType]]] = {}
+
     @classmethod
     def register(cls, resource_type: Type[ResourceType]) -> Type[ResourceType]:
-        """Register a resource type handler."""
+        """Register a resource type handler.
+
+        Automatically indexes the handler by provider for fast provider-qualified
+        lookups.
+        """
         cls._handlers.append(resource_type)
+        # Index by provider: derive from class module path
+        provider = cls._infer_provider(resource_type)
+        if provider:
+            cls._provider_index.setdefault(provider, []).append(resource_type)
         return resource_type
-    
+
     @classmethod
-    def from_address(cls, resource_address: str) -> Optional[Type[ResourceType]]:
-        """Find the appropriate handler class for a resource address."""
-        for handler in cls._handlers:
+    def _infer_provider(cls, resource_type: Type[ResourceType]) -> Optional[str]:
+        """Infer provider from the handler class module path."""
+        module = resource_type.__module__
+        # Module paths: infra_cost_model.resources.<module>
+        parts = module.split(".")
+        if len(parts) >= 3 and parts[-2] == "resources":
+            leaf = parts[-1]
+            known_providers = {
+                "lambda_func": "aws", "dynamodb": "aws", "apigw": "aws",
+                "bedrock": "aws", "external": "external",
+                "gcp": "gcp", "azure": "azure",
+            }
+            return known_providers.get(leaf)
+        return None
+
+    @classmethod
+    def from_address(cls, resource_address: str,
+                     provider: Optional[str] = None) -> Optional[Type[ResourceType]]:
+        """Find the appropriate handler class for a resource address.
+
+        Args:
+            resource_address: Resource address from IaC export
+            provider: Optional provider hint ("aws", "gcp", "azure") to narrow
+                      the search scope. When provided, provider-specific handlers
+                      are tried first.
+
+        Returns:
+            Matching handler class or None.
+        """
+        handlers = cls._handlers
+        if provider and provider in cls._provider_index:
+            # Try provider-specific handlers first, then all handlers as fallback
+            handlers = cls._provider_index[provider] + [
+                h for h in cls._handlers
+                if h not in cls._provider_index.get(provider, [])
+            ]
+
+        for handler in handlers:
             result = handler.from_address(resource_address)
             if result is not None:
                 return handler
         return None
-    
-    @classmethod
-    def known_prefixes(cls) -> set[str]:
-        """Return set of resource address prefixes supported by registered handlers."""
-        prefixes = set()
-        for handler in cls._handlers:
-            # Each handler class has a pattern or set of patterns it matches.
-            # Collect the known prefixes by instantiating from known patterns.
-            # We expose handler names as a hint for unsupported-resource reporting.
-            prefixes.add(handler.__name__)
-        return prefixes
 
     @classmethod
-    def extract(cls, resource_address: str, resource_data: dict, 
+    def known_prefixes(cls) -> set[str]:
+        """Return set of handler class names registered."""
+        return {handler.__name__ for handler in cls._handlers}
+
+    @classmethod
+    def handlers_by_provider(cls, provider: str) -> list[Type[ResourceType]]:
+        """Return handlers registered for a specific cloud provider.
+
+        Args:
+            provider: Cloud provider identifier ("aws", "gcp", "azure")
+
+        Returns:
+            List of handler classes for the provider (empty list if none).
+        """
+        return list(cls._provider_index.get(provider, []))
+
+    @classmethod
+    def supported_providers(cls) -> set[str]:
+        """Return the set of cloud providers with registered handlers."""
+        return set(cls._provider_index.keys())
+
+    @classmethod
+    def extract(cls, resource_address: str, resource_data: dict,
                 source_format: str = "terraform") -> Optional[dict]:
         """Extract resource configuration using the appropriate handler.
-        
+
         Args:
             resource_address: Full resource address
             resource_data: Raw resource data from IaC export
             source_format: "terraform", "pulumi", or "cdk"
-            
+
         Returns:
             Extracted resource dict or None if unsupported.
         """
         handler = cls.from_address(resource_address)
         if not handler:
             return None
-        
+
         extract_methods = {
             "terraform": "extract_tf",
             "pulumi": "extract_pulumi",
             "cdk": "extract_cdk",
         }
-        
+
         method = getattr(handler, extract_methods.get(source_format, "extract_tf"), None)
         if method:
             try:
@@ -93,11 +155,25 @@ class ResourceRegistry:
 
 
 # Register known resource types in order of specificity
+# AWS handlers
 ResourceRegistry.register(APIGatewayHTTP)  # More specific patterns first
 ResourceRegistry.register(LambdaFunction)
 ResourceRegistry.register(DynamoDBTable)
 ResourceRegistry.register(BedrockModel)
 ResourceRegistry.register(ExternalNode)
+
+# GCP handlers (DP#6: multi-cloud support)
+ResourceRegistry.register(CloudRun)
+ResourceRegistry.register(CloudFunction)
+ResourceRegistry.register(CloudStorage)
+ResourceRegistry.register(Firestore)
+
+# Azure handlers (DP#6: multi-cloud support)
+ResourceRegistry.register(APIManagement)
+ResourceRegistry.register(AzureFunction)
+ResourceRegistry.register(CosmosDB)
+ResourceRegistry.register(AzureOpenAI)
+ResourceRegistry.register(AzureBlobStorage)
 
 
 def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
