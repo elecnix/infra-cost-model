@@ -85,11 +85,11 @@ class DynamoDBTable(StorageResource):
         )
 
 
-def dynamodb_cost(read_requests: float, write_requests: float, storage_gb: float,
-                  billing_mode: str = "PAY_PER_REQUEST",
-                  catalog=None, gsi_read_requests: float = 0,
-                  gsi_write_requests: float = 0,
-                  region: str = "us-east-1") -> float:
+def _dynamodb_cost(read_requests: float, write_requests: float, storage_gb: float,
+                   billing_mode: str = "PAY_PER_REQUEST",
+                   catalog=None, gsi_read_requests: float = 0,
+                   gsi_write_requests: float = 0,
+                   region: str = "us-east-1") -> float:
     """Calculate DynamoDB cost.
     
     Args:
@@ -156,10 +156,10 @@ def _provisioned_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
     return total
 
 
-def provisioned_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
-                     catalog=None,
-                     gsi_rcu_hours: float = 0, gsi_wcu_hours: float = 0,
-                     region: str = "us-east-1") -> float:
+def _provisioned_dynamodb_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
+                               catalog=None,
+                               gsi_rcu_hours: float = 0, gsi_wcu_hours: float = 0,
+                               region: str = "us-east-1") -> float:
     """Calculate DynamoDB provisioned costs from RCU/WCU hours."""
     total_rcu = rcu_hours + gsi_rcu_hours
     total_wcu = wcu_hours + gsi_wcu_hours
