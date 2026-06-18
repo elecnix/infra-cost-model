@@ -4,10 +4,10 @@ import pytest
 from infra_cost_model.resources.external import (
     ExternalNode,
     ExternalServiceRegistry,
-    external_cost,
-    stripe_cost,
-    twilio_sms_cost,
-    sendgrid_cost,
+    _external_cost,
+    _stripe_cost,
+    _twilio_sms_cost,
+    _sendgrid_cost,
     STRIPE_STANDARD,
 )
 
@@ -118,7 +118,7 @@ def test_external_no_infrastructure_extraction():
 def test_stripe_standard_cost():
     """Test Stripe standard pricing."""
     # 10,000 transactions, $500,000 volume
-    cost = stripe_cost(10_000, 500_000)
+    cost = _stripe_cost(10_000, 500_000)
     
     expected = 500_000 * 0.029 + 10_000 * 0.30
     assert cost == pytest.approx(expected)
@@ -126,7 +126,7 @@ def test_stripe_standard_cost():
 
 def test_stripe_international_cost():
     """Test Stripe international card pricing."""
-    cost = stripe_cost(10_000, 500_000, international=True)
+    cost = _stripe_cost(10_000, 500_000, international=True)
     
     # Standard + 1% currency conversion
     expected = 500_000 * 0.039 + 10_000 * 0.30 + 500_000 * 0.01
@@ -135,19 +135,19 @@ def test_stripe_international_cost():
 
 def test_twilio_sms_cost():
     """Test Twilio SMS pricing."""
-    cost = twilio_sms_cost(100_000)
+    cost = _twilio_sms_cost(100_000)
     assert cost == pytest.approx(750.0)  # 100K * $0.0075
 
 
 def test_sendgrid_cost():
     """Test SendGrid pricing."""
-    cost = sendgrid_cost(50_000)
+    cost = _sendgrid_cost(50_000)
     assert cost == pytest.approx(5.0)  # 50K * $0.0001
 
 
 def test_external_cost_with_percentage():
     """Test external cost with percentage model."""
-    cost = external_cost(
+    cost = _external_cost(
         transactions=5_000,
         volume=250_000,
         percentage_rate=0.029,
@@ -160,7 +160,7 @@ def test_external_cost_with_percentage():
 
 def test_external_cost_with_per_call():
     """Test external cost with per-call model."""
-    cost = external_cost(
+    cost = _external_cost(
         transactions=10_000,
         volume=0,
         per_call=0.0075,

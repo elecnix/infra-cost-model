@@ -75,8 +75,8 @@ class BedrockModel(ComputeResource):
         )
 
 
-def bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet",
-                 catalog=None, region: str = "us-east-1") -> float:
+def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet",
+                  catalog=None, region: str = "us-east-1") -> float:
     """Calculate Bedrock/LLM model cost using catalog prices.
     
     Args:
@@ -92,11 +92,11 @@ def bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude
     return _bedrock_token_cost(input_tokens, 0.0, output_tokens, model, catalog, region)
 
 
-def cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
-                               output_tokens: float,
-                               model: str = "claude-3-5-sonnet",
-                               catalog=None,
-                               region: str = "us-east-1") -> float:
+def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
+                                output_tokens: float,
+                                model: str = "claude-3-5-sonnet",
+                                catalog=None,
+                                region: str = "us-east-1") -> float:
     """Calculate Bedrock cost with cached prompt input discounted at 50%."""
     if catalog is None:
         catalog = PricingCatalog()
@@ -124,12 +124,12 @@ def cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
     return total
 
 
-def streaming_bedrock_cost(input_tokens: float, output_tokens: float,
-                           model: str = "claude-3-5-sonnet",
-                           catalog=None,
-                           region: str = "us-east-1") -> float:
+def _streaming_bedrock_cost(input_tokens: float, output_tokens: float,
+                            model: str = "claude-3-5-sonnet",
+                            catalog=None,
+                            region: str = "us-east-1") -> float:
     """Streaming delivery does not change total token cost."""
-    return bedrock_cost(input_tokens, output_tokens, model, catalog, region)
+    return _bedrock_cost(input_tokens, output_tokens, model, catalog, region)
 
 
 def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float,
@@ -166,7 +166,7 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
     return input_cost + cached_cost + output_cost
 
 
-def model_cost_comparison(input_tokens: float, output_tokens: float) -> dict:
+def _model_cost_comparison(input_tokens: float, output_tokens: float) -> dict:
     """Compare costs across LLM models.
     
     Note: Uses seed prices for comparison.

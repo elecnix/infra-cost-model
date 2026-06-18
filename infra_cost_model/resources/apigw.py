@@ -78,9 +78,9 @@ class APIGatewayHTTP(RoutingResource):
         )
 
 
-def apigw_total_cost(requests: float, data_out_gb: float = 0.0,
-                     catalog=None,
-                     region: str = "us-east-1") -> float:
+def _apigw_total_cost(requests: float, data_out_gb: float = 0.0,
+                      catalog=None,
+                      region: str = "us-east-1") -> float:
     """Calculate total API Gateway HTTP API cost including egress.
     
     Args:
@@ -129,7 +129,7 @@ def _egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") ->
     return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
 
 
-def apigw_egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") -> float:
+def _apigw_egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") -> float:
     """Alias for egress cost calculation."""
     if catalog is None:
         catalog = PricingCatalog()

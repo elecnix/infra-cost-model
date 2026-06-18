@@ -134,9 +134,9 @@ def test_extract_resources_from_tf_unsupported_warns():
                 "values": {"name": "my-cluster"}
             },
             {
-                "address": "aws_s3_bucket.logs",
-                "type": "aws_s3_bucket",
-                "values": {"bucket": "my-logs"}
+                "address": "aws_rds_cluster.main",
+                "type": "aws_rds_cluster",
+                "values": {"engine": "aurora"}
             }
         ]
     }
@@ -144,10 +144,10 @@ def test_extract_resources_from_tf_unsupported_warns():
     with pytest.warns(UserWarning, match="could not be extracted"):
         results = extract_resources_from_tf(tf_json)
     
-    # Lambda should be extracted, EKS and S3 are unsupported
+    # Lambda should be extracted, EKS and RDS are unsupported
     assert "aws_lambda_function.get_items" in results
     assert "aws_eks_cluster.main" not in results
-    assert "aws_s3_bucket.logs" not in results
+    assert "aws_rds_cluster.main" not in results
 
 
 def test_extract_resources_from_tf_all_supported_no_warning():
@@ -188,8 +188,8 @@ def test_extract_resources_from_tf_unsupported_lists_addresses():
                 "values": {}
             },
             {
-                "address": "aws_s3_bucket.logs",
-                "type": "aws_s3_bucket",
+                "address": "aws_rds_cluster.main",
+                "type": "aws_rds_cluster",
                 "values": {}
             }
         ]
@@ -200,7 +200,7 @@ def test_extract_resources_from_tf_unsupported_lists_addresses():
     
     warning_msg = str(w[0].message)
     assert "aws_eks_cluster.main" in warning_msg
-    assert "aws_s3_bucket.logs" in warning_msg
+    assert "aws_rds_cluster.main" in warning_msg
 
 
 def test_extract_resources_from_pulumi_unsupported_warns():
@@ -337,8 +337,8 @@ class TestCdkExtraction:
                     "Properties": {"MemorySize": 128},
                 },
                 "MyBucket": {
-                    "Type": "AWS::S3::Bucket",
-                    "Properties": {"BucketName": "my-bucket"},
+                    "Type": "AWS::RDS::DBCluster",
+                    "Properties": {"Engine": "aurora"},
                 },
             }
         }
@@ -347,8 +347,8 @@ class TestCdkExtraction:
             nodes = extract_resources_from_cdk(cdk_json)
 
         assert "AWS::Lambda::Function:MyFn" in nodes
-        # S3 bucket is not a registered resource type
-        assert "AWS::S3::Bucket:MyBucket" not in nodes
+        # RDS DBCluster is not a registered resource type
+        assert "AWS::RDS::DBCluster:MyBucket" not in nodes
 
     def test_extract_cdk_empty_resources(self):
         """Empty CDK template returns empty dict."""

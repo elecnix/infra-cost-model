@@ -2,7 +2,7 @@
 
 import pytest
 from infra_cost_model.resources.dynamodb import (
-    DynamoDBTable, dynamodb_cost, _on_demand_cost, provisioned_cost
+    DynamoDBTable, _dynamodb_cost, _on_demand_cost, _provisioned_dynamodb_cost
 )
 
 
@@ -83,7 +83,7 @@ def test_dynamodb_on_demand_cost():
 
 def test_dynamodb_zero_cost():
     """Test zero cost for zero usage."""
-    cost = dynamodb_cost(0, 0, 0)
+    cost = _dynamodb_cost(0, 0, 0)
     assert cost == 0
 
 
@@ -104,7 +104,7 @@ def test_dynamodb_leaf_node_validation():
 
 def test_dynamodb_provisioned_cost():
     """Test provisioned cost from RCU/WCU hours."""
-    cost = provisioned_cost(1000, 500, 10.0, None)
+    cost = _provisioned_dynamodb_cost(1000, 500, 10.0, None)
     
     # 1000 RCU-hours * $0.00013, 500 WCU-hours * $0.00065, 10GB * $0.25
     expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
@@ -113,8 +113,8 @@ def test_dynamodb_provisioned_cost():
 
 
 def test_dynamodb_dynamodb_cost_provisioned():
-    """Test dynamodb_cost with PROVISIONED billing mode."""
-    cost = dynamodb_cost(1000, 500, 10.0, billing_mode="PROVISIONED", catalog=None)
+    """Test _dynamodb_cost with PROVISIONED billing mode."""
+    cost = _dynamodb_cost(1000, 500, 10.0, billing_mode="PROVISIONED", catalog=None)
     
     expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
     
@@ -122,7 +122,7 @@ def test_dynamodb_dynamodb_cost_provisioned():
 
 def test_dynamodb_gsi_on_demand_cost():
     """Global secondary indexes add read and write request charges."""
-    cost = dynamodb_cost(
+    cost = _dynamodb_cost(
         1_000_000,
         1_000_000,
         10.0,
@@ -141,7 +141,7 @@ def test_dynamodb_gsi_on_demand_cost():
 
 def test_dynamodb_gsi_provisioned_cost():
     """Global secondary indexes add provisioned RCU/WCU-hour charges."""
-    cost = provisioned_cost(
+    cost = _provisioned_dynamodb_cost(
         1000,
         500,
         10.0,

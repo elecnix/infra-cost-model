@@ -14,6 +14,7 @@ from .dynamodb import DynamoDBTable
 from .apigw import APIGatewayHTTP
 from .bedrock import BedrockModel
 from .external import ExternalNode
+from .s3 import S3Bucket
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -159,6 +160,7 @@ class ResourceRegistry:
 ResourceRegistry.register(APIGatewayHTTP)  # More specific patterns first
 ResourceRegistry.register(LambdaFunction)
 ResourceRegistry.register(DynamoDBTable)
+ResourceRegistry.register(S3Bucket)
 ResourceRegistry.register(BedrockModel)
 ResourceRegistry.register(ExternalNode)
 
