@@ -33,6 +33,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("  graph <yaml-file>     - Render DAG visualization")
         print("  whatif <yaml-file>    - What-if analysis varying a parameter")
         print("  sensitivity <yaml-file> - Sensitivity sweep across parameter range")
+        print("  codegen <schema-json>  - Generate resource handler from terraform provider schema")
         return 0
     
     command = argv[0]
@@ -53,6 +54,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_whatif(argv[1:] if len(argv) > 1 else [])
     elif command == "sensitivity":
         return cmd_sensitivity(argv[1:] if len(argv) > 1 else [])
+    elif command == "codegen":
+        return cmd_codegen(argv[1:] if len(argv) > 1 else [])
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
         return 1
@@ -523,6 +526,74 @@ def cmd_sensitivity(args: list[str]) -> int:
         
         return 0
     except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_codegen(args: list[str]) -> int:
+    """Generate resource handler from terraform provider schema.
+
+    Usage: codegen <schema-json> [--resource <type>]
+
+    Reads a terraform providers schema -json file and generates typed
+    Python resource handler classes per DP#10.
+    """
+    if not args:
+        print("Usage: codegen <schema-json> [--resource <type>]", file=sys.stderr)
+        print()
+        print("Generate resource handlers from terraform provider schema:", file=sys.stderr)
+        print("  codegen providers-schema.json", file=sys.stderr)
+        print("  codegen providers-schema.json --resource aws_lambda_function", file=sys.stderr)
+        print()
+        print("Generate the schema with:", file=sys.stderr)
+        print("  terraform providers schema -json > providers-schema.json", file=sys.stderr)
+        return 1
+
+    path = Path(args[0])
+    if not path.exists():
+        print(f"File not found: {path}", file=sys.stderr)
+        return 1
+
+    # Parse optional --resource flag
+    target_resource = None
+    for i, arg in enumerate(args):
+        if arg == "--resource" and i + 1 < len(args):
+            target_resource = args[i + 1]
+            break
+
+    try:
+        from infra_cost_model.codegen.schema_reader import SchemaReader
+        from infra_cost_model.codegen.generator import CodeGenerator
+
+        providers = SchemaReader.parse_file(str(path))
+        gen = CodeGenerator()
+
+        count = 0
+        for provider in providers:
+            for resource in provider.resources:
+                if target_resource and resource.resource_type != target_resource:
+                    continue
+
+                source = gen.generate_handler(resource)
+                print(source)
+                print()  # blank line between handlers
+                count += 1
+
+        if count == 0:
+            if target_resource:
+                print(f"Resource type '{target_resource}' not found in schema.", file=sys.stderr)
+                return 1
+            else:
+                print("No resources found in schema.", file=sys.stderr)
+                return 1
+
+        print(f"# Generated {count} resource handler(s) from {path}", file=sys.stderr)
+        return 0
+
+    except json.JSONDecodeError as e:
+        print(f"Invalid JSON in {path}: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
