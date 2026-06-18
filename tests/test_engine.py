@@ -130,6 +130,44 @@ class TestWorkloadDeriver:
         expected_table = (100 / 60) * (0.8 * 1.0 + 1.0)
         assert derived["users_table"].invocation_count == pytest.approx(expected_table, rel=0.01)
     
+    def test_multi_path_dag_topological_order(self):
+        """Test multi-path DAG: A→B, A→C, C→B, B→D.
+        
+        With BFS order, B may be dequeued and propagate to D before C's
+        contribution to B arrives. Topological sort fixes this by only
+        propagating B downstream after all incoming edges processed.
+        """
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "entry", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "compute_b"},
+            "C": {"nodeType": "compute", "resourceAddress": "compute_c"},
+            "D": {"nodeType": "storage", "resourceAddress": "storage_d"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 1.0, "type": "invoke"},
+            {"from": "A", "to": "C", "rate": 1.0, "type": "invoke"},
+            {"from": "C", "to": "B", "rate": 1.0, "type": "invoke"},
+            {"from": "B", "to": "D", "rate": 1.0, "type": "invoke"},
+        ]
+        
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+        
+        # A gets entry frequency = 10
+        assert derived["A"].invocation_count == 10.0
+        # C gets A * 1.0 = 10
+        assert derived["C"].invocation_count == 10.0
+        # B gets A * 1.0 + C * 1.0 = 10 + 10 = 20 (not 10!)
+        assert derived["B"].invocation_count == 20.0, \
+            f"Expected 20.0 (10 from A + 10 from C), got {derived['B'].invocation_count}"
+        # D gets B * 1.0 = 20 (not 10!)
+        assert derived["D"].invocation_count == 20.0, \
+            f"Expected 20.0 (from B=20), got {derived['D'].invocation_count}"
+    
     def test_per_second_frequency(self):
         """Test perSecond frequency conversion."""
         model = make_valid_cost_model()
