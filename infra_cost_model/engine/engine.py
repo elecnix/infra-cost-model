@@ -22,6 +22,8 @@ class DerivedUsage:
     resource_address: str
     invocation_count: float  # How many times this node executes
     usage_metrics: dict[str, float] = field(default_factory=dict)
+    data_in: float = 0.0  # Total data received (bytes from incoming edges)
+    edge_types: set[str] = field(default_factory=set)  # Edge types feeding this node
 
 
 class DAGValidator:
@@ -138,13 +140,28 @@ class WorkloadDeriver:
                 call_rate = edge["rate"]
                 child_invocations = parent_invocations * call_rate
                 
+                # Accumulate data_in from edge dataSize
+                data_bytes = 0.0
+                data_size = edge.get("dataSize", {}) or edge.get("data_size", {})
+                if data_size:
+                    average = data_size.get("average", 0)
+                    if average > 0:
+                        data_bytes = parent_invocations * call_rate * average
+                
+                edge_type = edge.get("type", "invoke")
+                
                 if child in self.derived_usage:
                     self.derived_usage[child].invocation_count += child_invocations
+                    self.derived_usage[child].data_in += data_bytes
+                    self.derived_usage[child].edge_types.add(edge_type)
                 else:
-                    self.derived_usage[child] = DerivedUsage(
+                    du = DerivedUsage(
                         resource_address=child,
                         invocation_count=child_invocations,
+                        data_in=data_bytes,
                     )
+                    du.edge_types.add(edge_type)
+                    self.derived_usage[child] = du
                 
                 indegree[child] -= 1
                 # Only enqueue for downstream propagation when ALL incoming
