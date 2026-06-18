@@ -2,8 +2,10 @@
 CLI entry point for infra-cost-model.
 
 Provides commands for cost model validation, computation, and analysis.
+Uses argparse for standardized argument parsing, --help, and error handling.
 """
 
+import argparse
 import sys
 import json
 from pathlib import Path
@@ -16,111 +18,191 @@ from infra_cost_model.engine import CostEngine, SensitivityAnalyzer
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 
+class _CLIError(Exception):
+    """Raised for CLI errors to signal a specific exit code."""
+    def __init__(self, code: int = 1):
+        self.code = code
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argparse parser with subcommands and per-command help."""
+    parser = argparse.ArgumentParser(
+        prog="infra-cost-model",
+        description="DAG-based infrastructure cost analysis",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    # Override error() to raise instead of calling sys.exit
+    parser.error = lambda msg: (_print_stderr(f"{parser.prog}: error: {msg}"), _raise_cli_error(1))
+    # Override exit() to prevent argparse from calling sys.exit directly
+    parser.exit = lambda status=0, message=None: (
+        _print_stderr(message) if message else None,
+        _raise_cli_error(1 if status == 2 else status),
+    )
+
+    sub = parser.add_subparsers(dest="command", title="Commands")
+
+    # validate
+    p_validate = sub.add_parser("validate", help="Validate a cost model YAML file")
+    p_validate.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_validate.set_defaults(func=cmd_validate)
+
+    # compute
+    p_compute = sub.add_parser("compute", help="Compute costs from a cost model")
+    p_compute.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_compute.add_argument("--no-catalog", action="store_true",
+                           help="Disable pricing catalog (use embedded pricing rates)")
+    p_compute.set_defaults(func=cmd_compute)
+
+    # analyze
+    p_analyze = sub.add_parser("analyze", help="Full analysis with derived usage")
+    p_analyze.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_analyze.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_analyze.set_defaults(func=cmd_analyze)
+
+    # extract
+    p_extract = sub.add_parser("extract", help="Extract resources from IaC (Terraform/Pulumi/CDK)")
+    p_extract.add_argument("path", metavar="<path>", help="Path to IaC JSON export file")
+    p_extract.add_argument("--from", dest="source_format", metavar="FORMAT",
+                           choices=["terraform", "pulumi", "cdk"], default="terraform",
+                           help="Source format: terraform, pulumi, or cdk (default: terraform)")
+    p_extract.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_extract.set_defaults(func=cmd_extract)
+
+    # seed-pricing
+    p_seed = sub.add_parser("seed-pricing", help="Seed pricing cache from seed file")
+    p_seed.add_argument("services", nargs="*", metavar="<service>",
+                        help="Specific services to seed (default: all)")
+    p_seed.add_argument("--all", action="store_true", default=True,
+                        help="Seed all services (default)")
+    p_seed.set_defaults(func=cmd_seed_pricing)
+
+    # graph
+    p_graph = sub.add_parser("graph", help="Render DAG visualization")
+    p_graph.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_graph.set_defaults(func=cmd_graph)
+
+    # whatif
+    p_whatif = sub.add_parser("whatif", help="What-if analysis varying a parameter")
+    p_whatif.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_whatif.add_argument("--parameter", required=True, metavar="<name>",
+                          help="Parameter to vary (e.g., frequency, edge:from->to)")
+    p_whatif.add_argument("--value", required=True, type=float, metavar="<float>",
+                          help="New value for the parameter")
+    p_whatif.add_argument("--catalog", action="store_true",
+                          help="Use pricing catalog")
+    p_whatif.set_defaults(func=cmd_whatif)
+
+    # sensitivity
+    p_sens = sub.add_parser("sensitivity", help="Sensitivity sweep across parameter range")
+    p_sens.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_sens.add_argument("--parameter", required=True, metavar="<name>",
+                        help="Parameter to sweep (e.g., frequency, edge:from->to)")
+    p_sens.add_argument("--steps", type=int, default=10, metavar="<int>",
+                        help="Number of steps (default: 10)")
+    p_sens.add_argument("--catalog", action="store_true",
+                        help="Use pricing catalog")
+    p_sens.set_defaults(func=cmd_sensitivity)
+
+    return parser
+
+
+def _print_stderr(msg: str) -> None:
+    """Print to stderr."""
+    print(msg, file=sys.stderr)
+
+
+def _raise_cli_error(code: int = 1) -> None:
+    """Raise CLI error with given exit code."""
+    raise _CLIError(code)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Main CLI entry point."""
+    parser = _build_parser()
+
     if argv is None:
         argv = sys.argv[1:]
-    
+
+    # No arguments: print help
     if not argv:
-        print("infra-cost-model - DAG-based infrastructure cost analysis")
-        print()
-        print("Commands:")
-        print("  validate <yaml-file>  - Validate a cost model YAML file")
-        print("  compute <yaml-file>   - Compute costs from a cost model")
-        print("  analyze <yaml-file> [--json]  - Full analysis with derived usage")
-        print("  extract <path>        - Extract resources from IaC (Terraform/Pulumi/CDK)")
-        print("  seed-pricing          - Seed pricing cache from seed file")
-        print("  graph <yaml-file>     - Render DAG visualization")
-        print("  whatif <yaml-file>    - What-if analysis varying a parameter")
-        print("  sensitivity <yaml-file> - Sensitivity sweep across parameter range")
+        parser.print_help()
         return 0
-    
-    command = argv[0]
-    
-    if command == "validate":
-        return cmd_validate(argv[1:] if len(argv) > 1 else [])
-    elif command == "compute":
-        return cmd_compute(argv[1:] if len(argv) > 1 else [])
-    elif command == "analyze":
-        return cmd_analyze(argv[1:] if len(argv) > 1 else [])
-    elif command == "extract":
-        return cmd_extract(argv[1:] if len(argv) > 1 else [])
-    elif command == "seed-pricing":
-        return cmd_seed_pricing(argv[1:] if len(argv) > 1 else [])
-    elif command == "graph":
-        return cmd_graph(argv[1:] if len(argv) > 1 else [])
-    elif command == "whatif":
-        return cmd_whatif(argv[1:] if len(argv) > 1 else [])
-    elif command == "sensitivity":
-        return cmd_sensitivity(argv[1:] if len(argv) > 1 else [])
-    else:
-        print(f"Unknown command: {command}", file=sys.stderr)
-        return 1
+
+    try:
+        args = parser.parse_args(argv)
+
+        if not hasattr(args, "func"):
+            # argparse should catch this with subparsers, but handle edge case
+            parser.print_help()
+            return 0
+
+        return args.func(args)
+
+    except _CLIError as e:
+        return e.code
+    except SystemExit as e:
+        # Normalize argparse exit code 2 to 1 for test compatibility
+        code = e.code if isinstance(e.code, int) else 1
+        return 1 if code == 2 else code
 
 
-def cmd_validate(args: list[str]) -> int:
+# --- Command implementations ---
+
+def cmd_validate(args: argparse.Namespace) -> int:
     """Validate a cost model file."""
-    if not args:
-        print("Usage: validate <yaml-file>", file=sys.stderr)
-        return 1
-    
-    yaml_path = Path(args[0])
+    yaml_path = Path(args.yaml_file)
     if not yaml_path.exists():
-        print(f"File not found: {yaml_path}", file=sys.stderr)
+        _print_stderr(f"File not found: {yaml_path}")
         return 1
-    
+
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         content = f.read()
-    
+
     try:
         model = parse_yaml_dsl(content)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
-    
+
     errors = validate_cost_model(model)
-    
+
     if errors:
         print("Validation errors:")
         for error in errors:
             print(f"  - {error}")
         return 1
-    
+
     print(f"✓ Valid cost model: {yaml_path}")
     return 0
 
 
-def cmd_compute(args: list[str]) -> int:
+def cmd_compute(args: argparse.Namespace) -> int:
     """Compute costs from a cost model file."""
-    if not args:
-        print("Usage: compute <yaml-file> [--no-catalog]", file=sys.stderr)
-        return 1
-    
-    yaml_path = Path(args[0])
+    yaml_path = Path(args.yaml_file)
     if not yaml_path.exists():
-        print(f"File not found: {yaml_path}", file=sys.stderr)
+        _print_stderr(f"File not found: {yaml_path}")
         return 1
-    
-    use_catalog = "--no-catalog" not in args
-    
+
+    use_catalog = not args.no_catalog
+
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         content = f.read()
-    
+
     try:
         model = parse_yaml_dsl(content)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
-    
+
     catalog = PricingCatalog() if use_catalog else None
     engine = CostEngine(model, catalog=catalog)
-    
+
     try:
         costs = engine.compute()
         total = sum(costs.values())
-        
+
         pricing_source = "catalog" if use_catalog else "embedded pricing rates"
         print(f"Costs for: {model['workflow']['name']} (pricing: {pricing_source})")
         print("-" * 40)
@@ -130,45 +212,33 @@ def cmd_compute(args: list[str]) -> int:
         print(f"Total: ${total:.6f}")
         return 0
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
 
 
-def cmd_analyze(args: list[str]) -> int:
+def cmd_analyze(args: argparse.Namespace) -> int:
     """Full analysis including derived usage and costs."""
-    if not args:
-        print("Usage: analyze <yaml-file> [--json]", file=sys.stderr)
-        return 1
-    
-    # Parse --json flag
-    json_output = "--json" in args
-    args = [a for a in args if a != "--json"]
-    
-    if not args:
-        print("Usage: analyze <yaml-file> [--json]", file=sys.stderr)
-        return 1
-    
-    yaml_path = Path(args[0])
+    yaml_path = Path(args.yaml_file)
     if not yaml_path.exists():
-        print(f"File not found: {yaml_path}", file=sys.stderr)
+        _print_stderr(f"File not found: {yaml_path}")
         return 1
-    
+
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         content = f.read()
-    
+
     try:
         model = parse_yaml_dsl(content)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
-    
+
     engine = CostEngine(model, time_basis="monthly")
-    
+
     try:
         costs = engine.compute()
         derived = engine.get_derived_usage()
-        
+
         total = sum(costs.values())
         output = {
             "workflow": model["workflow"]["name"],
@@ -179,100 +249,94 @@ def cmd_analyze(args: list[str]) -> int:
             "costs": costs,
             "total_cost": total,
         }
-        
-        if json_output:
+
+        if args.json:
             print(json.dumps(output, indent=2))
         else:
             print(f"Analysis: {model['workflow']['name']}")
             print("=" * 50)
-            
+
             print("\nDerived Usage (per second):")
             for addr, usage in sorted(derived.items()):
                 print(f"  {addr}: {usage.invocation_count:.4f} invocations/sec")
-            
+
             print("\nCosts:")
             for node, cost in sorted(costs.items()):
                 print(f"  {node}: ${cost:.6f}")
-            
+
             print("-" * 50)
             print(f"Total Monthly Cost: ${total:.6f}")
-        
+
         return 0
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
 
 
-def cmd_seed_pricing(args: list[str]) -> int:
+def cmd_seed_pricing(args: argparse.Namespace) -> int:
     """Seed pricing catalog from seed file."""
     from infra_cost_model.pricing.sources.infracost import seed_pricing_catalog
-    
-    services = None
-    if args and args[0] != "--all":
-        services = args
-    
+
+    services = args.services if args.services else None
+
     try:
         count, source = seed_pricing_catalog(services)
         print(f"✓ Seeded {count} prices from {source}")
         return 0
     except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
 
 
-def cmd_graph(args: list[str]) -> int:
+def cmd_graph(args: argparse.Namespace) -> int:
     """Render DAG visualization."""
-    if not args:
-        print("Usage: graph <yaml-file>", file=sys.stderr)
-        return 1
-    
-    yaml_path = Path(args[0])
+    yaml_path = Path(args.yaml_file)
     if not yaml_path.exists():
-        print(f"File not found: {yaml_path}", file=sys.stderr)
+        _print_stderr(f"File not found: {yaml_path}")
         return 1
-    
+
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         content = f.read()
-    
+
     try:
         model = parse_yaml_dsl(content)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
-    
+
     # Check for flat override conflicts (Principle 9)
-    warnings = []
+    warnings_list = []
     nodes = model.get("nodes", {})
     edges = model.get("edges", [])
-    
+
     # Find all nodes that are targets of edges
     edge_targets = set()
     for edge in edges:
         edge_targets.add(edge.get("to"))
-    
+
     # Check if any node has flatOverride AND incoming edges (conflict per DP#9)
     for node_addr, node_data in nodes.items():
         flat_override = node_data.get("flatOverride", False)
         has_incoming_edges = node_addr in edge_targets
-        
+
         if flat_override and has_incoming_edges:
-            warnings.append(
+            warnings_list.append(
                 f"⚠ Conflict: '{node_addr}' has flatOverride=true AND incoming call edges. "
                 f"Flat overrides are an escape hatch (DP#9); derive usage from topology instead."
             )
-    
+
     # Print warnings
-    for warning in warnings:
+    for warning in warnings_list:
         print(warning)
-    
+
     # Render DAG
     print(f"\nDAG: {model.get('workflow', {}).get('name', 'unnamed')}")
     print("=" * 50)
-    
+
     entry = model.get("workflow", {}).get("entry", "unknown")
     print(f"\nEntry: {entry}")
-    
+
     # Build adjacency list
     outgoing = {}
     for edge in edges:
@@ -280,12 +344,12 @@ def cmd_graph(args: list[str]) -> int:
         if src not in outgoing:
             outgoing[src] = []
         outgoing[src].append(edge)
-    
+
     # Render nodes with their edges
     for node_addr, node_data in nodes.items():
         node_type = node_data.get("nodeType", "unknown")
         print(f"\n[{node_type.upper()}] {node_addr}")
-        
+
         node_edges = outgoing.get(node_addr, [])
         for edge in node_edges:
             target = edge.get("to", "?")
@@ -293,47 +357,23 @@ def cmd_graph(args: list[str]) -> int:
             edge_type = edge.get("type", "invoke")
             arrow = "→" if edge_type == "invoke" else "→[" + edge_type[0].upper() + "]"
             print(f"  {arrow} {target} (rate: {rate})")
-    
+
     return 0
 
 
-def cmd_extract(args: list[str]) -> int:
-    """Extract resources from IaC tool output.
-    
-    Usage: extract <path> [--from terraform|pulumi|cdk] [--json]
-    
-    Extracts cost model nodes from infrastructure-as-code tools.
-    Supports Terraform state files, Pulumi stack exports, and CDK templates.
-    """
-    from pathlib import Path
-    
-    if not args:
-        print("Usage: extract <path> [--from terraform|pulumi|cdk] [--json]", file=sys.stderr)
-        print()
-        print("Extract resources from infrastructure-as-code:", file=sys.stderr)
-        print("  extract terraform.tfstate.json   - Extract from Terraform state", file=sys.stderr)
-        print("  extract stack.json --from pulumi - Extract from Pulumi stack export", file=sys.stderr)
-        print("  extract template.json --from cdk - Extract from CDK template", file=sys.stderr)
-        return 1
-    
-    path = Path(args[0])
-    source_format = "terraform"  # default
-    output_json = "--json" in args
-    
-    # Parse --from flag
-    for i, arg in enumerate(args):
-        if arg == "--from" and i + 1 < len(args):
-            source_format = args[i + 1]
-            break
-    
+def cmd_extract(args: argparse.Namespace) -> int:
+    """Extract resources from IaC tool output."""
+    path = Path(args.path)
     if not path.exists():
-        print(f"File not found: {path}", file=sys.stderr)
+        _print_stderr(f"File not found: {path}")
         return 1
-    
+
     try:
         with open(path) as f:
             data = json.load(f)
-        
+
+        source_format = args.source_format
+
         if source_format == "terraform":
             from infra_cost_model.resources.registry import extract_resources_from_tf
             nodes = extract_resources_from_tf(data)
@@ -344,186 +384,103 @@ def cmd_extract(args: list[str]) -> int:
             from infra_cost_model.resources.registry import extract_resources_from_cdk
             nodes = extract_resources_from_cdk(data)
         else:
-            print(f"Unknown source format: {source_format}", file=sys.stderr)
-            print("Valid formats: terraform, pulumi, cdk", file=sys.stderr)
+            _print_stderr(f"Unknown source format: {source_format}")
+            _print_stderr("Valid formats: terraform, pulumi, cdk")
             return 1
-        
-        if output_json:
+
+        if args.json:
             print(json.dumps(nodes, indent=2))
         else:
             print(f"Extracted {len(nodes)} resource(s) from {source_format}:")
             for addr, node in nodes.items():
                 print(f"  [{node.get('nodeType', '?')}] {addr}")
-        
+
         return 0
     except json.JSONDecodeError as e:
-        print(f"Invalid JSON in {path}: {e}", file=sys.stderr)
+        _print_stderr(f"Invalid JSON in {path}: {e}")
         return 1
 
 
-def cmd_whatif(args: list[str]) -> int:
-    """Run what-if analysis by varying a single parameter.
-    
-    Usage: whatif <yaml-file> --parameter <name> --value <float> [--catalog]
-    
-    Parameters:
-        frequency             - Vary the entry frequency
-        edge:from_node->to_node - Vary a specific edge call rate
-    """
-    if len(args) < 1:
-        print("Usage: whatif <yaml-file> --parameter <name> --value <float> [--catalog]",
-              file=sys.stderr)
-        return 1
-    
-    yaml_path = Path(args[0])
+def cmd_whatif(args: argparse.Namespace) -> int:
+    """Run what-if analysis by varying a single parameter."""
+    yaml_path = Path(args.yaml_file)
     if not yaml_path.exists():
-        print(f"File not found: {yaml_path}", file=sys.stderr)
+        _print_stderr(f"File not found: {yaml_path}")
         return 1
-    
-    # Parse flags
-    parameter = None
-    value = None
-    use_catalog = False
-    
-    i = 1
-    while i < len(args):
-        if args[i] == "--parameter" and i + 1 < len(args):
-            parameter = args[i + 1]
-            i += 2
-        elif args[i] == "--value" and i + 1 < len(args):
-            try:
-                value = float(args[i + 1])
-            except ValueError:
-                print(f"Invalid value: {args[i+1]}", file=sys.stderr)
-                return 1
-            i += 2
-        elif args[i] == "--catalog":
-            use_catalog = True
-            i += 1
-        else:
-            print(f"Unknown flag: {args[i]}", file=sys.stderr)
-            return 1
-    
-    if parameter is None:
-        print("Error: --parameter is required", file=sys.stderr)
-        return 1
-    if value is None:
-        print("Error: --value is required", file=sys.stderr)
-        return 1
-    
+
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         content = f.read()
-    
+
     try:
         model = parse_yaml_dsl(content)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
-    
-    catalog = PricingCatalog() if use_catalog else None
-    
+
+    catalog = PricingCatalog() if args.catalog else None
+
     try:
         analyzer = SensitivityAnalyzer(model, catalog)
         baseline_engine = CostEngine(model, catalog)
         baseline = baseline_engine.total_cost()
-        new_cost = analyzer.what_if(parameter, value)
+        new_cost = analyzer.what_if(args.parameter, args.value)
         delta = new_cost - baseline
-        
+
         print(f"What-if: {model['workflow']['name']}")
-        print(f"Parameter: {parameter} = {value}")
+        print(f"Parameter: {args.parameter} = {args.value}")
         print(f"Baseline cost: ${baseline:.6f}")
         print(f"New cost:      ${new_cost:.6f}")
-        print(f"Delta:         ${delta:+.6f} ({delta/baseline*100:+.1f}%)" if baseline else f"Delta: ${delta:+.6f}")
+        if baseline:
+            print(f"Delta:         ${delta:+.6f} ({delta/baseline*100:+.1f}%)")
+        else:
+            print(f"Delta:         ${delta:+.6f}")
         return 0
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
 
 
-def cmd_sensitivity(args: list[str]) -> int:
-    """Run sensitivity analysis by sweeping a parameter across a range.
-    
-    Usage: sensitivity <yaml-file> --parameter <name> [--steps <int>] [--catalog]
-    
-    Parameters:
-        frequency             - Sweep entry frequency
-        edge:from_node->to_node - Sweep a specific edge call rate
-    
-    Outputs a table of parameter values and total costs, plus JSON for
-    programmatic consumption.
-    """
-    if len(args) < 1:
-        print("Usage: sensitivity <yaml-file> --parameter <name> [--steps <int>] [--catalog]",
-              file=sys.stderr)
-        return 1
-    
-    yaml_path = Path(args[0])
+def cmd_sensitivity(args: argparse.Namespace) -> int:
+    """Run sensitivity analysis by sweeping a parameter across a range."""
+    yaml_path = Path(args.yaml_file)
     if not yaml_path.exists():
-        print(f"File not found: {yaml_path}", file=sys.stderr)
+        _print_stderr(f"File not found: {yaml_path}")
         return 1
-    
-    # Parse flags
-    parameter = None
-    steps = 10
-    use_catalog = False
-    
-    i = 1
-    while i < len(args):
-        if args[i] == "--parameter" and i + 1 < len(args):
-            parameter = args[i + 1]
-            i += 2
-        elif args[i] == "--steps" and i + 1 < len(args):
-            try:
-                steps = int(args[i + 1])
-            except ValueError:
-                print(f"Invalid steps: {args[i+1]}", file=sys.stderr)
-                return 1
-            i += 2
-        elif args[i] == "--catalog":
-            use_catalog = True
-            i += 1
-        else:
-            print(f"Unknown flag: {args[i]}", file=sys.stderr)
-            return 1
-    
-    if parameter is None:
-        print("Error: --parameter is required", file=sys.stderr)
-        return 1
-    
+
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         content = f.read()
-    
+
     try:
         model = parse_yaml_dsl(content)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
-    
-    catalog = PricingCatalog() if use_catalog else None
-    
+
+    catalog = PricingCatalog() if args.catalog else None
+
     try:
         analyzer = SensitivityAnalyzer(model, catalog)
         baseline_engine = CostEngine(model, catalog)
         baseline = baseline_engine.total_cost()
-        results = analyzer.sensitivity(parameter, steps)
-        
+        results = analyzer.sensitivity(args.parameter, args.steps)
+
         print(f"Sensitivity: {model['workflow']['name']}")
-        print(f"Parameter: {parameter}")
+        print(f"Parameter: {args.parameter}")
         print(f"Baseline: ${baseline:.6f}")
         print()
         print(f"{'Value':>12}  {'Cost':>12}  {'Delta':>12}  {'Change':>8}")
         print("-" * 52)
-        
+
         for param_value, cost in results:
             delta_val = cost - baseline
             pct = (delta_val / baseline * 100) if baseline else 0.0
             print(f"{param_value:12.4f}  ${cost:11.6f}  ${delta_val:+11.6f}  {pct:+7.1f}%")
-        
+
         return 0
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_stderr(f"Error: {e}")
         return 1
 
 
