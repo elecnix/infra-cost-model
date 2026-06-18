@@ -233,6 +233,7 @@ class Workflow:
             "root_module", {}
         ).get("resources", [])
         
+        unsupported: list[str] = []
         for resource in resources:
             if not isinstance(resource, dict):
                 continue
@@ -244,6 +245,17 @@ class Workflow:
             extracted = ResourceRegistry.extract(addr, resource, "terraform")
             if extracted:
                 nodes[addr] = extracted
+            else:
+                unsupported.append(addr)
+        
+        if unsupported:
+            import warnings
+            warnings.warn(
+                f"{len(unsupported)} resource(s) could not be extracted because no "
+                f"handler is registered for their resource type. Unsupported addresses: "
+                f"{', '.join(sorted(unsupported))}. Consider adding a new ResourceType "
+                f"handler for the unsupported resource(s)."
+            )
         
         return nodes
     
