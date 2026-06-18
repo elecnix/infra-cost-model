@@ -177,6 +177,22 @@ class TestWorkloadDeriver:
         derived = deriver.derive()
         
         assert derived["api_gateway"].invocation_count == 10.0
+    
+    def test_invalid_entry_node_raises(self):
+        """Test that invalid entry node raises ValueError."""
+        model = make_valid_cost_model(entry="nonexistent_service")
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        
+        with pytest.raises(ValueError, match="Entry node 'nonexistent_service' not found in nodes"):
+            deriver.derive()
+    
+    def test_invalid_entry_node_lists_available_nodes(self):
+        """Test that error message includes available node names."""
+        model = make_valid_cost_model(entry="typo_api_gateway")
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        
+        with pytest.raises(ValueError, match="Available nodes"):
+            deriver.derive()
 
 
 class TestCostAggregator:
@@ -305,3 +321,11 @@ class TestCostEngine:
         assert mo_total == pytest.approx(ps_total * SECONDS_PER_MONTH)
         for addr in ps_costs:
             assert mo_costs[addr] == pytest.approx(ps_costs[addr] * SECONDS_PER_MONTH)
+    
+    def test_invalid_entry_node_through_engine(self):
+        """Test that invalid entry node raises ValueError through full engine."""
+        model = make_valid_cost_model(entry="mistyped_entry")
+        engine = CostEngine(model)
+        
+        with pytest.raises(ValueError, match="Entry node 'mistyped_entry' not found"):
+            engine.compute()

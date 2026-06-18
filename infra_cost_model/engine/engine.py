@@ -101,8 +101,16 @@ class WorkloadDeriver:
         
         Returns:
             Dict mapping resource address to DerivedUsage.
+            
+        Raises:
+            ValueError: If the entry node address does not exist in the nodes dict.
         """
         entry_address = self.workflow["entry"]
+        if entry_address not in self.nodes:
+            raise ValueError(
+                f"Entry node '{entry_address}' not found in nodes. "
+                f"Available nodes: {', '.join(sorted(self.nodes.keys()))}"
+            )
         entry_freq = self._get_entry_frequency()
         
         # Build adjacency list and in-degree counts for topological sort
