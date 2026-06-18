@@ -54,17 +54,48 @@ def test_workflow_creation():
 
 
 def test_from_tf_creation():
-    """Test workflow created from Terraform path."""
-    workflow = Workflow.from_tf(
-        "my-api",
-        "./infra/",
-        entry="aws_api_gateway_rest_api.my_api",
-        frequency=per_minute(1000),
-    )
+    """Test workflow created from Terraform state JSON file."""
+    import tempfile
     
-    assert workflow.name == "my-api"
-    assert workflow.entry == "aws_api_gateway_rest_api.my_api"
-    assert workflow.frequency.value == 1000
+    # Create a mock terraform state JSON
+    tf_state = {
+        "values": {
+            "root_module": {
+                "resources": [
+                    {
+                        "address": "aws_lambda_function.handler",
+                        "values": {"memory_size": 256, "region": "us-east-1"}
+                    },
+                    {
+                        "address": "aws_dynamodb_table.users",
+                        "values": {"region": "us-east-1"}
+                    }
+                ]
+            }
+        }
+    }
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        import json
+        json.dump(tf_state, f)
+        temp_path = f.name
+    
+    try:
+        workflow = Workflow.from_tf(
+            "my-api",
+            "./infra/",
+            entry="aws_api_gateway_rest_api.my_api",
+            frequency=per_minute(1000),
+            use_state_file=temp_path,
+        )
+        
+        assert workflow.name == "my-api"
+        assert workflow.entry == "aws_api_gateway_rest_api.my_api"
+        assert workflow.frequency.value == 1000
+        assert "aws_lambda_function.handler" in workflow._nodes
+        assert "aws_dynamodb_table.users" in workflow._nodes
+    finally:
+        os.unlink(temp_path)
 
 
 def test_calls_definition():
@@ -292,3 +323,73 @@ def test_call_with_data_size():
     
     assert "dataSize" in model["edges"][0]
     assert model["edges"][0]["dataSize"]["average"] == 50
+
+
+def test_percentage_pricing_node():
+    """Test node with percentage-based pricing (e.g., Stripe)."""
+    workflow = Workflow("test")
+    workflow.entry = "api_gateway"
+    workflow.frequency = per_minute(100)
+    
+    workflow._nodes["stripe"] = {
+        "nodeType": "external",
+        "resourceAddress": "external.stripe_payments",
+        "pricingModel": "percentage",
+        "pricingRates": {
+            "percentageRate": 0.029,
+            "fixedPerTransaction": 0.30,
+        },
+        "usageMetrics": {
+            "transactionVolume": {"value": 10000, "unit": "USD"},
+            "invocations": {"value": 1, "unit": "requests"},
+        },
+    }
+    
+    model = workflow.to_cost_model()
+    
+    assert model["nodes"]["stripe"]["pricingModel"] == "percentage"
+
+
+def test_nodes_auto_extracted_from_tf_state():
+    """Test that nodes are automatically extracted from Terraform state JSON."""
+    import tempfile
+    import json
+    
+    tf_state = {
+        "values": {
+            "root_module": {
+                "resources": [
+                    {
+                        "address": "aws_lambda_function.handler",
+                        "values": {"memory_size": 256, "region": "us-east-1"}
+                    },
+                    {
+                        "address": "aws_dynamodb_table.users",
+                        "values": {"region": "us-east-1"}
+                    }
+                ]
+            }
+        }
+    }
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump(tf_state, f)
+        temp_path = f.name
+    
+    try:
+        workflow = Workflow.from_tf(
+            "my-api",
+            "./infra/",
+            entry="aws_api_gatewayv2_api.my_api",
+            frequency=per_minute(1000),
+            use_state_file=temp_path,
+        )
+        
+        assert "aws_lambda_function.handler" in workflow._nodes
+        assert workflow._nodes["aws_lambda_function.handler"]["nodeType"] == "compute"
+        assert workflow._nodes["aws_lambda_function.handler"]["provider"] == "aws"
+        
+        assert "aws_dynamodb_table.users" in workflow._nodes
+        assert workflow._nodes["aws_dynamodb_table.users"]["nodeType"] == "storage"
+    finally:
+        os.unlink(temp_path)

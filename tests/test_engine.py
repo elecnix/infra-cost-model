@@ -182,6 +182,32 @@ class TestCostAggregator:
         costs = aggregator.aggregate()
         
         assert costs["test_fn"] == pytest.approx(1000 * 0.20e-6)
+    
+    def test_percentage_pricing_cost(self):
+        """Test percentage-based pricing (e.g., Stripe 2.9% + $0.30)."""
+        nodes = {
+            "stripe": {
+                "nodeType": "external",
+                "resourceAddress": "external.stripe_payments",
+                "pricingModel": "percentage",
+                "pricingRates": {
+                    "percentageRate": 0.029,
+                    "fixedPerTransaction": 0.30,
+                },
+                "usageMetrics": {
+                    "transactionVolume": {"value": 10000},
+                }
+            }
+        }
+        
+        # 100 transactions, $10000 volume
+        derived = {"stripe": DerivedUsage("stripe", 100.0)}
+        
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+        
+        # Expected: $10000 * 0.029 + 100 * 0.30 = $290 + $30 = $320
+        assert costs["stripe"] == pytest.approx(320.0)
 
 
 class TestCostEngine:

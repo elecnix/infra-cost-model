@@ -1,82 +1,19 @@
 [
-  {
-    "vendor": "aws",
-    "service": "AWSLambda",
-    "region": "us-east-1",
-    "usage_metric": "Lambda-Request",
-    "unit": "requests",
-    "price_usd": 0.0000002,
-    "source": "seed",
-    "description": "AWS Lambda request pricing ($0.20 per 1M requests after free tier)"
-  },
-  {
-    "vendor": "aws",
-    "service": "AWSLambda",
-    "region": "us-east-1",
-    "usage_metric": "Lambda-GB-Second",
-    "unit": "GB-s",
-    "price_usd": 0.0000166667,
-    "source": "seed",
-    "description": "AWS Lambda GB-second pricing ($0.0166667 per GB-s for first 6B GB-s)"
-  },
-  {
-    "vendor": "aws",
-    "service": "AmazonDynamoDB",
-    "region": "us-east-1",
-    "usage_metric": "Dynamo-ReadRequest",
-    "unit": "requests",
-    "price_usd": 0.00000125,
-    "source": "seed",
-    "description": "DynamoDB read request pricing ($1.25 per M read request units)"
-  },
-  {
-    "vendor": "aws",
-    "service": "AmazonDynamoDB",
-    "region": "us-east-1",
-    "usage_metric": "Dynamo-WriteRequest",
-    "unit": "requests",
-    "price_usd": 0.00000625,
-    "source": "seed",
-    "description": "DynamoDB write request pricing ($6.25 per M write request units)"
-  },
-  {
-    "vendor": "aws",
-    "service": "AmazonDynamoDB",
-    "region": "us-east-1",
-    "usage_metric": "Dynamo-Storage",
-    "unit": "GB-Mo",
-    "price_usd": 0.25,
-    "source": "seed",
-    "description": "DynamoDB storage pricing ($0.25 per GB-month)"
-  },
-  {
-    "vendor": "aws",
-    "service": "AmazonAPIGatewayHTTP",
-    "region": "us-east-1",
-    "usage_metric": "APIGateway-HTTP-Request",
-    "unit": "requests",
-    "price_usd": 0.000001,
-    "source": "seed",
-    "description": "API Gateway HTTP API request pricing ($1 per M requests)"
-  },
-  {
-    "vendor": "aws",
-    "service": "AmazonBedrock",
-    "region": "us-east-1",
-    "usage_metric": "Bedrock-Input-Token",
-    "unit": "tokens",
-    "price_usd": 0.000003,
-    "source": "seed",
-    "description": "Bedrock input token pricing ($0.003 per 1K tokens)"
-  },
-  {
-    "vendor": "aws",
-    "service": "AmazonBedrock",
-    "region": "us-east-1",
-    "usage_metric": "Bedrock-Output-Token",
-    "unit": "tokens",
-    "price_usd": 0.000015,
-    "source": "seed",
-    "description": "Bedrock output token pricing ($0.015 per 1K tokens)"
-  }
+  {"vendor": "aws", "service": "AWSLambda", "region": "us-east-1", "usage_metric": "Lambda-Request", "unit": "requests", "price_usd": 0.0000002, "source": "seed", "description": "AWS Lambda request pricing ($0.20 per 1M requests after free tier)"},
+  {"vendor": "aws", "service": "AWSLambda", "region": "us-east-1", "usage_metric": "Lambda-GB-Second", "unit": "GB-s", "price_usd": 0.0000166667, "source": "seed", "description": "AWS Lambda GB-second pricing ($0.0166667 per GB-s for first 6B GB-s)"},
+  {"vendor": "aws", "service": "AmazonDynamoDB", "region": "us-east-1", "usage_metric": "Dynamo-ReadRequest", "unit": "requests", "price_usd": 0.00000125, "source": "seed", "description": "DynamoDB read request pricing ($1.25 per M read request units)"},
+  {"vendor": "aws", "service": "AmazonDynamoDB", "region": "us-east-1", "usage_metric": "Dynamo-WriteRequest", "unit": "requests", "price_usd": 0.00000625, "source": "seed", "description": "DynamoDB write request pricing ($6.25 per M write request units)"},
+  {"vendor": "aws", "service": "AmazonDynamoDB", "region": "us-east-1", "usage_metric": "Dynamo-Storage", "unit": "GB-Mo", "price_usd": 0.25, "source": "seed", "description": "DynamoDB storage pricing ($0.25 per GB-month)"},
+  {"vendor": "aws", "service": "AmazonDynamoDB", "region": "us-east-1", "usage_metric": "Dynamo-RCU-Hour", "unit": "RCU-Hours", "price_usd": 0.00013, "source": "seed", "description": "DynamoDB provisioned RCU hourly rate ($0.00013 per RCU-hour)"},
+  {"vendor": "aws", "service": "AmazonDynamoDB", "region": "us-east-1", "usage_metric": "Dynamo-WCU-Hour", "unit": "WCU-Hours", "price_usd": 0.00065, "source": "seed", "description": "DynamoDB provisioned WCU hourly rate ($0.00065 per WCU-hour)"},
+  {"vendor": "aws", "service": "AmazonAPIGatewayHTTP", "region": "us-east-1", "usage_metric": "APIGateway-HTTP-Request", "unit": "requests", "price_usd": 0.000001, "source": "seed", "description": "API Gateway HTTP API request pricing ($1 per M requests)"},
+  {"vendor": "aws", "service": "AmazonAPIGateway", "region": "us-east-1", "usage_metric": "APIGateway-Egress", "unit": "GB", "price_usd": 0.09, "start_usage_amount": 0, "end_usage_amount": 10000, "source": "seed", "description": "API Gateway egress pricing tier 1 (first 10TB at $0.09/GB)"},
+  {"vendor": "aws", "service": "AmazonAPIGateway", "region": "us-east-1", "usage_metric": "APIGateway-Egress", "unit": "GB", "price_usd": 0.085, "start_usage_amount": 10000, "end_usage_amount": 50000, "source": "seed", "description": "API Gateway egress pricing tier 2 (next 40TB at $0.085/GB)"},
+  {"vendor": "aws", "service": "AmazonAPIGateway", "region": "us-east-1", "usage_metric": "APIGateway-Egress", "unit": "GB", "price_usd": 0.07, "start_usage_amount": 50000, "end_usage_amount": 150000, "source": "seed", "description": "API Gateway egress pricing tier 3 (next 100TB at $0.07/GB)"},
+  {"vendor": "aws", "service": "AmazonAPIGateway", "region": "us-east-1", "usage_metric": "APIGateway-Egress", "unit": "GB", "price_usd": 0.05, "start_usage_amount": 150000, "source": "seed", "description": "API Gateway egress pricing tier 4 (remaining at $0.05/GB)"},
+  {"vendor": "aws", "service": "AmazonBedrock", "region": "us-east-1", "usage_metric": "Bedrock-Input-Token", "unit": "tokens", "price_usd": 0.000003, "source": "seed", "description": "Bedrock input token pricing ($0.003 per 1K tokens)"},
+  {"vendor": "aws", "service": "AmazonBedrock", "region": "us-east-1", "usage_metric": "Bedrock-Cached-Input-Token", "unit": "tokens", "price_usd": 0.0000015, "source": "seed", "description": "Bedrock cached input token pricing ($0.0015 per 1K tokens, 50% discount)"},
+  {"vendor": "aws", "service": "AmazonBedrock", "region": "us-east-1", "usage_metric": "Bedrock-Output-Token", "unit": "tokens", "price_usd": 0.000015, "source": "seed", "description": "Bedrock output token pricing ($0.015 per 1K tokens)"},
+  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "external_percentage", "unit": "USD", "price_usd": 0.029, "source": "seed", "description": "Stripe standard percentage rate (2.9%)"},
+  {"vendor": "external", "service": "ExternalAPI", "region": "global", "usage_metric": "external_fixed_per_tx", "unit": "USD", "price_usd": 0.3, "source": "seed", "description": "Stripe fixed fee per transaction ($0.30)"}
 ]

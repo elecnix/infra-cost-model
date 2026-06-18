@@ -143,23 +143,110 @@ class Workflow:
     
     @classmethod
     def from_tf(cls, name: str, infra_path: str, *,
-                entry: str, frequency: Frequency) -> "Workflow":
+                entry: str, frequency: Frequency,
+                use_state_file: str = None) -> "Workflow":
         """Create workflow from Terraform infrastructure path.
+        
+        Auto-extracts resources from Terraform configuration and populates nodes.
         
         Args:
             name: Workflow identifier
-            infra_path: Path to Terraform files
+            infra_path: Path to Terraform directory or state JSON file
             entry: Entry node resource address
             frequency: Entry invocation rate
+            use_state_file: Optional path to terraform.tfstate.json file
             
         Returns:
             Workflow instance ready for calls definition.
+            
+        Raises:
+            FileNotFoundError: If terraform not installed and no state file provided.
+            RuntimeError: If terraform show fails.
         """
-        # TODO: Auto-extract nodes from .tf files
         workflow = cls(name)
         workflow.entry = entry
         workflow.frequency = frequency
+        
+        # Auto-extract nodes from Terraform
+        if use_state_file:
+            workflow._nodes = cls._extract_from_state(use_state_file)
+        else:
+            workflow._nodes = cls._extract_from_infra(infra_path)
+        
         return workflow
+    
+    @classmethod
+    def _extract_from_infra(cls, infra_path: str) -> dict[str, dict]:
+        """Extract resources from Terraform directory using terraform show."""
+        import json
+        import subprocess
+        from pathlib import Path
+        
+        infra_path = Path(infra_path)
+        
+        try:
+            result = subprocess.run(
+                ["terraform", "show", "-json"],
+                cwd=infra_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            tf_json = json.loads(result.stdout)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"terraform show failed in {infra_path}: {e.stderr}"
+            ) from e
+        except FileNotFoundError as e:
+            raise FileNotFoundError(
+                "terraform not found. Install Terraform or use from_state_json()."
+            ) from e
+        
+        return cls._extract_resources(tf_json)
+    
+    @classmethod
+    def _extract_from_state(cls, state_path: str) -> dict[str, dict]:
+        """Extract resources from Terraform state JSON file."""
+        import json
+        from pathlib import Path
+        
+        with open(state_path) as f:
+            tf_json = json.load(f)
+        
+        return cls._extract_resources(tf_json)
+    
+    @classmethod
+    def _extract_resources(cls, tf_json: dict) -> dict[str, dict]:
+        """Extract resources from Terraform JSON using ResourceRegistry.
+        
+        Args:
+            tf_json: Terraform show -json output or state JSON
+            
+        Returns:
+            Dict mapping resource addresses to node configs.
+        """
+        from infra_cost_model.resources.registry import ResourceRegistry
+        
+        nodes = {}
+        
+        # Terraform show -json structure
+        resources = tf_json.get("resource", []) or tf_json.get("values", {}).get(
+            "root_module", {}
+        ).get("resources", [])
+        
+        for resource in resources:
+            if not isinstance(resource, dict):
+                continue
+            
+            addr = resource.get("address")
+            if not addr:
+                continue
+            
+            extracted = ResourceRegistry.extract(addr, resource, "terraform")
+            if extracted:
+                nodes[addr] = extracted
+        
+        return nodes
     
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "Workflow":

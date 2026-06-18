@@ -178,10 +178,23 @@ class CostAggregator:
         return self.costs
     
     def _compute_node_cost(self, address: str, usage: DerivedUsage) -> float:
-        """Compute direct cost for a single node."""
+        """Compute direct cost for a single node.
+        
+        Handles multiple pricing models:
+        - flat: Simple usage × rate (default)
+        - tiered: Tiered pricing from catalog
+        - token_based: LLM token pricing
+        - percentage: External services (Stripe 2.9% + $0.30)
+        """
         node = self.nodes.get(address, {})
+        node_type = node.get("nodeType", "compute")
+        pricing_model = node.get("pricingModel", "flat")
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
+        
+        # Handle percentage-based pricing (external services like Stripe)
+        if pricing_model == "percentage":
+            return self._compute_percentage_cost(address, node, usage.invocation_count)
         
         total_cost = 0.0
         
@@ -196,6 +209,39 @@ class CostAggregator:
                 total_cost += value * pricing_rates[metric_name]
         
         return total_cost
+    
+    def _compute_percentage_cost(self, address: str, node: dict, invocations: float) -> float:
+        """Compute percentage-based cost for external services.
+        
+        For services like Stripe: 2.9% + $0.30 per transaction.
+        Uses catalog query if available, otherwise uses pricingRates.
+        
+        Args:
+            address: Resource address
+            node: Node configuration dict
+            invocations: Transaction count
+            
+        Returns:
+            Total cost from percentage pricing.
+        """
+        pricing_rates = node.get("pricingRates", {})
+        
+        # Default: percentage + fixed per transaction
+        percentage_rate = pricing_rates.get("percentageRate", 0.0)
+        fixed_per_tx = pricing_rates.get("fixedPerTransaction", 0.0)
+        
+        # External services need transaction volume - use value from usageMetrics
+        volume = 0.0
+        usage_metrics = node.get("usageMetrics", {})
+        for metric_name, metric_def in usage_metrics.items():
+            if "volume" in metric_name.lower() or "transaction" in metric_name.lower():
+                if isinstance(metric_def, dict):
+                    volume = metric_def.get("value", 0)
+                else:
+                    volume = metric_def
+                break
+        
+        return (volume * percentage_rate) + (invocations * fixed_per_tx)
 
 
 class CostEngine:

@@ -125,26 +125,34 @@ def test_free_tier_below_threshold():
 
 
 def test_lambda_cost_calculation():
-    """Test Lambda cost calculation."""
+    """Test Lambda cost calculation with catalog."""
     # 10M invocations, 256MB, 200ms
     gb_s = calculate_gb_seconds(10_000_000, 200, 256)  # 500K GB-s
     
     cost = lambda_cost(10_000_000, 256, 200)
     
     # After free tier: 9M invocations, 100K GB-s billed
-    expected_invocations_cost = 9_000_000 * 0.20e-6  # $0.18
+    # Using seed prices: $0.20/M requests + $0.00001667/GB-s
+    expected_invocations_cost = 9_000_000 * 0.20e-6  # $1.80
     expected_duration_cost = 100_000 * 0.0000166667  # ~$1.67
     
-    assert cost > 0
-    assert cost < 10  # Should be reasonable
+    expected = expected_invocations_cost + expected_duration_cost
+    assert cost == pytest.approx(expected, rel=0.01)
+
 
 def test_provisioned_concurrency_cost():
     """Test fixed provisioned concurrency cost plus request charges."""
+    from infra_cost_model.pricing.catalog import PricingCatalog
+    
+    # Create catalog to ensure seed prices are available
+    catalog = PricingCatalog()
+    
     cost = provisioned_concurrency_cost(
         provisioned_concurrency=10,
         hours=24,
         memory_mb=256,
         invocations=5_000,
+        catalog=catalog,
     )
 
     fixed = 10 * (256 / 1024) * 24 * 3600 * 0.000003606
