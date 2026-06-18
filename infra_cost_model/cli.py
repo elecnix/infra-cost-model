@@ -233,19 +233,15 @@ def cmd_graph(args: list[str]) -> int:
     for edge in edges:
         edge_targets.add(edge.get("to"))
     
-    # Check if any node has both usageMetrics.value AND incoming edges
+    # Check if any node has flatOverride AND incoming edges (conflict per DP#9)
     for node_addr, node_data in nodes.items():
-        usage_metrics = node_data.get("usageMetrics", {})
-        has_overrides = any(
-            isinstance(m, dict) and "value" in m 
-            for m in usage_metrics.values()
-        )
+        flat_override = node_data.get("flatOverride", False)
         has_incoming_edges = node_addr in edge_targets
         
-        if has_overrides and has_incoming_edges:
+        if flat_override and has_incoming_edges:
             warnings.append(
-                f"⚠ Conflict: '{node_addr}' has flat usage overrides AND incoming call edges. "
-                f"Flat overrides are discouraged; derive usage from topology instead."
+                f"⚠ Conflict: '{node_addr}' has flatOverride=true AND incoming call edges. "
+                f"Flat overrides are an escape hatch (DP#9); derive usage from topology instead."
             )
     
     # Print warnings
