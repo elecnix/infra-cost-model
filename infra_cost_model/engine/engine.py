@@ -487,11 +487,16 @@ class SensitivityAnalyzer:
         """Calculate cost impact of a parameter change.
         
         Args:
-            parameter: Parameter to vary
+            parameter: Parameter to vary. Supports:
+                - "frequency": vary entry frequency
+                - "edge:from_node->to_node": vary a specific edge rate
             delta: Fractional change (e.g., 0.1 = 10% change)
             
         Returns:
             Absolute cost difference.
+            
+        Raises:
+            ValueError: If the parameter name is not supported.
         """
         engine = CostEngine(self.cost_model, self.catalog)
         baseline = engine.total_cost()
@@ -502,4 +507,32 @@ class SensitivityAnalyzer:
             engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
             return engine_modified.total_cost() - baseline
         
-        return 0.0
+        if parameter.startswith("edge:"):
+            # Validate edge format: edge:from_node->to_node
+            edge_spec = parameter[5:]
+            if "->" not in edge_spec:
+                raise ValueError(
+                    f"Unsupported parameter '{parameter}'. "
+                    f"Edge parameters must use format 'edge:from_node->to_node'. "
+                    f"Supported parameters: 'frequency', 'edge:from->to'."
+                )
+            from_node, to_node = edge_spec.split("->", 1)
+            # Find the edge to get its current rate
+            found = False
+            for edge in self.cost_model.get("edges", []):
+                if edge.get("from") == from_node and edge.get("to") == to_node:
+                    current = edge.get("rate", 0.0)
+                    found = True
+                    break
+            if not found:
+                raise ValueError(
+                    f"Edge '{from_node}->{to_node}' not found in cost model edges."
+                )
+            new_value = current * (1 + delta)
+            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
+            return engine_modified.total_cost() - baseline
+        
+        raise ValueError(
+            f"Unsupported parameter '{parameter}'. "
+            f"Supported parameters: 'frequency', 'edge:from_node->to_node'."
+        )

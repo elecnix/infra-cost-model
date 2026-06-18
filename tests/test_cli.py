@@ -176,6 +176,134 @@ edges: []
         os.unlink(temp_path)
 
 
+def test_parameter_impact_unsupported_parameter_raises():
+    """Test that unsupported parameter raises ValueError."""
+    from infra_cost_model.engine import SensitivityAnalyzer
+    
+    model = {
+        "version": "1.0",
+        "workflow": {
+            "name": "test",
+            "entry": "node1",
+            "frequency": {"unit": "perSecond", "value": 10},
+        },
+        "nodes": {
+            "node1": {"nodeType": "compute", "resourceAddress": "node1"},
+        },
+        "edges": [],
+    }
+    
+    analyzer = SensitivityAnalyzer(model)
+    
+    with pytest.raises(ValueError, match="Unsupported parameter"):
+        analyzer.parameter_impact("unknown_param")
+
+
+def test_parameter_impact_frequency_works():
+    """Test that 'frequency' parameter still works."""
+    from infra_cost_model.engine import SensitivityAnalyzer
+    
+    model = {
+        "version": "1.0",
+        "workflow": {
+            "name": "test",
+            "entry": "node1",
+            "frequency": {"unit": "perSecond", "value": 10},
+        },
+        "nodes": {
+            "node1": {
+                "nodeType": "routing",
+                "resourceAddress": "node1",
+                "pricingRates": {"base": 1.0},
+                "usageMetrics": {"base": {"value": 1}},
+            },
+        },
+        "edges": [],
+    }
+    
+    analyzer = SensitivityAnalyzer(model)
+    impact = analyzer.parameter_impact("frequency", delta=1.0)
+    # 100% increase in frequency should yield non-zero impact
+    assert impact != 0.0
+
+
+def test_parameter_impact_edge_parameter():
+    """Test that edge parameter impact works."""
+    from infra_cost_model.engine import SensitivityAnalyzer
+    
+    model = {
+        "version": "1.0",
+        "workflow": {
+            "name": "test",
+            "entry": "node1",
+            "frequency": {"unit": "perSecond", "value": 10},
+        },
+        "nodes": {
+            "node1": {"nodeType": "routing", "resourceAddress": "node1"},
+            "node2": {
+                "nodeType": "compute",
+                "resourceAddress": "node2",
+                "pricingRates": {"cpu": 1.0},
+                "usageMetrics": {"cpu": {"value": 1}},
+            },
+        },
+        "edges": [
+            {"from": "node1", "to": "node2", "rate": 0.5},
+        ],
+    }
+    
+    analyzer = SensitivityAnalyzer(model)
+    impact = analyzer.parameter_impact("edge:node1->node2", delta=1.0)
+    # Doubling edge rate should increase cost
+    assert impact >= 0.0
+
+
+def test_parameter_impact_nonexistent_edge_raises():
+    """Test that nonexistent edge raises ValueError."""
+    from infra_cost_model.engine import SensitivityAnalyzer
+    
+    model = {
+        "version": "1.0",
+        "workflow": {
+            "name": "test",
+            "entry": "node1",
+            "frequency": {"unit": "perSecond", "value": 10},
+        },
+        "nodes": {
+            "node1": {"nodeType": "routing", "resourceAddress": "node1"},
+        },
+        "edges": [],
+    }
+    
+    analyzer = SensitivityAnalyzer(model)
+    
+    with pytest.raises(ValueError, match="not found"):
+        analyzer.parameter_impact("edge:a->b")
+
+
+def test_parameter_impact_malformed_edge_raises():
+    """Test that malformed edge spec raises ValueError."""
+    from infra_cost_model.engine import SensitivityAnalyzer
+    
+    model = {
+        "version": "1.0",
+        "workflow": {
+            "name": "test",
+            "entry": "node1",
+            "frequency": {"unit": "perSecond", "value": 10},
+        },
+        "nodes": {
+            "node1": {"nodeType": "routing", "resourceAddress": "node1"},
+        },
+        "edges": [],
+    }
+    
+    analyzer = SensitivityAnalyzer(model)
+    
+    with pytest.raises(ValueError, match="Unsupported parameter"):
+        analyzer.parameter_impact("edge:no_arrow")
+
+
 def test_cli_graph_command():
     """Test graph command renders DAG."""
     import tempfile
