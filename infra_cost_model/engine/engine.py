@@ -92,7 +92,12 @@ class WorkloadDeriver:
         self.derived_usage: dict[str, DerivedUsage] = {}
     
     def derive(self) -> dict[str, DerivedUsage]:
-        """Traverse DAG top-down to compute derived usage for each node.
+        """Traverse DAG top-down in topological order to compute derived usage.
+        
+        Uses Kahn's algorithm: a node propagates downstream only after all of
+        its incoming edges have been processed, ensuring correct accumulation
+        for multi-path DAGs (e.g., A→B, A→C, C→B, B→D where C contributes
+        to B before B propagates to D).
         
         Returns:
             Dict mapping resource address to DerivedUsage.
@@ -100,30 +105,27 @@ class WorkloadDeriver:
         entry_address = self.workflow["entry"]
         entry_freq = self._get_entry_frequency()
         
-        # Build adjacency list for traversal
+        # Build adjacency list and in-degree counts for topological sort
         outgoing: dict[str, list[dict]] = defaultdict(list)
+        indegree: dict[str, int] = defaultdict(int)
         for edge in self.edges:
             outgoing[edge["from"]].append(edge)
+            indegree[edge["to"]] += 1
         
-        # Entry node gets full frequency
+        # Entry node gets full frequency; it has in-degree 0 by definition
         self.derived_usage[entry_address] = DerivedUsage(
             resource_address=entry_address,
             invocation_count=entry_freq,
         )
         
-        # BFS traversal for derivation
-        visited = {entry_address}
+        # Topological sort (Kahn's algorithm): start with in-degree-zero nodes
         queue = [entry_address]
-        
         while queue:
             node = queue.pop(0)
+            parent_invocations = self.derived_usage[node].invocation_count
+            
             for edge in outgoing.get(node, []):
                 child = edge["to"]
-                if child not in visited:
-                    visited.add(child)
-                    queue.append(child)
-                
-                parent_invocations = self.derived_usage[node].invocation_count
                 call_rate = edge["rate"]
                 child_invocations = parent_invocations * call_rate
                 
@@ -134,6 +136,13 @@ class WorkloadDeriver:
                         resource_address=child,
                         invocation_count=child_invocations,
                     )
+                
+                indegree[child] -= 1
+                # Only enqueue for downstream propagation when ALL incoming
+                # edges have been processed, ensuring the accumulated
+                # invocation_count is final and correct.
+                if indegree[child] == 0:
+                    queue.append(child)
         
         return self.derived_usage
     
