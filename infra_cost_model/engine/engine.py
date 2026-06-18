@@ -217,6 +217,10 @@ class CostAggregator:
         if pricing_model == "percentage":
             return self._compute_percentage_cost(address, node, usage.invocation_count)
         
+        # Handle tiered pricing (storage, egress, etc.)
+        if pricing_model == "tiered":
+            return self._compute_tiered_cost(address, node, usage.invocation_count)
+        
         total_cost = 0.0
         invocations = usage.invocation_count
         
@@ -231,6 +235,49 @@ class CostAggregator:
             
             if metric_name in pricing_rates:
                 total_cost += invocations * per_invocation * pricing_rates[metric_name]
+        
+        return total_cost
+    
+    def _compute_tiered_cost(self, address: str, node: dict, invocations: float) -> float:
+        """Compute tiered pricing cost using the pricing catalog.
+        
+        Each usage metric represents a dimensional line item (e.g., storage GB,
+        data transfer GB, request count). The total consumed quantity per metric
+        is per_invocation_value × invocation_count. This quantity is used to
+        query the catalog for tiered pricing, which includes free-tier handling
+        (first N units at $0 before charging begins).
+        
+        Falls back to flat pricingRates if the catalog is unavailable.
+        """
+        node_metrics = node.get("usageMetrics", {})
+        pricing_rates = node.get("pricingRates", {})
+        provider = node.get("provider", "aws")
+        service = node.get("service", "")
+        region = node.get("region", "us-east-1")
+        
+        total_cost = 0.0
+        catalog_used = False
+        
+        for metric_name, metric_def in node_metrics.items():
+            if isinstance(metric_def, dict):
+                per_invocation = metric_def.get("value", 0)
+            else:
+                per_invocation = metric_def
+            
+            total_quantity = invocations * per_invocation
+            
+            if self.catalog is not None:
+                result = self.catalog.query(
+                    provider, service, region, metric_name, total_quantity
+                )
+                if result is not None:
+                    total_cost += result.total_cost
+                    catalog_used = True
+                    continue
+            
+            # Fallback: flat pricingRates
+            if metric_name in pricing_rates:
+                total_cost += total_quantity * pricing_rates[metric_name]
         
         return total_cost
     
