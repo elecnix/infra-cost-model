@@ -74,8 +74,8 @@ def test_model_cost_comparison():
     assert results["claude-3-5-haiku"] == results["claude-3-5-sonnet"]
 
 
-def test_economic_sink_classification():
-    """Test that Bedrock models are classified as economic sinks."""
+def test_leaf_node_classification():
+    """Test that Bedrock models are classified as leaf nodes."""
     assert is_economic_sink("compute", "bedrock") is True
     assert is_economic_sink("compute", "openai") is True
     assert is_economic_sink("storage", "aws") is False

@@ -9,7 +9,7 @@ from .types import ComputeResource, ResourceExtract
 class BedrockModel(ComputeResource):
     """Bedrock LLM model - compute node with token-based costing.
     
-    LLM nodes are economic sinks where input tokens flow in and output tokens flow out,
+    LLM nodes are leaf nodes where input tokens flow in and output tokens flow out,
     both billable at different rates.
     """
     
@@ -199,7 +199,7 @@ def model_cost_comparison(input_tokens: float, output_tokens: float) -> dict:
 
 
 def is_economic_sink(node_type: str, provider: str) -> bool:
-    """Check if a node is an economic sink (LLM node).
+    """Check if a node is a leaf node (LLM node).
     
     LLM nodes accept input tokens and produce output tokens - both billable.
     """
