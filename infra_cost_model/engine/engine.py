@@ -8,6 +8,7 @@ This module implements Principles 1, 2, 3, 5:
 - Resource x Cost Model join: Combine representations to produce costs
 """
 
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Optional
@@ -151,6 +152,16 @@ class WorkloadDeriver:
                 # invocation_count is final and correct.
                 if indegree[child] == 0:
                     queue.append(child)
+        
+        # Warn about nodes that are defined but unreachable from the entry node
+        unreachable = set(self.nodes.keys()) - set(self.derived_usage.keys())
+        if unreachable:
+            sorted_unreachable = sorted(unreachable)
+            warnings.warn(
+                f"{len(unreachable)} node(s) are defined but unreachable from entry node "
+                f"'{entry_address}' and will be excluded from cost: "
+                f"{', '.join(sorted_unreachable)}"
+            )
         
         return self.derived_usage
     
