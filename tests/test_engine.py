@@ -1254,3 +1254,229 @@ class TestParameterIntegration:
         # baseline: 0.5, B gets 10*0.5=5, cost=5*0.001=0.005
         # impact = 0.0055 - 0.005 = 0.0005
         assert impact == pytest.approx(0.0005)
+
+
+class TestTokenPropagation:
+    """Tests for DP#8: token flow propagation through DAG."""
+
+    def test_token_flow_propagation(self):
+        """Token flow from edges accumulates on child as input_tokens."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "llm"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 1.0,
+             "tokenFlow": {"input": 1000}},
+        ]
+
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+
+        # B gets 10 invocations/sec, each with 1000 input tokens = 10000
+        assert derived["B"].invocation_count == 10.0
+        assert derived["B"].input_tokens == 10000.0
+
+    def test_token_flow_accumulates_from_multiple_parents(self):
+        """Input tokens accumulate from multiple parent edges."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "routing", "resourceAddress": "router_b"},
+            "C": {"nodeType": "compute", "resourceAddress": "llm_c"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 0.5},
+            {"from": "A", "to": "C", "rate": 0.6,
+             "tokenFlow": {"input": 1000}},
+            {"from": "B", "to": "C", "rate": 1.0,
+             "tokenFlow": {"input": 500}},
+        ]
+
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+
+        # C gets: A→C: 10*0.6*1000=6000 + B→C: (10*0.5)*1.0*500=2500 = 8500
+        expected = 10 * 0.6 * 1000 + (10 * 0.5) * 1.0 * 500  # 6000 + 2500
+        assert derived["C"].input_tokens == expected
+
+    def test_no_token_flow_when_not_specified(self):
+        """input_tokens is 0 when no tokenFlow on edges."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "compute_b"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 1.0},
+        ]
+
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+
+        assert derived["B"].input_tokens == 0.0
+        assert derived["B"].output_tokens == 0.0
+
+    def test_token_based_pricing_with_pricing_rates(self):
+        """Token-based pricing uses input/output token pricing rates."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "inputTokens": {"unit": "tokens", "value": 1000},
+                    "outputTokens": {"unit": "tokens", "value": 500},
+                },
+                "pricingRates": {
+                    "inputTokens": 0.003 / 1000,   # $0.003 per 1K input tokens
+                    "outputTokens": 0.015 / 1000,  # $0.015 per 1K output tokens
+                }
+            }
+        }
+
+        # 100 invocations, 1000 input tokens each, 500 output tokens each
+        usage = DerivedUsage("llm", invocation_count=100.0,
+                             input_tokens=100000.0,  # 100 * 1000
+                             output_tokens=50000.0)  # will be recomputed
+
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+        costs = aggregator.aggregate()
+
+        # Input: 100000 * $0.003/1K = $0.30
+        # Output: 100 * 500 * $0.015/1K = 50000 * $0.015/1K = $0.75
+        # Total: $1.05
+        input_cost = 100000 * 0.003 / 1000
+        output_cost = 50000 * 0.015 / 1000
+        assert costs["llm"] == pytest.approx(input_cost + output_cost)
+
+    def test_token_based_pricing_with_catalog(self):
+        """Token-based pricing uses catalog when available (Principle 13)."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            cache.upsert(Price(
+                vendor="aws", service="Bedrock", region="us-east-1",
+                product_family="Bedrock", attributes={},
+                usage_metric="outputTokens", unit="tokens",
+                price_usd=0.015 / 1000,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+
+            nodes = {
+                "llm": {
+                    "nodeType": "compute",
+                    "resourceAddress": "bedrock.claude",
+                    "provider": "aws",
+                    "service": "Bedrock",
+                    "region": "us-east-1",
+                    "pricingModel": "token_based",
+                    "usageMetrics": {
+                        "outputTokens": {"unit": "tokens", "value": 500},
+                    },
+                    "pricingRates": {
+                        "outputTokens": 0.001 / 1000,  # Will be overridden by catalog
+                    }
+                }
+            }
+
+            usage = DerivedUsage("llm", invocation_count=100.0)
+            aggregator = CostAggregator(nodes, {"llm": usage}, [], catalog)
+            costs = aggregator.aggregate()
+
+            # 100 * 500 * $0.015/1K from catalog = $0.75
+            expected = 100 * 500 * 0.015 / 1000
+            assert costs["llm"] == pytest.approx(expected)
+
+    def test_token_flow_with_token_based_pricing(self):
+        """End-to-end: token flow propagation → token-based pricing."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "llm-workflow",
+                "entry": "api",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+            },
+            "nodes": {
+                "api": {"nodeType": "routing", "resourceAddress": "entry"},
+                "llm": {
+                    "nodeType": "compute",
+                    "resourceAddress": "bedrock.claude",
+                    "provider": "aws",
+                    "service": "Bedrock",
+                    "pricingModel": "token_based",
+                    "usageMetrics": {
+                        "outputTokens": {"unit": "tokens", "value": 500},
+                    },
+                    "pricingRates": {
+                        "inputTokens": 0.003 / 1000,
+                        "outputTokens": 0.015 / 1000,
+                    },
+                },
+            },
+            "edges": [
+                {"from": "api", "to": "llm", "rate": 1.0,
+                 "tokenFlow": {"input": 1000}},
+            ],
+        }
+
+        engine = CostEngine(model)
+        costs = engine.compute()
+
+        # 10 invocations/sec, 1000 input tokens each
+        # Input cost: 10*1000 * $0.003/1K = $0.03 per second
+        # Output: 10*500 * $0.015/1K = $0.075 per second
+        # Total: $0.105 per second
+        expected = 10 * 1000 * 0.003 / 1000 + 10 * 500 * 0.015 / 1000
+        assert costs["llm"] == pytest.approx(expected)
+
+        # Also verify token flow tracking
+        usage = engine.get_derived_usage()
+        assert usage["llm"].input_tokens == 10000.0  # 10 * 1000
+
+    def test_token_output_from_node_usage_metrics(self):
+        """Output tokens are computed from node usageMetrics.outputTokens."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "outputTokens": {"unit": "tokens", "value": 750},
+                },
+                "pricingRates": {
+                    "outputTokens": 0.015 / 1000,
+                },
+            }
+        }
+
+        # 200 invocations, no input tokens from edges, output from metrics
+        usage = DerivedUsage("llm", invocation_count=200.0)
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+        costs = aggregator.aggregate()
+
+        # 200 * 750 * $0.015/1K = $2.25
+        expected = 200 * 750 * 0.015 / 1000
+        assert costs["llm"] == pytest.approx(expected)

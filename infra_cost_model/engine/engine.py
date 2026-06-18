@@ -23,6 +23,8 @@ class DerivedUsage:
     invocation_count: float  # How many times this node executes
     usage_metrics: dict[str, float] = field(default_factory=dict)
     data_in: float = 0.0  # Total data received (bytes from incoming edges)
+    input_tokens: float = 0.0  # Total input tokens received (from upstream edges)
+    output_tokens: float = 0.0  # Total output tokens produced (for LLM nodes)
     edge_types: set[str] = field(default_factory=set)  # Edge types feeding this node
 
 
@@ -150,17 +152,25 @@ class WorkloadDeriver:
                     if average > 0:
                         data_bytes = parent_invocations * call_rate * average
                 
+                # Accumulate token flow from edge tokenFlow (DP#8)
+                token_input = 0.0
+                token_flow = edge.get("tokenFlow", {}) or edge.get("token_flow", {})
+                if token_flow:
+                    token_input = parent_invocations * call_rate * token_flow.get("input", 0)
+                
                 edge_type = edge.get("type", "invoke")
                 
                 if child in self.derived_usage:
                     self.derived_usage[child].invocation_count += child_invocations
                     self.derived_usage[child].data_in += data_bytes
+                    self.derived_usage[child].input_tokens += token_input
                     self.derived_usage[child].edge_types.add(edge_type)
                 else:
                     du = DerivedUsage(
                         resource_address=child,
                         invocation_count=child_invocations,
                         data_in=data_bytes,
+                        input_tokens=token_input,
                     )
                     du.edge_types.add(edge_type)
                     self.derived_usage[child] = du
@@ -295,6 +305,10 @@ class CostAggregator:
         # Handle tiered pricing (storage, egress, etc.)
         if pricing_model == "tiered":
             return self._compute_tiered_cost(address, node, usage.invocation_count)
+        
+        # Handle token-based pricing (LLM models, DP#8)
+        if pricing_model == "token_based":
+            return self._compute_token_cost(address, node, usage)
         
         total_cost = 0.0
         # When flatOverride is true, treat invocation_count as 1.0 — the
@@ -442,6 +456,68 @@ class CostAggregator:
                     f"{', '.join(sorted(self.parameters.keys()))}"
                 ) from None
         return float(value)
+    
+    def _compute_token_cost(self, address: str, node: dict, usage: DerivedUsage) -> float:
+        """Compute token-based cost for LLM models (DP#8).
+        
+        Token pricing uses both invocation-derived token flow and node-level
+        usage metrics. Input tokens flow from upstream edges; output tokens
+        are produced by the node based on its per-invocation output metric.
+        
+        Uses catalog query if available (preferred per Principle 13),
+        otherwise falls back to embedded pricingRates.
+        """
+        node_metrics = node.get("usageMetrics", {})
+        pricing_rates = node.get("pricingRates", {})
+        provider = node.get("provider")
+        service = node.get("service", "")
+        region = node.get("region")
+        
+        # Total input tokens: from token flow propagation through edges
+        total_input_tokens = usage.input_tokens
+        
+        # Total output tokens: invocation_count × per-invocation output tokens
+        output_per_call = 0.0
+        if "outputTokens" in node_metrics:
+            om = node_metrics["outputTokens"]
+            output_per_call = self._resolve_param(om.get("value", 0) if isinstance(om, dict) else om)
+        total_output_tokens = usage.invocation_count * output_per_call
+        
+        # Also check for direct input token specification on the node
+        input_per_call = 0.0
+        if "inputTokens" in node_metrics:
+            im = node_metrics["inputTokens"]
+            input_per_call = self._resolve_param(im.get("value", 0) if isinstance(im, dict) else im)
+        if total_input_tokens == 0.0:
+            total_input_tokens = usage.invocation_count * input_per_call
+        
+        total_cost = 0.0
+        
+        # Try catalog for input tokens
+        if self.catalog is not None and total_input_tokens > 0:
+            result = self.catalog.query(
+                provider, service, region, "inputTokens", total_input_tokens
+            )
+            if result is not None:
+                total_cost += result.total_cost
+            elif "inputTokens" in pricing_rates:
+                total_cost += total_input_tokens * pricing_rates["inputTokens"]
+        elif "inputTokens" in pricing_rates:
+            total_cost += total_input_tokens * pricing_rates["inputTokens"]
+        
+        # Try catalog for output tokens
+        if self.catalog is not None and total_output_tokens > 0:
+            result = self.catalog.query(
+                provider, service, region, "outputTokens", total_output_tokens
+            )
+            if result is not None:
+                total_cost += result.total_cost
+            elif "outputTokens" in pricing_rates:
+                total_cost += total_output_tokens * pricing_rates["outputTokens"]
+        elif "outputTokens" in pricing_rates:
+            total_cost += total_output_tokens * pricing_rates["outputTokens"]
+        
+        return total_cost
     
     def _compute_percentage_cost(self, address: str, node: dict, invocations: float) -> float:
         """Compute percentage-based cost for external services.
