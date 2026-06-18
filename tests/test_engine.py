@@ -99,6 +99,41 @@ class TestDAGValidator:
         assert validator.validate() is False
         assert any("Cycle detected" in e for e in validator.errors)
 
+    def test_storage_node_cannot_emit_edges(self):
+        """Test that storage nodes cannot source outgoing edges."""
+        model = make_valid_cost_model()
+        # users_table is nodeType='storage', should not emit edges
+        model["edges"].append({"from": "users_table", "to": "api_gateway", "rate": 1.0})
+
+        validator = DAGValidator(model["nodes"], model["edges"])
+        assert validator.validate() is False
+        assert any("cannot emit edges" in e for e in validator.errors)
+
+    def test_external_node_cannot_emit_edges(self):
+        """Test that external nodes cannot source outgoing edges."""
+        nodes = {
+            "api_gateway": {"nodeType": "routing", "resourceAddress": "gateway"},
+            "stripe": {"nodeType": "external", "resourceAddress": "external.stripe"},
+        }
+        edges = [
+            {"from": "api_gateway", "to": "stripe", "rate": 1.0},
+            {"from": "stripe", "to": "api_gateway", "rate": 1.0},  # invalid: external → routing
+        ]
+
+        validator = DAGValidator(nodes, edges)
+        assert validator.validate() is False
+        assert any("cannot emit edges" in e for e in validator.errors)
+        # The 'to' stripe edge should be fine; only the 'from' stripe edge should error
+        assert any("stripe" in e for e in validator.errors if "cannot emit edges" in e)
+
+    def test_routing_and_compute_can_emit_edges(self):
+        """Test that routing and compute nodes CAN source edges (no false positives)."""
+        model = make_valid_cost_model()
+        # api_gateway is routing, get_user_fn is compute — both should be fine
+        validator = DAGValidator(model["nodes"], model["edges"])
+        assert validator.validate() is True
+        assert len(validator.errors) == 0
+
 
 class TestWorkloadDeriver:
     """Tests for workload derivation."""

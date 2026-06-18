@@ -37,6 +37,7 @@ class DAGValidator:
         self.errors = []
         self._check_all_edges_exist()
         self._check_cycles()
+        self._check_node_types()
         return len(self.errors) == 0
     
     def _check_all_edges_exist(self) -> None:
@@ -53,6 +54,28 @@ class DAGValidator:
                     f"Edge {i}: 'to' node '{edge.get('to')}' not found in nodes"
                 )
     
+    def _check_node_types(self) -> None:
+        """Verify that only routing and compute nodes source edges.
+
+        Storage and external nodes are economic sinks — they cannot
+        emit edges in the DAG. Allowing them to source edges would
+        produce invalid topologies and wrong cost derivations.
+        """
+        emitting_types = {"routing", "compute"}
+        for i, edge in enumerate(self.edges):
+            source_addr = edge.get("from")
+            if source_addr is None:
+                continue
+            source_node = self.nodes.get(source_addr)
+            if source_node is None:
+                continue
+            node_type = source_node.get("nodeType", "")
+            if node_type not in emitting_types:
+                self.errors.append(
+                    f"Edge {i}: node '{source_addr}' has nodeType '{node_type}' "
+                    f"and cannot emit edges (only routing/compute nodes may have outgoing edges)"
+                )
+
     def _check_cycles(self) -> None:
         """Detect cycles using DFS. DAG must have no cycles."""
         graph: dict[str, list[str]] = defaultdict(list)
