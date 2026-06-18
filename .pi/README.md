@@ -109,6 +109,50 @@ All agents follow these project conventions (defined in `.pi/APPEND_SYSTEM.md`):
 - **Analysis and orchestration** agents run on the main worktree (`~/Source/infra-cost-model/main`) and pull origin main before every major step.
 - **Implementation** agents work in isolated worktrees (`~/Source/infra-cost-model/<branch-name>`).
 
-### Merge Authorization
+## Merge Authorization
 
 Only `impl-orchestrator` is authorized to merge PRs, and only when all four quality gates return GO (zero concerns at any severity), CI is green, and there are no unresolved review threads. All other agents must not merge PRs.
+
+## Sandbox Mode (pi-less-yolo)
+
+For safer agent execution with filesystem isolation, [pi-less-yolo](https://github.com/cjermain/pi-less-yolo) runs pi in a Docker container with restricted access.
+
+### Setup (One-time)
+
+```bash
+git clone https://github.com/cjermain/pi-less-yolo.git ~/.config/mise/pi-less-yolo
+cd ~/.config/mise/pi-less-yolo
+mise run install
+mise run pi:build
+```
+
+### Filesystem Isolation
+
+When running `mise run pi` in this project:
+
+- **Can write to:** Only the current project directory
+- **Can write to:** `~/.pi/agent` (pi config, sessions, credentials)
+- **Cannot write to:** Any other host directory
+- **No privilege escalation:** All Linux capabilities dropped
+- **No Docker access:** Container cannot access Docker socket
+
+### Usage
+
+```bash
+# Normal sandboxed session
+mise run pi
+
+# Read-only mode (no file modifications)
+mise run pi:readonly
+
+# Non-interactive
+mise run pi -- -p "summarize this repo"
+```
+
+### Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `PI_LOCAL_MODELS=1` | Enable localhost model servers (Ollama) |
+| `PI_SSH_AGENT=1` | Enable SSH agent forwarding for git |
+| `PI_CONTAINER_RUNTIME=podman` | Use Podman instead of Docker |
