@@ -12,7 +12,7 @@ from typing import Optional
 import yaml
 
 from infra_cost_model.schema import validate_cost_model
-from infra_cost_model.engine import CostEngine
+from infra_cost_model.engine import CostEngine, SensitivityAnalyzer
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 
@@ -31,6 +31,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("  extract <path>        - Extract resources from IaC (Terraform/Pulumi/CDK)")
         print("  seed-pricing          - Seed pricing cache from seed file")
         print("  graph <yaml-file>     - Render DAG visualization")
+        print("  whatif <yaml-file>    - What-if analysis varying a parameter")
+        print("  sensitivity <yaml-file> - Sensitivity sweep across parameter range")
         return 0
     
     command = argv[0]
@@ -47,6 +49,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_seed_pricing(argv[1:] if len(argv) > 1 else [])
     elif command == "graph":
         return cmd_graph(argv[1:] if len(argv) > 1 else [])
+    elif command == "whatif":
+        return cmd_whatif(argv[1:] if len(argv) > 1 else [])
+    elif command == "sensitivity":
+        return cmd_sensitivity(argv[1:] if len(argv) > 1 else [])
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
         return 1
@@ -352,6 +358,172 @@ def cmd_extract(args: list[str]) -> int:
         return 0
     except json.JSONDecodeError as e:
         print(f"Invalid JSON in {path}: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_whatif(args: list[str]) -> int:
+    """Run what-if analysis by varying a single parameter.
+    
+    Usage: whatif <yaml-file> --parameter <name> --value <float> [--catalog]
+    
+    Parameters:
+        frequency             - Vary the entry frequency
+        edge:from_node->to_node - Vary a specific edge call rate
+    """
+    if len(args) < 1:
+        print("Usage: whatif <yaml-file> --parameter <name> --value <float> [--catalog]",
+              file=sys.stderr)
+        return 1
+    
+    yaml_path = Path(args[0])
+    if not yaml_path.exists():
+        print(f"File not found: {yaml_path}", file=sys.stderr)
+        return 1
+    
+    # Parse flags
+    parameter = None
+    value = None
+    use_catalog = False
+    
+    i = 1
+    while i < len(args):
+        if args[i] == "--parameter" and i + 1 < len(args):
+            parameter = args[i + 1]
+            i += 2
+        elif args[i] == "--value" and i + 1 < len(args):
+            try:
+                value = float(args[i + 1])
+            except ValueError:
+                print(f"Invalid value: {args[i+1]}", file=sys.stderr)
+                return 1
+            i += 2
+        elif args[i] == "--catalog":
+            use_catalog = True
+            i += 1
+        else:
+            print(f"Unknown flag: {args[i]}", file=sys.stderr)
+            return 1
+    
+    if parameter is None:
+        print("Error: --parameter is required", file=sys.stderr)
+        return 1
+    if value is None:
+        print("Error: --value is required", file=sys.stderr)
+        return 1
+    
+    from infra_cost_model.sdk import parse_yaml_dsl
+    with open(yaml_path) as f:
+        content = f.read()
+    
+    try:
+        model = parse_yaml_dsl(content)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    
+    catalog = PricingCatalog() if use_catalog else None
+    
+    try:
+        analyzer = SensitivityAnalyzer(model, catalog)
+        baseline_engine = CostEngine(model, catalog)
+        baseline = baseline_engine.total_cost()
+        new_cost = analyzer.what_if(parameter, value)
+        delta = new_cost - baseline
+        
+        print(f"What-if: {model['workflow']['name']}")
+        print(f"Parameter: {parameter} = {value}")
+        print(f"Baseline cost: ${baseline:.6f}")
+        print(f"New cost:      ${new_cost:.6f}")
+        print(f"Delta:         ${delta:+.6f} ({delta/baseline*100:+.1f}%)" if baseline else f"Delta: ${delta:+.6f}")
+        return 0
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_sensitivity(args: list[str]) -> int:
+    """Run sensitivity analysis by sweeping a parameter across a range.
+    
+    Usage: sensitivity <yaml-file> --parameter <name> [--steps <int>] [--catalog]
+    
+    Parameters:
+        frequency             - Sweep entry frequency
+        edge:from_node->to_node - Sweep a specific edge call rate
+    
+    Outputs a table of parameter values and total costs, plus JSON for
+    programmatic consumption.
+    """
+    if len(args) < 1:
+        print("Usage: sensitivity <yaml-file> --parameter <name> [--steps <int>] [--catalog]",
+              file=sys.stderr)
+        return 1
+    
+    yaml_path = Path(args[0])
+    if not yaml_path.exists():
+        print(f"File not found: {yaml_path}", file=sys.stderr)
+        return 1
+    
+    # Parse flags
+    parameter = None
+    steps = 10
+    use_catalog = False
+    
+    i = 1
+    while i < len(args):
+        if args[i] == "--parameter" and i + 1 < len(args):
+            parameter = args[i + 1]
+            i += 2
+        elif args[i] == "--steps" and i + 1 < len(args):
+            try:
+                steps = int(args[i + 1])
+            except ValueError:
+                print(f"Invalid steps: {args[i+1]}", file=sys.stderr)
+                return 1
+            i += 2
+        elif args[i] == "--catalog":
+            use_catalog = True
+            i += 1
+        else:
+            print(f"Unknown flag: {args[i]}", file=sys.stderr)
+            return 1
+    
+    if parameter is None:
+        print("Error: --parameter is required", file=sys.stderr)
+        return 1
+    
+    from infra_cost_model.sdk import parse_yaml_dsl
+    with open(yaml_path) as f:
+        content = f.read()
+    
+    try:
+        model = parse_yaml_dsl(content)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    
+    catalog = PricingCatalog() if use_catalog else None
+    
+    try:
+        analyzer = SensitivityAnalyzer(model, catalog)
+        baseline_engine = CostEngine(model, catalog)
+        baseline = baseline_engine.total_cost()
+        results = analyzer.sensitivity(parameter, steps)
+        
+        print(f"Sensitivity: {model['workflow']['name']}")
+        print(f"Parameter: {parameter}")
+        print(f"Baseline: ${baseline:.6f}")
+        print()
+        print(f"{'Value':>12}  {'Cost':>12}  {'Delta':>12}  {'Change':>8}")
+        print("-" * 52)
+        
+        for param_value, cost in results:
+            delta_val = cost - baseline
+            pct = (delta_val / baseline * 100) if baseline else 0.0
+            print(f"{param_value:12.4f}  ${cost:11.6f}  ${delta_val:+11.6f}  {pct:+7.1f}%")
+        
+        return 0
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
