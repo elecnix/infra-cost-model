@@ -264,6 +264,39 @@ class TestWorkloadDeriver:
         
         assert derived["api_gateway"].invocation_count == 10.0
     
+    def test_per_week_frequency(self):
+        """Test perWeek frequency conversion."""
+        model = make_valid_cost_model()
+        model["workflow"]["frequency"] = {"unit": "perWeek", "value": 7}  # 7 per week = 1 per day
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        derived = deriver.derive()
+        
+        # 7 per week = 7 / 604800 = ~1.157e-05 per second
+        assert derived["api_gateway"].invocation_count == pytest.approx(7.0 / 604800.0)
+    
+    def test_per_month_frequency(self):
+        """Test perMonth frequency conversion."""
+        model = make_valid_cost_model()
+        model["workflow"]["frequency"] = {"unit": "perMonth", "value": 2629800}  # 1 request/sec worth per month
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        derived = deriver.derive()
+        
+        # 2629800 per month = 2629800 / 2629800 = 1.0 per second
+        assert derived["api_gateway"].invocation_count == pytest.approx(1.0)
+    
+    def test_per_month_frequency_practical(self):
+        """Test perMonth with practical value (3M requests/month)."""
+        model = make_valid_cost_model()
+        model["workflow"]["frequency"] = {"unit": "perMonth", "value": 3_000_000}
+        
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+        derived = deriver.derive()
+        
+        expected_per_second = 3_000_000.0 / 2629800.0
+        assert derived["api_gateway"].invocation_count == pytest.approx(expected_per_second)
+    
     def test_invalid_entry_node_raises(self):
         """Test that invalid entry node raises ValueError."""
         model = make_valid_cost_model(entry="nonexistent_service")
@@ -283,17 +316,17 @@ class TestWorkloadDeriver:
     def test_unknown_frequency_unit_raises(self):
         """Test that unknown frequency unit raises ValueError."""
         model = make_valid_cost_model()
-        model["workflow"]["frequency"] = {"unit": "perWeek", "value": 1}
+        model["workflow"]["frequency"] = {"unit": "perYear", "value": 1}
         
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         
-        with pytest.raises(ValueError, match="Unknown frequency unit 'perWeek'"):
+        with pytest.raises(ValueError, match="Unknown frequency unit 'perYear'"):
             deriver.derive()
     
     def test_unknown_frequency_unit_lists_valid_units(self):
         """Test that error message lists valid units."""
         model = make_valid_cost_model()
-        model["workflow"]["frequency"] = {"unit": "perMonth", "value": 1}
+        model["workflow"]["frequency"] = {"unit": "perDecade", "value": 1}
         
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         
@@ -302,7 +335,7 @@ class TestWorkloadDeriver:
     
     def test_known_frequency_units_work(self):
         """Test that all known frequency units work without error."""
-        for unit in ["perSecond", "perMinute", "perHour", "perDay"]:
+        for unit in ["perSecond", "perMinute", "perHour", "perDay", "perWeek", "perMonth"]:
             model = make_valid_cost_model()
             model["workflow"]["frequency"] = {"unit": unit, "value": 10}
             deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])

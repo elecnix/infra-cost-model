@@ -206,6 +206,8 @@ class WorkloadDeriver:
             "perMinute": 60.0,  # per minute -> per second (divide)
             "perHour": 3600.0,  # per hour -> per second (divide)
             "perDay": 86400.0,  # per day -> per second (divide)
+            "perWeek": 604800.0,  # per week -> per second (divide)
+            "perMonth": 2629800.0,  # per month -> per second (divide)
         }
         
         if unit not in divisors:

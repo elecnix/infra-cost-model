@@ -5,7 +5,7 @@ import tempfile
 import os
 from infra_cost_model.sdk import (
     Workflow, Call, NodeUsage,
-    per_minute, per_second, per_hour, per_day,
+    per_minute, per_second, per_hour, per_day, per_week, per_month,
     parse_yaml_dsl,
 )
 
@@ -36,6 +36,20 @@ def test_per_day_frequency():
     freq = per_day(1_000_000)
     assert freq.value == 1_000_000
     assert freq.unit == "perDay"
+
+
+def test_per_week_frequency():
+    """Test per_week helper creates correct frequency."""
+    freq = per_week(10_000)
+    assert freq.value == 10_000
+    assert freq.unit == "perWeek"
+
+
+def test_per_month_frequency():
+    """Test per_month helper creates correct frequency."""
+    freq = per_month(3_000_000)
+    assert freq.value == 3_000_000
+    assert freq.unit == "perMonth"
 
 
 def test_workflow_creation():
@@ -261,6 +275,40 @@ calls:
     assert model["workflow"]["frequency"]["value"] == 1000
     assert len(model["edges"]) == 1
     assert model["edges"][0]["to"] == "lambda_fn"
+
+
+def test_parse_yaml_dsl_shorthand_frequency_week():
+    """Test parsing shorthand frequency notation with /week."""
+    yaml_content = """
+workflow:
+  name: "test"
+  entry: "api_gateway"
+  frequency: "50000/week"
+
+calls:
+  api_gateway:
+    → lambda_fn: 1
+"""
+    model = parse_yaml_dsl(yaml_content)
+    assert model["workflow"]["frequency"]["unit"] == "perWeek"
+    assert model["workflow"]["frequency"]["value"] == 50000
+
+
+def test_parse_yaml_dsl_shorthand_frequency_month():
+    """Test parsing shorthand frequency notation with /month."""
+    yaml_content = """
+workflow:
+  name: "test"
+  entry: "api_gateway"
+  frequency: "3000000/month"
+
+calls:
+  api_gateway:
+    → lambda_fn: 1
+"""
+    model = parse_yaml_dsl(yaml_content)
+    assert model["workflow"]["frequency"]["unit"] == "perMonth"
+    assert model["workflow"]["frequency"]["value"] == 3000000
 
 
 def test_parse_yaml_dsl_with_edge_config():
