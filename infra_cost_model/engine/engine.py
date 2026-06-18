@@ -233,7 +233,10 @@ class CostAggregator:
         """Compute direct cost for a single node.
         
         Handles multiple pricing models:
-        - flat: usageMetrics values are per-invocation quantities × invocation_count × rate
+        - flat: usageMetrics values are per-invocation multipliers × invocation_count × rate.
+          When flatOverride is true on the node, values are treated as flat monthly
+          totals (not multiplied by invocation_count), implementing the escape hatch
+          from Principle 9.
         - tiered: Tiered pricing from catalog
         - token_based: LLM token pricing
         - percentage: External services (Stripe 2.9% + $0.30)
@@ -241,12 +244,14 @@ class CostAggregator:
         The derived invocation_count is the primary volume driver:
         each usageMetrics value is a per-invocation quantity multiplied by
         invocation_count to produce the total consumption that is then
-        multiplied by the pricing rate.
+        multiplied by the pricing rate. When flatOverride is true, invocation_count
+        is not applied and the value is used directly.
         """
         node = self.nodes.get(address, {})
         pricing_model = node.get("pricingModel", "flat")
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
+        flat_override = node.get("flatOverride", False)
         
         # Handle percentage-based pricing (external services like Stripe)
         if pricing_model == "percentage":
@@ -257,7 +262,9 @@ class CostAggregator:
             return self._compute_tiered_cost(address, node, usage.invocation_count)
         
         total_cost = 0.0
-        invocations = usage.invocation_count
+        # When flatOverride is true, treat invocation_count as 1.0 — the
+        # usageMetrics values are flat monthly totals (escape hatch per DP#9).
+        invocations = usage.invocation_count if not flat_override else 1.0
         provider = node.get("provider", "aws")
         service = node.get("service", "")
         region = node.get("region", "us-east-1")

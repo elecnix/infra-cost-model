@@ -475,6 +475,55 @@ class TestCostAggregator:
             # Should use catalog price $0.15, not embedded $0.20
             assert costs["test_fn"] == pytest.approx(1000 * 1000 * 0.15e-6)
     
+
+    def test_flat_override_uses_direct_values(self):
+        """Test that flatOverride=true uses values as flat monthly totals."""
+        nodes = {
+            "test_fn": {
+                "nodeType": "compute",
+                "resourceAddress": "test_fn",
+                "flatOverride": True,
+                "usageMetrics": {
+                    "requests": {"unit": "requests", "value": 1000000},
+                },
+                "pricingRates": {
+                    "requests": 0.20e-6,  # $0.20 per million
+                }
+            }
+        }
+        
+        # Even with 1000 invocations, flatOverride uses direct value
+        derived = {"test_fn": DerivedUsage("test_fn", 1000.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+        
+        # 1,000,000 requests × $0.20e-6 = $0.20 (flat, NOT 1000 × 1M × rate)
+        expected = 1000000 * 0.20e-6
+        assert costs["test_fn"] == pytest.approx(expected)
+
+    def test_flat_override_false_default(self):
+        """Test that without flatOverride, behavior is unchanged."""
+        nodes = {
+            "test_fn": {
+                "nodeType": "compute",
+                "resourceAddress": "test_fn",
+                "usageMetrics": {
+                    "requests": {"unit": "requests", "value": 1},
+                },
+                "pricingRates": {
+                    "requests": 0.20e-6,
+                }
+            }
+        }
+        
+        # 1000 invocations × 1 request each × rate
+        derived = {"test_fn": DerivedUsage("test_fn", 1000.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+        
+        expected = 1000 * 1 * 0.20e-6
+        assert costs["test_fn"] == pytest.approx(expected)
+
     def test_percentage_pricing_cost(self):
         """Test percentage-based pricing (e.g., Stripe 2.9% + $0.30)."""
         nodes = {

@@ -341,7 +341,7 @@ edges:
 
 
 def test_cli_graph_flat_override_warning():
-    """Test graph command warns about flat override conflict."""
+    """Test graph command warns about flatOverride=true with incoming edges."""
     import tempfile
     import os
     import io
@@ -363,6 +363,7 @@ nodes:
   lambda_fn:
     nodeType: compute
     resourceAddress: aws_lambda.test
+    flatOverride: true
     usageMetrics:
       invocations:
         value: 1000
@@ -387,8 +388,8 @@ edges:
         output = sys.stdout.getvalue()
         sys.stdout = old_stdout
         
-        # Should warn about conflict
-        assert "Conflict" in output or "flat override" in output.lower()
+        # Should warn about conflict with flatOverride
+        assert "Conflict" in output or "flatOverride" in output
         assert result == 0
     finally:
         os.unlink(temp_path)

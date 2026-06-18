@@ -109,6 +109,11 @@
             "type": "number"
           },
           "description": "Pricing rates per usage metric (used when price catalog unavailable)"
+        },
+        "flatOverride": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, usageMetrics values are flat monthly totals (escape hatch, per DP#9). When false (default), values are per-invocation multipliers applied to the derived invocation count."
         }
       }
     },
@@ -126,7 +131,7 @@
         },
         "value": {
           "type": "number",
-          "description": "Override value (flat override - discouraged)"
+          "description": "Per-invocation multiplier. Multiplied by the derived invocation count to compute total consumption. When flatOverride is true on the containing node, this value is used directly as a flat monthly total instead."
         }
       }
     },
