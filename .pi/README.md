@@ -109,6 +109,36 @@ All agents follow these project conventions (defined in `.pi/APPEND_SYSTEM.md`):
 - **Analysis and orchestration** agents run on the main worktree (`~/Source/infra-cost-model/main`) and pull origin main before every major step.
 - **Implementation** agents work in isolated worktrees (`~/Source/infra-cost-model/<branch-name>`).
 
+## Sandbox Mode (pi-less-yolo)
+
+For safer agent execution, [pi-less-yolo](https://github.com/cjermain/pi-less-yolo) provides Docker-based filesystem isolation.
+
+### Setup (One-time)
+
+```bash
+git clone https://github.com/cjermain/pi-less-yolo.git ~/.config/mise/pi-less-yolo
+cd ~/.config/mise/pi-less-yolo
+mise trust .mise.toml
+mise run install
+mise run pi:build
+```
+
+### Filesystem Isolation
+
+Running `mise run pi` restricts pi to:
+- Current project directory (read/write)
+- `~/.pi/agent` (pi config, sessions, credentials)
+
+Blocks access to all other host directories, drops all Linux capabilities, and prevents privilege escalation.
+
+### Usage
+
+```bash
+mise run pi            # Sandboxed session
+mise run pi:readonly   # Read-only filesystem + no write tools
+mise run pi -- -p "..." # Non-interactive prompt
+```
+
 ### Merge Authorization
 
 Only `impl-orchestrator` is authorized to merge PRs, and only when all four quality gates return GO (zero concerns at any severity), CI is green, and there are no unresolved review threads. All other agents must not merge PRs.
