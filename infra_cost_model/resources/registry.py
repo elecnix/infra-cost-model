@@ -15,6 +15,11 @@ from .apigw import APIGatewayHTTP
 from .bedrock import BedrockModel
 from .external import ExternalNode
 from .s3 import S3Bucket
+from .sqs import SQSQueue
+from .sns import SNSTopic
+from .eventbridge import EventBridgeRule
+from .cloudfront import CloudFrontDistribution
+from .rds import RDSInstance
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -60,6 +65,9 @@ class ResourceRegistry:
             known_providers = {
                 "lambda_func": "aws", "dynamodb": "aws", "apigw": "aws",
                 "bedrock": "aws", "external": "external",
+                "s3": "aws", "sqs": "aws", "sns": "aws",
+                "eventbridge": "aws", "cloudfront": "aws",
+                "rds": "aws",
                 "gcp": "gcp", "azure": "azure",
             }
             return known_providers.get(leaf)
@@ -161,6 +169,11 @@ ResourceRegistry.register(APIGatewayHTTP)  # More specific patterns first
 ResourceRegistry.register(LambdaFunction)
 ResourceRegistry.register(DynamoDBTable)
 ResourceRegistry.register(S3Bucket)
+ResourceRegistry.register(SQSQueue)
+ResourceRegistry.register(SNSTopic)
+ResourceRegistry.register(EventBridgeRule)
+ResourceRegistry.register(CloudFrontDistribution)
+ResourceRegistry.register(RDSInstance)
 ResourceRegistry.register(BedrockModel)
 ResourceRegistry.register(ExternalNode)
 
