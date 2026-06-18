@@ -6,6 +6,58 @@ from typing import Optional
 from .types import ExternalResource, ResourceExtract
 
 
+class ExternalServiceRegistry:
+    """Data-driven registry of known external service prefixes.
+    
+    Replaces the hardcoded if/elif prefix chain with a registration
+    mechanism comparable to ResourceRegistry. New external vendors
+    (Auth0, OpenAI, Datadog, etc.) can be added without editing the
+    from_address() conditional.
+    """
+    
+    _prefixes: set[str] = set()
+    
+    @classmethod
+    def register(cls, prefix: str) -> None:
+        """Register an external service prefix.
+        
+        Args:
+            prefix: Address prefix (e.g., "stripe.", "auth0.").
+                    Trailing dot is automatically added if missing.
+        """
+        if not prefix.endswith("."):
+            prefix = prefix + "."
+        cls._prefixes.add(prefix)
+    
+    @classmethod
+    def register_many(cls, prefixes: list[str]) -> None:
+        """Register multiple external service prefixes at once."""
+        for prefix in prefixes:
+            cls.register(prefix)
+    
+    @classmethod
+    def is_external(cls, resource_address: str) -> bool:
+        """Check if a resource address matches any known external service."""
+        for prefix in cls._prefixes:
+            if resource_address.startswith(prefix):
+                return True
+        return False
+    
+    @classmethod
+    def known_prefixes(cls) -> set[str]:
+        """Return the set of registered prefixes."""
+        return cls._prefixes.copy()
+    
+    @classmethod
+    def reset(cls) -> None:
+        """Clear all registered prefixes (primarily for testing)."""
+        cls._prefixes.clear()
+
+
+# Register the built-in external services
+ExternalServiceRegistry.register_many(["external", "stripe", "twilio", "sendgrid"])
+
+
 @dataclass
 class ExternalPricing:
     """External service pricing configuration."""
@@ -24,11 +76,7 @@ class ExternalNode(ExternalResource):
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["ExternalNode"]:
         """Parse resource address to determine if it's an external service."""
-        # External services are typically referenced by logical names
-        if resource_address.startswith("external.") or \
-           resource_address.startswith("stripe.") or \
-           resource_address.startswith("twilio.") or \
-           resource_address.startswith("sendgrid."):
+        if ExternalServiceRegistry.is_external(resource_address):
             return cls()
         return None
     
