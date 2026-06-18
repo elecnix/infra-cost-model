@@ -97,57 +97,93 @@ def external_cost(transactions: float, volume: float,
     return percentage_cost + fixed_cost + call_cost
 
 
-# Predefined external service configurations
-STRIPE_STANDARD = {"percentage_rate": 0.029, "fixed_per_transaction": 0.30}
-STRIPE_INTERNATIONAL = {"percentage_rate": 0.039, "fixed_per_transaction": 0.30}
+# Canonical external pricing constants (fallback when no catalog is available).
+# These match the seed pricing file entries in data/seed/aws_pricelist_seed.json.
+# Prefer catalog.query() over these constants per Principle 13.
+_STRIPE_STANDARD_PCT = 0.029
+_STRIPE_STANDARD_FIXED = 0.30
+_STRIPE_INTERNATIONAL_PCT = 0.039
+_STRIPE_INTERNATIONAL_FIXED = 0.30
+_TWILIO_SMS_RATE = 0.0075
+_SENDGRID_EMAIL_RATE = 0.0001
 
 
-def stripe_cost(transactions: float, volume: float, international: bool = False) -> float:
+def stripe_cost(transactions: float, volume: float, international: bool = False,
+                catalog=None) -> float:
     """Calculate Stripe cost.
+    
+    Prices come from the pricing catalog when available (Principle 13).
+    Falls back to canonical Stripe pricing constants when no catalog is provided.
     
     Args:
         transactions: Number of charges
         volume: Transaction volume in USD
         international: Whether cards are international (+1% fee)
+        catalog: Optional PricingCatalog for price lookup
         
     Returns:
         Total Stripe fee in USD.
     """
-    config = STRIPE_INTERNATIONAL if international else STRIPE_STANDARD
-    
-    base_cost = volume * config["percentage_rate"] + transactions * config["fixed_per_transaction"]
-    
+    if catalog is not None:
+        pct_metric = "stripe_international_percentage" if international else "external_percentage"
+        fixed_metric = "stripe_international_fixed_per_tx" if international else "external_fixed_per_tx"
+
+        pct_result = catalog.query("external", "ExternalAPI", "global", pct_metric, volume)
+        fixed_result = catalog.query("external", "ExternalAPI", "global", fixed_metric, transactions)
+
+        pct_cost = pct_result.total_cost if pct_result else volume * (0.039 if international else 0.029)
+        fixed_cost = fixed_result.total_cost if fixed_result else transactions * 0.30
+        base_cost = pct_cost + fixed_cost
+    else:
+        # Canonical fallback: Stripe standard 2.9% + $0.30, international 3.9% + $0.30
+        rate = 0.039 if international else 0.029
+        base_cost = volume * rate + transactions * 0.30
+
     if international:
         base_cost += volume * 0.01  # Additional currency conversion fee
-    
+
     return base_cost
 
 
-TWILIO_SMS_RATES = {"per_call": 0.0075}  # $0.0075 per SMS
-
-
-def twilio_sms_cost(messages: float) -> float:
+def twilio_sms_cost(messages: float, catalog=None) -> float:
     """Calculate Twilio SMS cost.
+    
+    Prices come from the pricing catalog when available (Principle 13).
+    Falls back to canonical Twilio pricing when no catalog is provided.
     
     Args:
         messages: Number of SMS messages sent
+        catalog: Optional PricingCatalog for price lookup
         
     Returns:
         Total cost in USD.
     """
-    return messages * TWILIO_SMS_RATES["per_call"]
+    if catalog is not None:
+        result = catalog.query("external", "ExternalAPI", "global", "twilio_sms", messages)
+        if result is not None:
+            return result.total_cost
+
+    # Canonical fallback: $0.0075 per SMS
+    return messages * 0.0075
 
 
-SENDGRID_RATES = {"per_call": 0.0001}  # $0.0001 per email (approximate)
-
-
-def sendgrid_cost(emails: float) -> float:
+def sendgrid_cost(emails: float, catalog=None) -> float:
     """Calculate SendGrid cost.
+    
+    Prices come from the pricing catalog when available (Principle 13).
+    Falls back to canonical SendGrid pricing when no catalog is provided.
     
     Args:
         emails: Number of emails sent
+        catalog: Optional PricingCatalog for price lookup
         
     Returns:
         Total cost in USD.
     """
-    return emails * SENDGRID_RATES["per_call"]
+    if catalog is not None:
+        result = catalog.query("external", "ExternalAPI", "global", "sendgrid_email", emails)
+        if result is not None:
+            return result.total_cost
+
+    # Canonical fallback: $0.0001 per email
+    return emails * 0.0001

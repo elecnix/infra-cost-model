@@ -7,7 +7,6 @@ from infra_cost_model.resources.external import (
     stripe_cost,
     twilio_sms_cost,
     sendgrid_cost,
-    STRIPE_STANDARD,
 )
 
 
@@ -97,3 +96,119 @@ def test_external_cost_with_per_call():
     )
     
     assert cost == pytest.approx(75.0)
+
+
+class TestExternalPricingWithCatalog:
+    """Tests for external pricing functions using a pricing catalog (Principle 13)."""
+
+    @staticmethod
+    def _make_catalog_with_seed_data():
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+        tmpdir = tempfile.TemporaryDirectory()
+        cache = PricingCache(db_path=Path(tmpdir.name) / "test.db")
+        # Standard Stripe
+        cache.upsert(Price(
+            vendor="external", service="ExternalAPI", region="global",
+            product_family="External", attributes={},
+            usage_metric="external_percentage", unit="USD",
+            price_usd=0.029,
+            start_usage_amount=None, end_usage_amount=None,
+            source="test", effective_date="2024-01-01", fetched_at="2024-01-01T00:00:00"
+        ))
+        cache.upsert(Price(
+            vendor="external", service="ExternalAPI", region="global",
+            product_family="External", attributes={},
+            usage_metric="external_fixed_per_tx", unit="USD",
+            price_usd=0.30,
+            start_usage_amount=None, end_usage_amount=None,
+            source="test", effective_date="2024-01-01", fetched_at="2024-01-01T00:00:00"
+        ))
+        # International Stripe
+        cache.upsert(Price(
+            vendor="external", service="ExternalAPI", region="global",
+            product_family="External", attributes={},
+            usage_metric="stripe_international_percentage", unit="USD",
+            price_usd=0.039,
+            start_usage_amount=None, end_usage_amount=None,
+            source="test", effective_date="2024-01-01", fetched_at="2024-01-01T00:00:00"
+        ))
+        cache.upsert(Price(
+            vendor="external", service="ExternalAPI", region="global",
+            product_family="External", attributes={},
+            usage_metric="stripe_international_fixed_per_tx", unit="USD",
+            price_usd=0.30,
+            start_usage_amount=None, end_usage_amount=None,
+            source="test", effective_date="2024-01-01", fetched_at="2024-01-01T00:00:00"
+        ))
+        # Twilio
+        cache.upsert(Price(
+            vendor="external", service="ExternalAPI", region="global",
+            product_family="External", attributes={},
+            usage_metric="twilio_sms", unit="messages",
+            price_usd=0.0075,
+            start_usage_amount=None, end_usage_amount=None,
+            source="test", effective_date="2024-01-01", fetched_at="2024-01-01T00:00:00"
+        ))
+        # SendGrid
+        cache.upsert(Price(
+            vendor="external", service="ExternalAPI", region="global",
+            product_family="External", attributes={},
+            usage_metric="sendgrid_email", unit="emails",
+            price_usd=0.0001,
+            start_usage_amount=None, end_usage_amount=None,
+            source="test", effective_date="2024-01-01", fetched_at="2024-01-01T00:00:00"
+        ))
+        catalog = PricingCatalog(db_path=Path(tmpdir.name) / "test.db")
+        return catalog, tmpdir
+
+    def test_stripe_standard_with_catalog(self):
+        """Stripe standard pricing via catalog matches hardcoded fallback."""
+        catalog, tmpdir = self._make_catalog_with_seed_data()
+        try:
+            cost = stripe_cost(10_000, 500_000, catalog=catalog)
+            expected = 500_000 * 0.029 + 10_000 * 0.30
+            assert cost == pytest.approx(expected)
+        finally:
+            tmpdir.cleanup()
+
+    def test_stripe_international_with_catalog(self):
+        """Stripe international pricing via catalog includes 1% currency fee."""
+        catalog, tmpdir = self._make_catalog_with_seed_data()
+        try:
+            cost = stripe_cost(10_000, 500_000, international=True, catalog=catalog)
+            expected = 500_000 * 0.039 + 10_000 * 0.30 + 500_000 * 0.01
+            assert cost == pytest.approx(expected)
+        finally:
+            tmpdir.cleanup()
+
+    def test_twilio_sms_with_catalog(self):
+        """Twilio SMS pricing via catalog matches fallback."""
+        catalog, tmpdir = self._make_catalog_with_seed_data()
+        try:
+            cost = twilio_sms_cost(100_000, catalog=catalog)
+            assert cost == pytest.approx(750.0)
+        finally:
+            tmpdir.cleanup()
+
+    def test_sendgrid_with_catalog(self):
+        """SendGrid pricing via catalog matches fallback."""
+        catalog, tmpdir = self._make_catalog_with_seed_data()
+        try:
+            cost = sendgrid_cost(50_000, catalog=catalog)
+            assert cost == pytest.approx(5.0)
+        finally:
+            tmpdir.cleanup()
+
+    def test_stripe_no_catalog_fallback(self):
+        """Stripe cost with catalog=None uses fallback constants."""
+        cost = stripe_cost(10_000, 500_000, catalog=None)
+        expected = 500_000 * 0.029 + 10_000 * 0.30
+        assert cost == pytest.approx(expected)
+
+    def test_twilio_no_catalog_fallback(self):
+        """Twilio cost with catalog=None uses fallback constants."""
+        cost = twilio_sms_cost(100_000, catalog=None)
+        assert cost == pytest.approx(750.0)
