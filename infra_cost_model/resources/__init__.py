@@ -13,6 +13,11 @@ from .types import ResourceType, ComputeResource, StorageResource, RoutingResour
 from .lambda_func import LambdaFunction, calculate_gb_seconds, apply_free_tier
 from .external import ExternalNode, ExternalServiceRegistry
 from .s3 import S3Bucket
+from .sqs import SQSQueue
+from .sns import SNSTopic
+from .eventbridge import EventBridgeRule
+from .cloudfront import CloudFrontDistribution
+from .rds import RDSInstance
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -28,6 +33,11 @@ __all__ = [
     "ExternalNode",
     "ExternalServiceRegistry",
     "S3Bucket",
+    "SQSQueue",
+    "SNSTopic",
+    "EventBridgeRule",
+    "CloudFrontDistribution",
+    "RDSInstance",
     "CloudFunction",
     "CloudStorage",
     "CloudRun",
