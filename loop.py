@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Concurrent loop runner for design-principles-review-pipeline and issue-pipeline."""
 
-import argparse, asyncio, logging, signal, sys, time
+import argparse, asyncio, logging, shlex, signal, sys, time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 class Loop:
     name: str
     cmd: tuple[str, ...]
+    prompt: str           # free-form; split by shlex into argv elements
     interval: int
     runs: int = 0
     last_run: float = 0
@@ -26,19 +27,16 @@ class Stats:
     ip_runs: int = 0
     ip_err: int = 0
 
-def build_cmd(base: tuple, provider: Optional[str] = None, model: Optional[str] = None) -> list[str]:
+def build_cmd(cmd: tuple[str, ...], prompt: str,
+              provider: Optional[str] = None, model: Optional[str] = None) -> list[str]:
     c = ["pi", "-p"]
     if provider: c += ["--provider", provider]
-    if model:  c += ["--model", model]
-    c.extend(base)
+    if model:   c += ["--model", model]
+    c.extend(cmd)
+    # Each prompt word is its own argv element — subprocess_exec gets
+    # correct boundaries so pi's parser doesn't see '--' as a subcommand arg.
+    c.extend(shlex.split(prompt))
     return c
-
-def join_cmd(cmd: list[str]) -> str:
-    try:
-        import shlex
-        return shlex.join(cmd)
-    except Exception:
-        return " ".join(cmd)
 
 async def run(cmd: list[str], name: str, sem: asyncio.Semaphore) -> tuple[int, float]:
     t0 = time.time()
@@ -60,7 +58,7 @@ async def run(cmd: list[str], name: str, sem: asyncio.Semaphore) -> tuple[int, f
 async def loop_run(lp: Loop, st: Stats, stop: asyncio.Event, sem: asyncio.Semaphore, provider: Optional[str], model: Optional[str]):
     while not stop.is_set():
         t0 = time.time()
-        code, dur = await run(build_cmd(lp.cmd, provider, model), lp.name, sem)
+        code, dur = await run(build_cmd(lp.cmd, lp.prompt, provider, model), lp.name, sem)
         lp.runs += 1; lp.last_run = t0; lp.last_dur = dur; lp.last_code = code
         if lp.name == "design-principles":
             st.dp_runs += 1; 
@@ -99,12 +97,14 @@ async def main():
 
     dp = Loop(
         "design-principles",
-        ("/run-chain", "design-principles-review-pipeline", "--", "Review the codebase main branch for design principle violations, find gaps against existing issues, and create issues for new violations."),
+        ("/run-chain", "design-principles-review-pipeline"),
+        "Review the codebase main branch for design principle violations, find gaps against existing issues, and create issues for new violations.",
         a.dp_interval,
     )
     ip = Loop(
         "issue-pipeline",
-        ("/run-chain", "issue-pipeline", "--", f"Analyze all open issues, implement the top {a.top_issues}, review, and merge passing ones."),
+        ("/run-chain", "issue-pipeline"),
+        f"Analyze all open issues, implement the top {a.top_issues}, review, and merge passing ones.",
         a.issue_interval,
     )
 
