@@ -281,6 +281,7 @@ class Workflow:
             value=model["workflow"]["frequency"]["value"],
             unit=model["workflow"]["frequency"]["unit"],
         )
+        workflow.parameters = model["workflow"].get("parameters", {})
         workflow._nodes = model.get("nodes", {})
         workflow._edges = model.get("edges", [])
         return workflow
@@ -314,18 +315,38 @@ class Workflow:
             self._nodes[node_address] = {}
         self._nodes[node_address]["usageMetrics"] = usage.metrics
     
+    def parameter(self, name: str, value: float) -> "Workflow":
+        """Set a symbolic parameter for what-if analysis (DP#4).
+        
+        Parameters are symbolic variables that can be varied for what-if
+        analysis without re-deriving the graph structure. They can be
+        referenced by name in edge rates and usage metric values.
+        
+        Args:
+            name: Parameter name (e.g., 'cache_hit_rate')
+            value: Parameter value
+            
+        Returns:
+            Self for fluent chaining.
+        """
+        self.parameters[name] = value
+        return self
+    
     def to_cost_model(self) -> dict:
         """Export to cost model representation JSON Schema."""
+        workflow_dict = {
+            "name": self.name,
+            "entry": self.entry,
+            "frequency": {
+                "unit": self.frequency.unit,
+                "value": self.frequency.value,
+            },
+        }
+        if self.parameters:
+            workflow_dict["parameters"] = self.parameters
         return {
             "version": "1.0",
-            "workflow": {
-                "name": self.name,
-                "entry": self.entry,
-                "frequency": {
-                    "unit": self.frequency.unit,
-                    "value": self.frequency.value,
-                },
-            },
+            "workflow": workflow_dict,
             "nodes": self._nodes,
             "edges": self._edges,
         }

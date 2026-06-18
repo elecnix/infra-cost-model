@@ -3,6 +3,7 @@
 import pytest
 from infra_cost_model.engine.engine import (
     DAGValidator, WorkloadDeriver, CostAggregator, CostEngine, DerivedUsage,
+    SensitivityAnalyzer,
 )
 
 
@@ -1036,3 +1037,220 @@ class TestProviderRegionValidation:
 
             with pytest.raises(ValueError, match="missing required 'provider'"):
                 aggregator.aggregate()
+
+
+class TestParameterIntegration:
+    """Tests for DP#4: symbolic parameters in workload derivation and pricing."""
+
+    def test_parameter_resolution_in_edge_rates(self):
+        """Edge rates can reference parameters by name."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+            "parameters": {"cache_hit_rate": 0.8},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "compute_b"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": "cache_hit_rate"},
+        ]
+
+        deriver = WorkloadDeriver(workflow, nodes, edges,
+                                   parameters=workflow["parameters"])
+        derived = deriver.derive()
+
+        # B gets 10.0 * 0.8 = 8.0 invocations/sec
+        assert derived["B"].invocation_count == 8.0
+
+    def test_parameter_resolution_in_usage_metrics(self):
+        """Usage metric values can reference parameters by name."""
+        nodes = {
+            "test_fn": {
+                "nodeType": "compute",
+                "resourceAddress": "test_fn",
+                "provider": "aws",
+                "service": "AWSLambda",
+                "usageMetrics": {
+                    "invocations": {"unit": "requests", "value": "traffic_multiplier"},
+                },
+                "pricingRates": {
+                    "invocations": 0.001,
+                }
+            }
+        }
+        derived = {"test_fn": DerivedUsage("test_fn", 100.0)}
+        parameters = {"traffic_multiplier": 5.0}
+        aggregator = CostAggregator(nodes, derived, [], parameters=parameters)
+        costs = aggregator.aggregate()
+
+        # 100 invocations * 5 (traffic_multiplier) * $0.001 = $0.50
+        assert costs["test_fn"] == pytest.approx(100 * 5 * 0.001)
+
+    def test_what_if_with_symbolic_parameter(self):
+        """SensitivityAnalyzer.what_if supports symbolic parameter names."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"cache_hit_rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {
+                        "invocations": {"unit": "requests", "value": 1},
+                    },
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [
+                {"from": "A", "to": "B", "rate": "cache_hit_rate"},
+            ],
+        }
+
+        analyzer = SensitivityAnalyzer(model)
+
+        # With cache_hit_rate=0.5: B gets 10 * 0.5 = 5 invocations * $0.001 = $0.005
+        cost_05 = analyzer.what_if("cache_hit_rate", 0.5)
+        assert cost_05 == pytest.approx(5 * 0.001)
+
+        # With cache_hit_rate=0.9: B gets 10 * 0.9 = 9 invocations * $0.001 = $0.009
+        cost_09 = analyzer.what_if("cache_hit_rate", 0.9)
+        assert cost_09 == pytest.approx(9 * 0.001)
+
+    def test_sensitivity_with_symbolic_parameter(self):
+        """Sensitivity analysis works with symbolic parameters."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"cache_hit_rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {
+                        "invocations": {"unit": "requests", "value": 1},
+                    },
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [
+                {"from": "A", "to": "B", "rate": "cache_hit_rate"},
+            ],
+        }
+
+        analyzer = SensitivityAnalyzer(model)
+        results = analyzer.sensitivity("cache_hit_rate", steps=3)
+
+        assert len(results) == 3
+        # Values should range from 0.5*0.5=0.25 to 0.5*2.0=1.0
+        assert results[0][0] == pytest.approx(0.25)  # 0.5×0.5
+        assert results[2][0] == pytest.approx(1.0)   # 0.5×2.0
+
+    def test_unrecognized_parameter_reference_raises_in_deriver(self):
+        """An unrecognized parameter name in edge rate raises ValueError."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "compute_b"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": "nonexistent_param"},
+        ]
+
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        with pytest.raises(ValueError, match="Unrecognized parameter reference"):
+            deriver.derive()
+
+    def test_unrecognized_parameter_reference_raises_in_aggregator(self):
+        """An unrecognized parameter name in usage metric raises ValueError."""
+        nodes = {
+            "test_fn": {
+                "nodeType": "compute",
+                "resourceAddress": "test_fn",
+                "usageMetrics": {
+                    "invocations": {"unit": "requests", "value": "nonexistent_param"},
+                },
+                "pricingRates": {"invocations": 0.001},
+            }
+        }
+        derived = {"test_fn": DerivedUsage("test_fn", 100.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+
+        with pytest.raises(ValueError, match="Unrecognized parameter reference"):
+            aggregator.aggregate()
+
+    def test_numeric_edge_rate_still_works_with_parameters(self):
+        """Numeric edge rates work normally even when parameters are defined."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+            "parameters": {"unused_param": 0.5},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "compute_b"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 0.75},
+        ]
+
+        deriver = WorkloadDeriver(workflow, nodes, edges,
+                                   parameters=workflow["parameters"])
+        derived = deriver.derive()
+
+        assert derived["B"].invocation_count == 7.5
+
+    def test_parameter_impact_with_symbolic_parameter(self):
+        """SensitivityAnalyzer.parameter_impact works with symbolic parameters."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"cache_hit_rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {
+                        "invocations": {"unit": "requests", "value": 1},
+                    },
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [
+                {"from": "A", "to": "B", "rate": "cache_hit_rate"},
+            ],
+        }
+
+        analyzer = SensitivityAnalyzer(model)
+        impact = analyzer.parameter_impact("cache_hit_rate", delta=0.1)
+
+        # +10% change: 0.5*1.1=0.55, B gets 10*0.55=5.5, cost=5.5*0.001=0.0055
+        # baseline: 0.5, B gets 10*0.5=5, cost=5*0.001=0.005
+        # impact = 0.0055 - 0.005 = 0.0005
+        assert impact == pytest.approx(0.0005)

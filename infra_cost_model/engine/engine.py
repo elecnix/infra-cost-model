@@ -88,10 +88,12 @@ class DAGValidator:
 class WorkloadDeriver:
     """Derives node usage by propagating frequency through DAG."""
     
-    def __init__(self, workflow: dict, nodes: dict[str, dict], edges: list[dict]):
+    def __init__(self, workflow: dict, nodes: dict[str, dict], edges: list[dict],
+                 parameters: dict[str, float] = None):
         self.workflow = workflow
         self.nodes = nodes
         self.edges = edges
+        self.parameters = parameters or {}
         self.derived_usage: dict[str, DerivedUsage] = {}
     
     def derive(self) -> dict[str, DerivedUsage]:
@@ -137,7 +139,7 @@ class WorkloadDeriver:
             
             for edge in outgoing.get(node, []):
                 child = edge["to"]
-                call_rate = edge["rate"]
+                call_rate = self._resolve_value(edge["rate"])
                 child_invocations = parent_invocations * call_rate
                 
                 # Accumulate data_in from edge dataSize
@@ -203,17 +205,50 @@ class WorkloadDeriver:
             )
         
         return value / divisors[unit]
+    
+    def _resolve_value(self, value) -> float:
+        """Resolve a value that may be a parameter name or a numeric literal.
+        
+        Per DP#4, edge rates and usage metric values can reference symbolic
+        parameters by name. If the value is a string, it is looked up in the
+        parameters dict. If not found, it is treated as a float literal.
+        
+        Args:
+            value: A numeric value or a parameter name string.
+            
+        Returns:
+            Resolved float value.
+            
+        Raises:
+            ValueError: If the value is a string that is not in parameters
+                        and cannot be parsed as a float.
+        """
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            if value in self.parameters:
+                return self.parameters[value]
+            try:
+                return float(value)
+            except ValueError:
+                raise ValueError(
+                    f"Unrecognized parameter reference '{value}'. "
+                    f"Available parameters: {', '.join(sorted(self.parameters.keys()))}"
+                ) from None
+        return float(value)
 
 
 class CostAggregator:
     """Aggregates costs bottom-up from derived usage + pricing."""
     
     def __init__(self, nodes: dict[str, dict], derived_usage: dict[str, DerivedUsage],
-                 edges: list[dict] = None, catalog: Optional[PricingCatalog] = None):
+                 edges: list[dict] = None, catalog: Optional[PricingCatalog] = None,
+                 parameters: dict[str, float] = None):
         self.nodes = nodes
         self.derived_usage = derived_usage
         self.edges = edges or []
         self.catalog = catalog
+        self.parameters = parameters or {}
         self.costs: dict[str, float] = {}
     
     def aggregate(self) -> dict[str, float]:
@@ -292,11 +327,12 @@ class CostAggregator:
         # Each metric value is a per-invocation quantity; multiply by
         # invocation_count to get total consumption, then by pricing rate.
         # Prefer catalog over embedded pricingRates (Principle 13).
+        # Per DP#4, metric values may reference symbolic parameters by name.
         for metric_name, metric_def in node_metrics.items():
             if isinstance(metric_def, dict):
-                per_invocation = metric_def.get("value", 0)
+                per_invocation = self._resolve_param(metric_def.get("value", 0))
             else:
-                per_invocation = metric_def
+                per_invocation = self._resolve_param(metric_def)
             
             total_quantity = invocations * per_invocation
             
@@ -355,9 +391,9 @@ class CostAggregator:
         
         for metric_name, metric_def in node_metrics.items():
             if isinstance(metric_def, dict):
-                per_invocation = metric_def.get("value", 0)
+                per_invocation = self._resolve_param(metric_def.get("value", 0))
             else:
-                per_invocation = metric_def
+                per_invocation = self._resolve_param(metric_def)
             
             total_quantity = invocations * per_invocation
             
@@ -375,6 +411,37 @@ class CostAggregator:
                 total_cost += total_quantity * pricing_rates[metric_name]
         
         return total_cost
+    
+    def _resolve_param(self, value) -> float:
+        """Resolve a value that may be a parameter name or a numeric literal.
+        
+        Per DP#4, usage metric values can reference symbolic parameters by name.
+        If the value is a string, it is looked up in the parameters dict.
+        
+        Args:
+            value: A numeric value or a parameter name string.
+            
+        Returns:
+            Resolved float value.
+            
+        Raises:
+            ValueError: If the value is a string that is not in parameters
+                        and cannot be parsed as a float.
+        """
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            if value in self.parameters:
+                return self.parameters[value]
+            try:
+                return float(value)
+            except ValueError:
+                raise ValueError(
+                    f"Unrecognized parameter reference '{value}'. "
+                    f"Available parameters: "
+                    f"{', '.join(sorted(self.parameters.keys()))}"
+                ) from None
+        return float(value)
     
     def _compute_percentage_cost(self, address: str, node: dict, invocations: float) -> float:
         """Compute percentage-based cost for external services.
@@ -423,6 +490,7 @@ class CostEngine:
         self.workflow = cost_model["workflow"]
         self.nodes = cost_model["nodes"]
         self.edges = cost_model.get("edges", [])
+        self.parameters = self.workflow.get("parameters", {})
         self.catalog = catalog
         self.time_basis = time_basis
         
@@ -449,10 +517,12 @@ class CostEngine:
         if not self.validator.validate():
             raise ValueError(f"Invalid DAG: {'; '.join(self.validator.errors)}")
         
-        deriver = WorkloadDeriver(self.workflow, self.nodes, self.edges)
+        deriver = WorkloadDeriver(self.workflow, self.nodes, self.edges,
+                                   parameters=self.parameters)
         self.derived_usage = deriver.derive()
         
-        aggregator = CostAggregator(self.nodes, self.derived_usage, self.edges, self.catalog)
+        aggregator = CostAggregator(self.nodes, self.derived_usage, self.edges,
+                                     self.catalog, parameters=self.parameters)
         self.costs = aggregator.aggregate()
         
         # Apply time basis conversion (per-second internal → output period)
@@ -500,7 +570,13 @@ class SensitivityAnalyzer:
         return engine.total_cost()
     
     def _modify_parameter(self, parameter: str, value: float) -> dict:
-        """Create a modified cost model with parameter changed."""
+        """Create a modified cost model with parameter changed.
+        
+        Supports:
+        - 'frequency': vary entry frequency
+        - 'edge:from_node->to_node': vary a specific edge rate
+        - Any name in workflow.parameters: vary a symbolic parameter (DP#4)
+        """
         import copy
         model = copy.deepcopy(self.cost_model)
         
@@ -515,6 +591,12 @@ class SensitivityAnalyzer:
                     if edge["from"] == from_node and edge["to"] == to_node:
                         edge["rate"] = value
                         break
+        else:
+            # Symbolic parameter (DP#4): update the parameter value in the
+            # workflow's parameters dict. Edge rates and usage metrics that
+            # reference this parameter by name will use the new value.
+            params = model["workflow"].setdefault("parameters", {})
+            params[parameter] = value
         
         return model
     
@@ -531,8 +613,21 @@ class SensitivityAnalyzer:
         # Get baseline value
         if parameter == "frequency":
             baseline = self.cost_model["workflow"]["frequency"]["value"]
+        elif parameter.startswith("edge:"):
+            # Edge parameter: get current edge rate as baseline
+            edge_spec = parameter[5:]
+            baseline = 1.0  # fallback
+            if "->" in edge_spec:
+                from_node, to_node = edge_spec.split("->")
+                for edge in self.cost_model.get("edges", []):
+                    if edge["from"] == from_node and edge["to"] == to_node:
+                        rate = edge["rate"]
+                        baseline = float(rate) if isinstance(rate, (int, float)) else 1.0
+                        break
         else:
-            baseline = 1.0  # Default baseline
+            # Symbolic parameter (DP#4): get baseline from workflow.parameters
+            params = self.cost_model["workflow"].get("parameters", {})
+            baseline = params.get(parameter, 1.0)
         
         results = []
         # Vary from 0.5x to 2x baseline
@@ -575,7 +670,8 @@ class SensitivityAnalyzer:
                 raise ValueError(
                     f"Unsupported parameter '{parameter}'. "
                     f"Edge parameters must use format 'edge:from_node->to_node'. "
-                    f"Supported parameters: 'frequency', 'edge:from->to'."
+                    f"Supported parameters: 'frequency', 'edge:from->to', "
+                    f"or a workflow.parameters name."
                 )
             from_node, to_node = edge_spec.split("->", 1)
             # Find the edge to get its current rate
@@ -583,17 +679,30 @@ class SensitivityAnalyzer:
             for edge in self.cost_model.get("edges", []):
                 if edge.get("from") == from_node and edge.get("to") == to_node:
                     current = edge.get("rate", 0.0)
+                    if isinstance(current, str):
+                        # Edge rate is a parameter reference — use parameter value
+                        params = self.cost_model["workflow"].get("parameters", {})
+                        current = params.get(current, 0.0)
                     found = True
                     break
             if not found:
                 raise ValueError(
                     f"Edge '{from_node}->{to_node}' not found in cost model edges."
                 )
+            new_value = float(current) * (1 + delta)
+            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
+            return engine_modified.total_cost() - baseline
+        
+        # Symbolic parameter (DP#4): get current value from workflow.parameters
+        params = self.cost_model["workflow"].get("parameters", {})
+        if parameter in params:
+            current = params[parameter]
             new_value = current * (1 + delta)
             engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
             return engine_modified.total_cost() - baseline
         
         raise ValueError(
             f"Unsupported parameter '{parameter}'. "
-            f"Supported parameters: 'frequency', 'edge:from_node->to_node'."
+            f"Supported parameters: 'frequency', 'edge:from_node->to_node', "
+            f"or a workflow.parameters name."
         )
