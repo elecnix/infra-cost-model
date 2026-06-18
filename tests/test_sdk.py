@@ -393,3 +393,79 @@ def test_nodes_auto_extracted_from_tf_state():
         assert workflow._nodes["aws_dynamodb_table.users"]["nodeType"] == "storage"
     finally:
         os.unlink(temp_path)
+
+class TestWorkflowParameters:
+    """Tests for DP#4: symbolic parameters in Workflow SDK."""
+
+    def test_parameter_fluent_api(self):
+        """Workflow.parameter() sets symbolic parameters via fluent API."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gateway"
+        workflow.frequency = per_minute(100)
+
+        workflow.parameter("cache_hit_rate", 0.8)
+        workflow.parameter("average_payload_size", 50.0)
+
+        assert workflow.parameters["cache_hit_rate"] == 0.8
+        assert workflow.parameters["average_payload_size"] == 50.0
+
+    def test_parameter_export_to_cost_model(self):
+        """Parameters are exported in to_cost_model()."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gateway"
+        workflow.frequency = per_minute(100)
+        workflow.parameter("cache_hit_rate", 0.8)
+
+        model = workflow.to_cost_model()
+
+        assert "parameters" in model["workflow"]
+        assert model["workflow"]["parameters"]["cache_hit_rate"] == 0.8
+
+    def test_parameter_omitted_when_empty(self):
+        """Parameters key is omitted from cost model when no parameters set."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gateway"
+        workflow.frequency = per_minute(100)
+
+        model = workflow.to_cost_model()
+
+        # Parameters key should not be present when empty
+        assert "parameters" not in model["workflow"]
+
+    def test_parameter_import_from_yaml(self):
+        """Parameters are imported from YAML workflow.parameters."""
+        yaml_content = """
+workflow:
+  name: "test"
+  entry: "api_gateway"
+  frequency:
+    value: 100
+    unit: perMinute
+  parameters:
+    cache_hit_rate: 0.75
+    traffic_multiplier: 2.0
+edges: []
+nodes: {}
+"""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+
+        try:
+            workflow = Workflow.from_yaml(temp_path)
+            assert workflow.parameters["cache_hit_rate"] == 0.75
+            assert workflow.parameters["traffic_multiplier"] == 2.0
+        finally:
+            os.unlink(temp_path)
+
+    def test_parameter_chaining(self):
+        """Parameter() returns self for fluent chaining."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gateway"
+        workflow.frequency = per_minute(100)
+
+        result = workflow.parameter("x", 1.0).parameter("y", 2.0)
+        assert result is workflow
+        assert workflow.parameters["x"] == 1.0
+        assert workflow.parameters["y"] == 2.0
