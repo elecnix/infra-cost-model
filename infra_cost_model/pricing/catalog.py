@@ -51,6 +51,14 @@ class _CostResult:
         total = 0.0
         quantity = self.quantity
         
+        # Check if all tiers have None start_usage_amount (flat price)
+        all_null_start = all(t.start_usage_amount is None for t in self.tiers)
+        
+        if all_null_start:
+            # Simple flat price - average of all prices * quantity
+            avg_price = sum(t.price_usd for t in self.tiers) / len(self.tiers)
+            return quantity * avg_price
+        
         for tier in sorted(self.tiers, key=lambda t: t.start_usage_amount or 0):
             tier_start = tier.start_usage_amount or 0
             tier_end = tier.end_usage_amount

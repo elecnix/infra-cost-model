@@ -66,8 +66,8 @@
   "definitions": {
     "nodeType": {
       "type": "string",
-      "enum": ["compute", "storage", "routing"],
-      "description": "Node type determines valid usage metrics and edge permissions"
+      "enum": ["compute", "storage", "routing", "external"],
+      "description": "Node type determines valid usage metrics and edge permissions. External nodes are leaf nodes for third-party services (Stripe, Twilio)."
     },
 
     "node": {
@@ -98,16 +98,10 @@
             "$ref": "#/definitions/usageMetric"
           }
         },
-        "derivedMetrics": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/definitions/derivedMetric"
-          }
-        },
         "pricingModel": {
           "type": "string",
-          "enum": ["tiered", "flat", "token_based"],
-          "description": "Pricing model type"
+          "enum": ["tiered", "flat", "token_based", "percentage"],
+          "description": "Pricing model type. Percentage: fixed + percentage of transaction volume (e.g., Stripe: 2.9% + $0.30)."
         },
         "pricingRates": {
           "type": "object",
@@ -133,20 +127,6 @@
         "value": {
           "type": "number",
           "description": "Override value (flat override - discouraged)"
-        }
-      }
-    },
-
-    "derivedMetric": {
-      "type": "object",
-      "required": ["formula", "unit"],
-      "properties": {
-        "formula": {
-          "type": "string",
-          "description": "Mathematical expression to compute this metric (e.g., '(memoryMb / 1024) * (avgDurationMs / 1000) * invocations')"
-        },
-        "unit": {
-          "type": "string"
         }
       }
     },

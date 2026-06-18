@@ -9,6 +9,8 @@ import json
 
 DB_PATH = Path.home() / ".infra-cost-model" / "pricing.db"
 DEFAULT_TTL_DAYS = 7
+SEED_PRICES_PATH = Path(__file__).parent.parent.parent / "data" / "seed" / "aws_pricelist_seed.json"
+
 
 @dataclass
 class Price:
@@ -36,7 +38,6 @@ class TieredPrice:
     
     def total_cost(self, quantity: float) -> float:
         """Calculate total cost for a quantity with tiered pricing."""
-        # Sort tiers by start_usage_amount
         sorted_tiers = sorted(
             [t for t in self.tiers if t.start_usage_amount is not None],
             key=lambda t: t.start_usage_amount or 0
@@ -44,20 +45,86 @@ class TieredPrice:
         
         total = 0.0
         
+        # If no tiers have start_usage_amount (flat price), just multiply
+        if not sorted_tiers:
+            tier = self.tiers[0] if self.tiers else None
+            if tier:
+                return tier.price_usd * quantity
+            return 0.0
+        
         for tier in sorted_tiers:
             tier_start = tier.start_usage_amount or 0
             tier_end = tier.end_usage_amount
             
             if tier_end is None:
-                # Last tier: all usage above start
                 if quantity > tier_start:
                     total += (quantity - tier_start) * tier.price_usd
             elif quantity > tier_start:
-                # Tier with end: usage from start to end
                 charged = min(quantity, tier_end) - tier_start
                 total += charged * tier.price_usd
         
         return total
+
+
+def seed_prices(cache: Optional["PricingCache"] = None) -> int:
+    """Load seed prices into cache. Returns count of prices loaded.
+    
+    Args:
+        cache: PricingCache instance (creates default if None)
+        
+    Returns:
+        Number of prices loaded
+        
+    Raises:
+        RuntimeError: If seed file not found.
+    """
+    if cache is None:
+        cache = PricingCache()
+    
+    if not SEED_PRICES_PATH.exists():
+        raise RuntimeError(f"Seed prices file not found at {SEED_PRICES_PATH}")
+    
+    conn = sqlite3.connect(cache.db_path)
+    count = 0
+    now = datetime.now().isoformat()
+    
+    try:
+        seed_data = json.loads(SEED_PRICES_PATH.read_text())
+        for item in seed_data:
+            attrs_hash = _hash_attributes(item.get("attributes", {}))
+            conn.execute("""
+                INSERT OR IGNORE INTO prices (
+                    vendor, service, region, product_family, attributes,
+                    attributes_hash, usage_metric, unit, price_usd,
+                    start_usage_amount, end_usage_amount, purchase_option,
+                    effective_date, source, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                item.get("vendor"),
+                item.get("service"),
+                item.get("region"),
+                item.get("product_family", ""),
+                json.dumps(item.get("attributes", {})),
+                attrs_hash,
+                item.get("usage_metric"),
+                item.get("unit"),
+                item.get("price_usd", 0),
+                item.get("start_usage_amount"),
+                item.get("end_usage_amount"),
+                None,
+                now,
+                "seed",
+                now,
+            ))
+            count += 1
+        conn.commit()
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid seed prices JSON: {e}") from e
+    finally:
+        conn.close()
+    
+    cache._seed_loaded = True
+    return count
 
 
 class PricingCache:
@@ -66,6 +133,7 @@ class PricingCache:
     def __init__(self, db_path: str | Path = None, ttl_days: int = DEFAULT_TTL_DAYS):
         self.db_path = Path(db_path) if db_path else DB_PATH
         self.ttl_days = ttl_days
+        self._seed_loaded = False
         self._ensure_db()
     
     def _ensure_db(self):
@@ -143,6 +211,7 @@ class PricingCache:
         """Query prices for a specific vendor/service/region/usage metric.
         
         Returns a TieredPrice if multiple tiers exist, or a single Price.
+        If no prices are found, loads seed prices and retries once.
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.execute("""
@@ -159,6 +228,14 @@ class PricingCache:
         conn.close()
         
         if not rows:
+            # Load seed prices and retry once
+            if not self._seed_loaded:
+                try:
+                    seed_prices(self)
+                    self._seed_loaded = True
+                    return self.query(vendor, service, region, usage_metric, quantity)
+                except RuntimeError:
+                    pass
             return None
         
         prices = [

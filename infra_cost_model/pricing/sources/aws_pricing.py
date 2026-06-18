@@ -1,10 +1,12 @@
 """AWS Pricing API client for fallback pricing."""
 
 from datetime import datetime
+from pathlib import Path
 
 import requests
 
 AWS_PRICE_LIST_URL = "https://pricing.us-east-1.amazonaws.com"
+SEED_PRICES_PATH = Path(__file__).parent.parent.parent.parent / "data" / "seed" / "aws_pricelist_seed.json"
 
 SERVICE_CODES = {
     "AWSLambda": "AWSLambda",
@@ -18,42 +20,6 @@ REQUIRED_METRICS = {
     "AmazonDynamoDB": ["Dynamo-ReadRequest", "Dynamo-WriteRequest", "Dynamo-Storage"],
     "AmazonAPIGatewayHTTP": ["APIGateway-HTTP-Request"],
     "AmazonBedrock": ["Bedrock-Input-Token", "Bedrock-Output-Token"],
-}
-
-STATIC_PRICES = {
-    "AWSLambda": {
-        "Lambda-Request": [
-            {"price_usd": 0.0, "unit": "requests", "start_usage_amount": 0, "end_usage_amount": 1_000_000},
-            {"price_usd": 0.20e-6, "unit": "requests", "start_usage_amount": 1_000_000, "end_usage_amount": None},
-        ],
-        "Lambda-GB-Second": [
-            {"price_usd": 0.0000166667, "unit": "GB-s", "start_usage_amount": 0, "end_usage_amount": 6_000_000_000},
-        ],
-    },
-    "AmazonDynamoDB": {
-        "Dynamo-ReadRequest": [
-            {"price_usd": 1.25e-6, "unit": "requests", "start_usage_amount": 0, "end_usage_amount": None},
-        ],
-        "Dynamo-WriteRequest": [
-            {"price_usd": 6.25e-6, "unit": "requests", "start_usage_amount": 0, "end_usage_amount": None},
-        ],
-        "Dynamo-Storage": [
-            {"price_usd": 0.25, "unit": "GB-Mo", "start_usage_amount": 0, "end_usage_amount": None},
-        ],
-    },
-    "AmazonAPIGatewayHTTP": {
-        "APIGateway-HTTP-Request": [
-            {"price_usd": 1.00e-6, "unit": "requests", "start_usage_amount": 0, "end_usage_amount": None},
-        ],
-    },
-    "AmazonBedrock": {
-        "Bedrock-Input-Token": [
-            {"price_usd": 0.003 / 1000, "unit": "tokens", "start_usage_amount": 0, "end_usage_amount": None},
-        ],
-        "Bedrock-Output-Token": [
-            {"price_usd": 0.015 / 1000, "unit": "tokens", "start_usage_amount": 0, "end_usage_amount": None},
-        ],
-    },
 }
 
 
@@ -86,13 +52,65 @@ def fetch_aws_price_list(service_code: str) -> list[dict]:
     return results
 
 
-def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1") -> int:
-    """Seed pricing cache from AWS Price List API, filling gaps with known fallback prices."""
+def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", seed_only: bool = False) -> int:
+    """Seed pricing cache from AWS Price List API, filling gaps with seed file prices.
+    
+    Args:
+        services: List of AWS service names to sync
+        cache: PricingCache instance
+        region: AWS region (default: us-east-1)
+        seed_only: If True, only use seed file (don't query API)
+        
+    Returns:
+        Number of prices synced to cache
+        
+    Raises:
+        RuntimeError: If no pricing data could be fetched and seed file unavailable
+    """
     from infra_cost_model.pricing.cache import Price
+    import json
 
     count = 0
     now = datetime.now().isoformat()
     seen = set()
+
+    # First, load from seed file if it exists
+    if SEED_PRICES_PATH.exists():
+        try:
+            seed_data = json.loads(SEED_PRICES_PATH.read_text())
+            for item in seed_data:
+                if item.get("vendor") != "aws":
+                    continue
+                if services and item.get("service") not in services:
+                    continue
+                if item.get("region") != region:
+                    continue
+                    
+                key = (item["service"], item["usage_metric"], item["unit"], item["price_usd"])
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                cache.upsert(Price(
+                    vendor=item["vendor"],
+                    service=item["service"],
+                    region=item["region"],
+                    product_family=item.get("product_family", ""),
+                    attributes={},
+                    usage_metric=item["usage_metric"],
+                    unit=item["unit"],
+                    price_usd=item["price_usd"],
+                    source="seed-initial",
+                    effective_date=now,
+                    fetched_at=now,
+                ))
+                count += 1
+        except (json.JSONDecodeError, KeyError):
+            pass  # Fall through to API or error
+    
+    # If we loaded from seed, return count
+    if seed_only or count > 0:
+        return count
 
     for service in services:
         synced_metrics = set()
@@ -124,24 +142,11 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1") -
             synced_metrics.add(usage_metric)
             count += 1
 
-        for metric in set(REQUIRED_METRICS.get(service, [])) - synced_metrics:
-            for price in STATIC_PRICES.get(service, {}).get(metric, []):
-                cache.upsert(Price(
-                    vendor="aws",
-                    service=service,
-                    region=region,
-                    product_family=_product_family(service, metric),
-                    attributes={},
-                    usage_metric=metric,
-                    unit=price["unit"],
-                    price_usd=price["price_usd"],
-                    start_usage_amount=price["start_usage_amount"],
-                    end_usage_amount=price["end_usage_amount"],
-                    source="aws-fallback",
-                    effective_date=now,
-                    fetched_at=now,
-                ))
-                count += 1
+    if count == 0:
+        raise RuntimeError(
+            f"No pricing data available. Seed file not found at {SEED_PRICES_PATH}. "
+            f"Run 'infra-cost-model seed-pricing' first, or set INFRACOST_API_KEY for live pricing."
+        )
 
     return count
 

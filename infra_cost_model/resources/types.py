@@ -87,3 +87,19 @@ class RoutingResource(ResourceType):
     @property
     def node_type(self) -> str:
         return "routing"
+
+
+class ExternalResource(ResourceType):
+    """External node type - leaf node for third-party services.
+    
+    Third-party services like Stripe, Twilio, SendGrid have no infrastructure
+    to extract. They are economic sinks with percentage-based or fixed pricing.
+    """
+    
+    @property
+    def node_type(self) -> str:
+        return "external"
+    
+    @property
+    def valid_metrics(self) -> list[str]:
+        return ["apiCalls", "transactionVolume", "tokensInput", "tokensOutput"]

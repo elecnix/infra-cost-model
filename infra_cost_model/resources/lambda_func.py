@@ -1,9 +1,10 @@
 """AWS Lambda resource model implementation."""
 
 from typing import Optional
-from dataclasses import dataclass
 
-from .types import ComputeResource, ResourceExtract, UsageParams
+from infra_cost_model.pricing.catalog import PricingCatalog
+
+from .types import ComputeResource, ResourceExtract
 
 
 class LambdaFunction(ComputeResource):
@@ -105,44 +106,79 @@ def apply_free_tier(invocations: float, gb_seconds: float,
 def provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
                                  memory_mb: float = 128,
                                  invocations: float = 0,
-                                 request_price_per_million: float = 0.20e-6) -> float:
-    """Calculate fixed provisioned-concurrency cost plus request charges."""
+                                 catalog=None) -> float:
+    """Calculate fixed provisioned-concurrency cost plus request charges.
+    
+    Args:
+        provisioned_concurrency: Number of provisioned concurrent executions
+        hours: Hours of provisioned concurrency
+        memory_mb: Memory in MB (affects GB calculation)
+        invocations: Number of invocations for request pricing
+        catalog: Optional PricingCatalog (uses default if None)
+        
+    Returns:
+        Total hourly provisioned concurrency cost plus request charges.
+    """
     gb = memory_mb / 1024
     fixed_cost = provisioned_concurrency * gb * hours * 3600 * 0.000003606
-    request_cost = invocations * request_price_per_million
-    return fixed_cost + request_cost
+    
+    if catalog is None:
+        catalog = PricingCatalog()
+    
+    request_price = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request", invocations)
+    
+    if not request_price:
+        raise PricingUnavailableError(
+            "Lambda request pricing unavailable. "
+            "Run 'infra-cost-model seed-pricing' first."
+        )
+    
+    return fixed_cost + request_price.total_cost
 
 
 def lambda_cost(invocations: float, memory_mb: float, avg_duration_ms: float,
-                catalog=None) -> float:
-    """Calculate Lambda cost with optional pricing catalog lookup.
+                catalog=None, region: str = "us-east-1") -> float:
+    """Calculate Lambda cost with pricing catalog lookup.
     
     Args:
         invocations: Monthly invocations
         memory_mb: Allocated memory in MB
         avg_duration_ms: Average duration per invocation in ms
-        catalog: Optional PricingCatalog for pricing lookup
+        catalog: Optional PricingCatalog (uses default if None, auto-loads seed)
+        region: AWS region for pricing lookup
         
     Returns:
         Total monthly cost in USD.
+        
+    Raises:
+        PricingUnavailableError: If pricing data unavailable even after seed load.
     """
     gb_seconds = calculate_gb_seconds(invocations, avg_duration_ms, memory_mb)
     billed_invocations, billed_gb_seconds = apply_free_tier(invocations, gb_seconds)
     
-    if catalog:
-        # Use catalog pricing
-        request_price = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request", invocations)
-        duration_price = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-GB-Second", gb_seconds)
-        
-        cost = 0.0
-        if request_price and hasattr(request_price, 'total_cost'):
-            cost += request_price.total_cost
-        if duration_price and hasattr(duration_price, 'total_cost'):
-            cost += duration_price.total_cost
-        return cost
+    # Use default catalog that auto-loads seed if needed
+    if catalog is None:
+        catalog = PricingCatalog()
     
-    # Fallback prices
-    request_cost = billed_invocations * 0.20e-6  # $0.20 per million
-    duration_cost = billed_gb_seconds * 0.0000166667  # $0.00001667 per GB-s
+    # Query catalog for pricing (seed auto-loaded on first query)
+    request_price = catalog.query("aws", "AWSLambda", region, "Lambda-Request", billed_invocations)
+    duration_price = catalog.query("aws", "AWSLambda", region, "Lambda-GB-Second", billed_gb_seconds)
     
-    return request_cost + duration_cost
+    cost = 0.0
+    if request_price and hasattr(request_price, 'total_cost'):
+        cost += request_price.total_cost
+    else:
+        raise PricingUnavailableError(
+            f"Lambda request pricing unavailable for {region}. "
+            "Run 'infra-cost-model seed-pricing' to initialize pricing data."
+        )
+    
+    if duration_price and hasattr(duration_price, 'total_cost'):
+        cost += duration_price.total_cost
+    
+    return cost
+
+
+class PricingUnavailableError(RuntimeError):
+    """Raised when pricing data is unavailable for cost calculation."""
+    pass

@@ -177,3 +177,17 @@ def test_tiered_result_cost_calculation():
         assert result is not None
         # 2M requests - 1M free = 1M paid at $0.20/M = $0.20
         assert result.total_cost == pytest.approx(0.20, rel=0.01)
+
+
+def test_seed_file_loading():
+    """Test loading prices from seed file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+        count, source = _sync_fallback("aws", ["AWSLambda"], cache)
+
+        assert count > 0
+        assert source == "aws-pricelist"
+        
+        # Verify prices were loaded
+        result = cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request")
+        assert result is not None
