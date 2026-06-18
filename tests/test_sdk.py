@@ -106,8 +106,13 @@ def test_from_tf_creation():
         assert workflow.name == "my-api"
         assert workflow.entry == "aws_api_gateway_rest_api.my_api"
         assert workflow.frequency.value == 1000
-        assert "aws_lambda_function.handler" in workflow._nodes
-        assert "aws_dynamodb_table.users" in workflow._nodes
+        # Resources stored in _resources (resource representation), per Principle 5
+        assert "aws_lambda_function.handler" in workflow._resources
+        assert "aws_dynamodb_table.users" in workflow._resources
+        # assemble() joins resource representation with cost model annotations
+        assembled = workflow.assemble()
+        assert "aws_lambda_function.handler" in assembled
+        assert "aws_dynamodb_table.users" in assembled
     finally:
         os.unlink(temp_path)
 
@@ -542,12 +547,13 @@ def test_nodes_auto_extracted_from_tf_state():
             use_state_file=temp_path,
         )
         
-        assert "aws_lambda_function.handler" in workflow._nodes
-        assert workflow._nodes["aws_lambda_function.handler"]["nodeType"] == "compute"
-        assert workflow._nodes["aws_lambda_function.handler"]["provider"] == "aws"
+        # Resources stored in _resources (resource representation), per Principle 5
+        assert "aws_lambda_function.handler" in workflow._resources
+        assert workflow._resources["aws_lambda_function.handler"]["nodeType"] == "compute"
+        assert workflow._resources["aws_lambda_function.handler"]["provider"] == "aws"
         
-        assert "aws_dynamodb_table.users" in workflow._nodes
-        assert workflow._nodes["aws_dynamodb_table.users"]["nodeType"] == "storage"
+        assert "aws_dynamodb_table.users" in workflow._resources
+        assert workflow._resources["aws_dynamodb_table.users"]["nodeType"] == "storage"
     finally:
         os.unlink(temp_path)
 
@@ -666,10 +672,10 @@ class TestIaCExtraction:
                 json_path=temp_path,
             )
 
-            assert "aws:lambda:Function:myHandler" in workflow._nodes
-            assert workflow._nodes["aws:lambda:Function:myHandler"]["nodeType"] == "compute"
-            assert "aws:dynamodb:Table:myTable" in workflow._nodes
-            assert workflow._nodes["aws:dynamodb:Table:myTable"]["nodeType"] == "storage"
+            assert "aws:lambda:Function:myHandler" in workflow._resources
+            assert workflow._resources["aws:lambda:Function:myHandler"]["nodeType"] == "compute"
+            assert "aws:dynamodb:Table:myTable" in workflow._resources
+            assert workflow._resources["aws:dynamodb:Table:myTable"]["nodeType"] == "storage"
         finally:
             os.unlink(temp_path)
 
@@ -710,10 +716,11 @@ class TestIaCExtraction:
                 json_path=temp_path,
             )
 
-            assert "AWS::Lambda::Function:MyFunction" in workflow._nodes
-            assert workflow._nodes["AWS::Lambda::Function:MyFunction"]["nodeType"] == "compute"
-            assert "AWS::DynamoDB::Table:MyTable" in workflow._nodes
-            assert workflow._nodes["AWS::DynamoDB::Table:MyTable"]["nodeType"] == "storage"
+            # Resources stored in _resources (resource representation), per Principle 5
+            assert "AWS::Lambda::Function:MyFunction" in workflow._resources
+            assert workflow._resources["AWS::Lambda::Function:MyFunction"]["nodeType"] == "compute"
+            assert "AWS::DynamoDB::Table:MyTable" in workflow._resources
+            assert workflow._resources["AWS::DynamoDB::Table:MyTable"]["nodeType"] == "storage"
         finally:
             os.unlink(temp_path)
 
@@ -736,3 +743,148 @@ class TestIaCExtraction:
                 frequency=per_minute(100),
                 json_path="/nonexistent/cdk.json",
             )
+
+
+class TestResourceCostModelSeparation:
+    """Tests for Principle 5: separate resource and cost model representations."""
+    
+    def test_assemble_joins_resources_and_annotations(self):
+        """assemble() merges resource configs with cost model annotations."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gw"
+        workflow.frequency = per_minute(100)
+        # Simulate IaC extraction
+        workflow._resources["aws_lambda.handler"] = {
+            "nodeType": "compute",
+            "resourceAddress": "aws_lambda.handler",
+            "provider": "aws",
+            "service": "AWSLambda",
+        }
+        # Annotate with usage metrics
+        workflow._nodes["aws_lambda.handler"] = {
+            "usageMetrics": {"invocations": {"value": 1, "unit": "requests"}},
+        }
+        
+        assembled = workflow.assemble()
+        
+        assert assembled["aws_lambda.handler"]["nodeType"] == "compute"
+        assert assembled["aws_lambda.handler"]["provider"] == "aws"
+        assert "usageMetrics" in assembled["aws_lambda.handler"]
+    
+    def test_assemble_includes_cost_model_only_nodes(self):
+        """Nodes only in cost model (no IaC resource) are included."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gw"
+        workflow.frequency = per_minute(100)
+        # Stripe has no IaC resource
+        workflow._nodes["stripe.payments"] = {
+            "nodeType": "external",
+            "resourceAddress": "stripe.payments",
+            "pricingModel": "percentage",
+        }
+        
+        assembled = workflow.assemble()
+        
+        assert "stripe.payments" in assembled
+        assert assembled["stripe.payments"]["pricingModel"] == "percentage"
+    
+    def test_resource_representation_property(self):
+        """resource_representation returns the IaC resource dict."""
+        workflow = Workflow("test")
+        workflow._resources["lambda"] = {"nodeType": "compute"}
+        
+        rep = workflow.resource_representation
+        assert "lambda" in rep
+    
+    def test_cost_model_annotations_property(self):
+        """cost_model_annotations returns the annotation dict."""
+        workflow = Workflow("test")
+        workflow._nodes["lambda"] = {"usageMetrics": {}}
+        
+        annotations = workflow.cost_model_annotations
+        assert "lambda" in annotations
+    
+    def test_with_resources_swaps_infrastructure(self):
+        """with_resources() creates a copy with different infrastructure."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gw"
+        workflow.frequency = per_minute(100)
+        workflow._resources["lambda"] = {
+            "nodeType": "compute",
+            "resourceAddress": "lambda",
+            "provider": "aws",
+        }
+        workflow._nodes["lambda"] = {
+            "usageMetrics": {"invocations": {"value": 1, "unit": "requests"}},
+        }
+        workflow._edges = [{"from": "api_gw", "to": "lambda", "rate": 1.0}]
+        
+        # Swap to staging resources
+        staging_resources = {
+            "lambda": {
+                "nodeType": "compute",
+                "resourceAddress": "lambda",
+                "provider": "aws",
+                "region": "us-west-2",  # Different region
+            }
+        }
+        staging = workflow.with_resources(staging_resources)
+        
+        # Same cost model
+        assert staging.entry == workflow.entry
+        assert staging.frequency.value == workflow.frequency.value
+        assert staging._edges == workflow._edges
+        assert staging._nodes == workflow._nodes
+        # Different resources
+        assert staging._resources["lambda"]["region"] == "us-west-2"
+        # Original unchanged
+        assert "region" not in workflow._resources["lambda"]
+    
+    def test_with_resources_produces_different_costs(self):
+        """Same cost model × different resources = different costs."""
+        from infra_cost_model.engine.engine import CostEngine
+        
+        workflow = Workflow("test")
+        workflow.entry = "api_gw"
+        workflow.frequency = per_minute(100)
+        workflow._resources["api_gw"] = {
+            "nodeType": "routing",
+            "resourceAddress": "api_gw",
+            "provider": "aws",
+            "service": "APIGateway",
+        }
+        workflow._resources["lambda"] = {
+            "nodeType": "compute",
+            "resourceAddress": "lambda",
+            "provider": "aws",
+            "service": "AWSLambda",
+            "usageMetrics": {"invocations": {"value": 1, "unit": "requests"}},
+            "pricingRates": {"invocations": 0.001},
+        }
+        workflow._edges = [{"from": "api_gw", "to": "lambda", "rate": 1.0}]
+        
+        cost1 = CostEngine(workflow.to_cost_model()).total_cost()
+        
+        # Same resources, same cost
+        staging = workflow.with_resources(workflow._resources)
+        cost2 = CostEngine(staging.to_cost_model()).total_cost()
+        assert cost2 == pytest.approx(cost1)
+    
+    def test_to_cost_model_calls_assemble(self):
+        """to_cost_model() uses assemble() to join representations."""
+        workflow = Workflow("test")
+        workflow.entry = "api_gw"
+        workflow.frequency = per_minute(100)
+        workflow._resources["lambda"] = {
+            "nodeType": "compute",
+            "resourceAddress": "lambda",
+            "provider": "aws",
+        }
+        workflow._nodes["lambda"] = {
+            "usageMetrics": {"invocations": {"value": 1, "unit": "requests"}},
+        }
+        
+        model = workflow.to_cost_model()
+        
+        assert model["nodes"]["lambda"]["nodeType"] == "compute"
+        assert "usageMetrics" in model["nodes"]["lambda"]
