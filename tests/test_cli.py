@@ -167,6 +167,11 @@ edges: []
         assert len(results) == 5
         # Higher frequency = higher cost
         assert all(results[i][1] <= results[i+1][1] for i in range(len(results)-1))
+        
+        # Verify endpoint values span 0.5x to 2.0x baseline
+        baseline = model["workflow"]["frequency"]["value"]
+        assert results[0][0] == baseline * 0.5, f"First value {results[0][0]} should be 0.5x baseline {baseline}"
+        assert results[-1][0] == baseline * 2.0, f"Last value {results[-1][0]} should be 2.0x baseline {baseline}"
     finally:
         os.unlink(temp_path)
 
