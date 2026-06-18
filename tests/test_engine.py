@@ -271,6 +271,53 @@ class TestCostAggregator:
         expected = 1000 * 1 * 0.20e-6 + 1000 * 0.5 * 0.0000166667
         assert costs["test_fn"] == pytest.approx(expected)
     
+    def test_flat_pricing_prefers_catalog(self):
+        """Test flat pricing uses catalog when available (Principle 13)."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            
+            # Catalog has price $0.15/million (different from embedded $0.20)
+            cache.upsert(Price(
+                vendor="aws", service="AWSLambda", region="us-east-1",
+                product_family="Serverless", attributes={},
+                usage_metric="invocations", unit="requests",
+                price_usd=0.15e-6,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+            
+            nodes = {
+                "test_fn": {
+                    "nodeType": "compute",
+                    "resourceAddress": "aws_lambda_function.test",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "region": "us-east-1",
+                    "usageMetrics": {
+                        "invocations": {"unit": "requests", "value": 1000},
+                    },
+                    "pricingRates": {
+                        "invocations": 0.20e-6,
+                    }
+                }
+            }
+            derived = {"test_fn": DerivedUsage("test_fn", 1000.0)}
+            
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+            costs = aggregator.aggregate()
+            
+            # 1000 invocations × 1000 per-invocation × $0.15e-6 = $0.15
+            # Should use catalog price $0.15, not embedded $0.20
+            assert costs["test_fn"] == pytest.approx(1000 * 1000 * 0.15e-6)
+    
     def test_percentage_pricing_cost(self):
         """Test percentage-based pricing (e.g., Stripe 2.9% + $0.30)."""
         nodes = {
