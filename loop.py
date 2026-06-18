@@ -11,10 +11,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class Loop:
     name: str
-    cmd: str
+    cmd: tuple[str, ...]
     interval: int
-    provider: Optional[str] = None
-    model: Optional[str] = None
     runs: int = 0
     last_run: float = 0
     last_dur: float = 0
@@ -28,12 +26,19 @@ class Stats:
     ip_runs: int = 0
     ip_err: int = 0
 
-def build_cmd(base: str, p: Optional[str], m: Optional[str]) -> list[str]:
+def build_cmd(base: tuple, provider: Optional[str] = None, model: Optional[str] = None) -> list[str]:
     c = ["pi", "-p"]
-    if p: c += ["--provider", p]
-    if m: c += ["--model", m]
-    c.append(base)
+    if provider: c += ["--provider", provider]
+    if model:  c += ["--model", model]
+    c.extend(base)
     return c
+
+def join_cmd(cmd: list[str]) -> str:
+    try:
+        import shlex
+        return shlex.join(cmd)
+    except Exception:
+        return " ".join(cmd)
 
 async def run(cmd: list[str], name: str, sem: asyncio.Semaphore) -> tuple[int, float]:
     t0 = time.time()
@@ -52,10 +57,10 @@ async def run(cmd: list[str], name: str, sem: asyncio.Semaphore) -> tuple[int, f
         log.error(f"[{name}] Error: {e}")
         return -1, time.time() - t0
 
-async def loop_run(lp: Loop, st: Stats, stop: asyncio.Event, sem: asyncio.Semaphore):
+async def loop_run(lp: Loop, st: Stats, stop: asyncio.Event, sem: asyncio.Semaphore, provider: Optional[str], model: Optional[str]):
     while not stop.is_set():
         t0 = time.time()
-        code, dur = await run(build_cmd(lp.cmd, lp.provider, lp.model), lp.name, sem)
+        code, dur = await run(build_cmd(lp.cmd, provider, model), lp.name, sem)
         lp.runs += 1; lp.last_run = t0; lp.last_dur = dur; lp.last_code = code
         if lp.name == "design-principles":
             st.dp_runs += 1; 
@@ -64,8 +69,8 @@ async def loop_run(lp: Loop, st: Stats, stop: asyncio.Event, sem: asyncio.Semaph
             st.ip_runs += 1
             if code != 0: st.ip_err += 1
         if lp.runs % 5 == 0:
-            prov = lp.provider or "(default)"
-            mod = lp.model or "(default)"
+            prov = provider or "(default)"
+            mod = model or "(default)"
             log.info(f"[{lp.name}] runs={lp.runs} last={lp.last_dur:.1f}s exit={lp.last_code} uptime={time.time()-st.start:.0f}s")
         if lp.interval > 0:
             try: await asyncio.wait_for(stop.wait(), lp.interval)
@@ -84,36 +89,38 @@ async def stats_log(st: Stats, loops: list[Loop], stop: asyncio.Event):
 async def main():
     ap = argparse.ArgumentParser(description="Run two pi pipelines concurrently")
     for prefix, dinterval in [("dp", 1800), ("issue", 10)]:
-        ap.add_argument(f"--{prefix}-provider", default=None)
-        ap.add_argument(f"--{prefix}-model", default=None)
         ap.add_argument(f"--{prefix}-interval", type=int, default=dinterval)
+    ap.add_argument("--provider", default=None, help="PI provider (e.g. ollama, anthropic)")
+    ap.add_argument("--model", default=None, help="PI model id (e.g. qwen3.6:latest, claude-sonnet-4)")
     ap.add_argument("--log-level", default="INFO", choices=["DEBUG","INFO","WARNING","ERROR"])
     ap.add_argument("--top-issues", type=int, default=3, help="Number of top issues for issue-pipeline (default: 3)")
     a = ap.parse_args()
     logging.getLogger().setLevel(a.log_level)
 
-    dp = Loop("design-principles",
-        "/run-chain design-principles-review-pipeline -- Review the codebase main branch for design principle violations, find gaps against existing issues, and create issues for new violations.",
-        a.dp_interval, a.dp_provider, a.dp_model)
-    ip = Loop("issue-pipeline",
-        f"/run-chain issue-pipeline -- Analyze all open issues, implement the top {a.top_issues}, review, and merge passing ones.",
-        a.issue_interval, a.issue_provider, a.issue_model)
+    dp = Loop(
+        "design-principles",
+        ("/run-chain", "design-principles-review-pipeline", "--", "Review the codebase main branch for design principle violations, find gaps against existing issues, and create issues for new violations."),
+        a.dp_interval,
+    )
+    ip = Loop(
+        "issue-pipeline",
+        ("/run-chain", "issue-pipeline", "--", f"Analyze all open issues, implement the top {a.top_issues}, review, and merge passing ones."),
+        a.issue_interval,
+    )
 
     st = Stats(); stop = asyncio.Event(); sem = asyncio.Semaphore(1)
     for s in (signal.SIGINT, signal.SIGTERM):
         try: asyncio.get_running_loop().add_signal_handler(s, stop.set)
         except NotImplementedError: pass
 
-    dp_prov = a.dp_provider or "(default)"
-    dp_mod = a.dp_model or "(default)"
-    ip_prov = a.issue_provider or "(default)"
-    ip_mod = a.issue_model or "(default)"
-    log.info(f"Starting: dp every {dp.interval}s ({dp_prov}/{dp_mod}) | ip every {ip.interval}s ({ip_prov}/{ip_mod})")
+    dp_prov = a.provider or "(default)"
+    dp_mod = a.model or "(default)"
+    log.info(f"Starting: dp every {dp.interval}s | ip every {ip.interval}s ({dp_prov}/{dp_mod})")
     try:
-        await asyncio.gather(loop_run(dp, st, stop, sem), loop_run(ip, st, stop, sem), stats_log(st, [dp, ip], stop))
+        await asyncio.gather(loop_run(dp, st, stop, sem, a.provider, a.model), loop_run(ip, st, stop, sem, a.provider, a.model), stats_log(st, [dp, ip], stop))
     finally:
         up = time.time() - st.start
-        log.info(f"=== Done: up={up:.0f}s dp={st.dp_runs}/{st.dp_err} ip={st.ip_runs}/{st.ip_err} ===")
+        log.info(f"=== Done: up={up:.0f}s dp={st.dp_runs}/{st.dp_err} ip={st.ip_runs}/{st.ip_err} (provider: {dp_prov}|model: {dp_mod}) ===")
 
 if __name__ == "__main__":
     try: asyncio.run(main())
