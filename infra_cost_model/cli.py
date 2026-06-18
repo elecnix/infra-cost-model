@@ -85,7 +85,7 @@ def cmd_validate(args: list[str]) -> int:
 def cmd_compute(args: list[str]) -> int:
     """Compute costs from a cost model file."""
     if not args:
-        print("Usage: compute <yaml-file> [--catalog]", file=sys.stderr)
+        print("Usage: compute <yaml-file> [--no-catalog]", file=sys.stderr)
         return 1
     
     yaml_path = Path(args[0])
@@ -93,7 +93,7 @@ def cmd_compute(args: list[str]) -> int:
         print(f"File not found: {yaml_path}", file=sys.stderr)
         return 1
     
-    use_catalog = "--catalog" in args
+    use_catalog = "--no-catalog" not in args
     
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
@@ -112,7 +112,8 @@ def cmd_compute(args: list[str]) -> int:
         costs = engine.compute()
         total = sum(costs.values())
         
-        print(f"Costs for: {model['workflow']['name']}")
+        pricing_source = "catalog" if use_catalog else "embedded pricing rates"
+        print(f"Costs for: {model['workflow']['name']} (pricing: {pricing_source})")
         print("-" * 40)
         for node, cost in sorted(costs.items()):
             print(f"  {node}: ${cost:.6f}")
