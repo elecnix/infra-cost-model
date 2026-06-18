@@ -352,7 +352,7 @@ class SensitivityAnalyzer:
         results = []
         # Vary from 0.5x to 2x baseline
         for i in range(steps):
-            multiplier = 0.5 + (i / (steps - 1))  # 0.5 to 2.0
+            multiplier = 0.5 + (i * 1.5 / (steps - 1))  # 0.5 to 2.0
             value = baseline * multiplier
             cost = self.what_if(parameter, value)
             results.append((value, cost))
