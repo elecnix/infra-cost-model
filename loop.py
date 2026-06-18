@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Concurrent loop runner for design-principles-review-pipeline and issue-pipeline."""
 
-import argparse, asyncio, logging, shlex, signal, sys, time
+import argparse, asyncio, logging, signal, sys, time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -11,8 +11,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class Loop:
     name: str
-    cmd: tuple[str, ...]
-    prompt: str           # free-form; split by shlex into argv elements
+    cmd: tuple[str, ...]  # pi subcommand args, e.g. ("/run-chain", "issue-pipeline")
+    prompt: str           # prompt text for the chain
     interval: int
     runs: int = 0
     last_run: float = 0
@@ -32,10 +32,10 @@ def build_cmd(cmd: tuple[str, ...], prompt: str,
     c = ["pi", "-p"]
     if provider: c += ["--provider", provider]
     if model:   c += ["--model", model]
-    c.extend(cmd)
-    # Each prompt word is its own argv element — subprocess_exec gets
-    # correct boundaries so pi's parser doesn't see '--' as a subcommand arg.
-    c.extend(shlex.split(prompt))
+    # Join into ONE message arg.  If -- were a standalone argv element,
+    # pi's CLI parser stores it as an unknown extension flag (name="")
+    # which then fails validation with "Unknown option: --".
+    c.append(" ".join(cmd) + " -- " + prompt)
     return c
 
 async def run(cmd: list[str], name: str, sem: asyncio.Semaphore) -> tuple[int, float]:
