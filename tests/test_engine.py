@@ -130,6 +130,91 @@ class TestWorkloadDeriver:
         expected_table = (100 / 60) * (0.8 * 1.0 + 1.0)
         assert derived["users_table"].invocation_count == pytest.approx(expected_table, rel=0.01)
     
+    def test_data_size_propagation(self):
+        """Test that edge dataSize is propagated to child's data_in."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "compute_b"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 1.0, "type": "invoke",
+             "dataSize": {"unit": "kB", "average": 50}},
+        ]
+        
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+        
+        # B gets 10 invocations/sec, each with 50 kB = 500 kB total
+        assert derived["B"].invocation_count == 10.0
+        assert derived["B"].data_in == 10.0 * 50.0  # 500 kB
+    
+    def test_data_size_accumulates_from_multiple_parents(self):
+        """Test that data_in accumulates from multiple parent edges."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "routing", "resourceAddress": "compute_b"},
+            "C": {"nodeType": "storage", "resourceAddress": "storage_c"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 0.5},
+            {"from": "A", "to": "C", "rate": 0.6, "dataSize": {"unit": "kB", "average": 10}},
+            {"from": "B", "to": "C", "rate": 1.0, "dataSize": {"unit": "kB", "average": 25}},
+        ]
+        
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+        
+        # C gets A→C data: 10 * 0.6 * 10 = 60 + B→C data: (10*0.5) * 1.0 * 25 = 125
+        # B = 10 * 0.5 = 5 invocations/sec
+        expected = 10 * 0.6 * 10 + 5 * 1.0 * 25  # 60 + 125 = 185
+        assert derived["C"].data_in == expected
+
+    def test_edge_type_propagation(self):
+        """Test that edge types are tracked on DerivedUsage."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "storage", "resourceAddress": "storage_b"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 0.5, "type": "read"},
+        ]
+        
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+        
+        assert "read" in derived["B"].edge_types
+    
+    def test_no_data_size_when_not_specified(self):
+        """Test that data_in is 0 when no dataSize on edges."""
+        workflow = {
+            "entry": "A",
+            "frequency": {"unit": "perSecond", "value": 10.0},
+        }
+        nodes = {
+            "A": {"nodeType": "routing", "resourceAddress": "entry"},
+            "B": {"nodeType": "compute", "resourceAddress": "compute_b"},
+        }
+        edges = [
+            {"from": "A", "to": "B", "rate": 1.0},
+        ]
+        
+        deriver = WorkloadDeriver(workflow, nodes, edges)
+        derived = deriver.derive()
+        
+        assert derived["B"].data_in == 0.0
+    
     def test_multi_path_dag_topological_order(self):
         """Test multi-path DAG: A→B, A→C, C→B, B→D.
         
