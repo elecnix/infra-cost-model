@@ -146,7 +146,7 @@ def cmd_analyze(args: list[str]) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
     
-    engine = CostEngine(model)
+    engine = CostEngine(model, time_basis="monthly")
     
     try:
         costs = engine.compute()
@@ -157,7 +157,7 @@ def cmd_analyze(args: list[str]) -> int:
         
         print("\nDerived Usage (per second):")
         for addr, usage in sorted(derived.items()):
-            print(f"  {addr}: {usage.invocation_count:.4f} invocations")
+            print(f"  {addr}: {usage.invocation_count:.4f} invocations/sec")
         
         print("\nCosts:")
         total = sum(costs.values())

@@ -260,19 +260,32 @@ class CostAggregator:
         return (volume * percentage_rate) + (invocations * fixed_per_tx)
 
 
+# Canonical time conversion: seconds in an average month (365.25 days / 12)
+SECONDS_PER_MONTH = 86400 * 365.25 / 12  # = 2629800.0
+
+
 class CostEngine:
     """Main cost engine orchestrating derivation and aggregation."""
     
-    def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None):
+    def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None,
+                 time_basis: str = "perSecond"):
         self.cost_model = cost_model
         self.workflow = cost_model["workflow"]
         self.nodes = cost_model["nodes"]
         self.edges = cost_model.get("edges", [])
         self.catalog = catalog
+        self.time_basis = time_basis
         
         self.validator = DAGValidator(self.nodes, self.edges)
         self.derived_usage: dict[str, DerivedUsage] = {}
         self.costs: dict[str, float] = {}
+    
+    @property
+    def _time_multiplier(self) -> float:
+        """Multiplier to convert per-second costs to the output time basis."""
+        if self.time_basis == "monthly":
+            return SECONDS_PER_MONTH
+        return 1.0  # perSecond
     
     def compute(self) -> dict[str, float]:
         """Run full cost derivation and aggregation.
@@ -292,10 +305,15 @@ class CostEngine:
         aggregator = CostAggregator(self.nodes, self.derived_usage, self.edges, self.catalog)
         self.costs = aggregator.aggregate()
         
+        # Apply time basis conversion (per-second internal → output period)
+        multiplier = self._time_multiplier
+        if multiplier != 1.0:
+            self.costs = {addr: cost * multiplier for addr, cost in self.costs.items()}
+        
         return self.costs
     
     def total_cost(self) -> float:
-        """Get total system cost."""
+        """Get total system cost in the configured time basis."""
         if not self.costs:
             self.compute()
         return sum(self.costs.values())
