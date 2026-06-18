@@ -303,6 +303,98 @@ def test_parameter_impact_malformed_edge_raises():
     with pytest.raises(ValueError, match="Unsupported parameter"):
         analyzer.parameter_impact("edge:no_arrow")
 
+def test_cli_analyze_json_flag():
+    """Test analyze command with --json produces JSON output."""
+    import tempfile
+    import os
+    import io
+    import sys
+    import json
+    
+    yaml_content = """
+version: "1.0"
+workflow:
+  name: "test-json"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gateway:
+    nodeType: routing
+    resourceAddress: aws_api_gateway.test
+edges: []
+"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(yaml_content)
+        temp_path = f.name
+    
+    try:
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        
+        result = main(["analyze", temp_path, "--json"])
+        
+        output = sys.stdout.getvalue()
+        sys.stdout = old_stdout
+        
+        assert result == 0
+        # Should be valid JSON
+        data = json.loads(output)
+        assert "workflow" in data
+        assert "derived_usage" in data
+        assert "costs" in data
+        assert "total_cost" in data
+        assert data["workflow"] == "test-json"
+    finally:
+        os.unlink(temp_path)
+
+
+def test_cli_analyze_no_json_flag_text_output():
+    """Test analyze command without --json produces text output (not JSON)."""
+    import tempfile
+    import os
+    import io
+    import sys
+    import json
+    
+    yaml_content = """
+version: "1.0"
+workflow:
+  name: "test-text"
+  entry: "api_gateway"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gateway:
+    nodeType: routing
+    resourceAddress: aws_api_gateway.test
+edges: []
+"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(yaml_content)
+        temp_path = f.name
+    
+    try:
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        
+        result = main(["analyze", temp_path])
+        
+        output = sys.stdout.getvalue()
+        sys.stdout = old_stdout
+        
+        assert result == 0
+        assert "Analysis:" in output
+        assert "Derived Usage" in output
+        # Should NOT contain the misleading message
+        assert "--json flag" not in output
+    finally:
+        os.unlink(temp_path)
+
 
 def test_cli_graph_command():
     """Test graph command renders DAG."""
