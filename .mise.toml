@@ -1,0 +1,5 @@
+# Project-local mise configuration
+# Includes pi-less-yolo tasks for sandboxed pi execution
+
+[task_config]
+includes = ["tasks"]
