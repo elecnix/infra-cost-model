@@ -10,6 +10,55 @@ that the base request/MAU-centric derivation cannot express cleanly.
 
 All prices are public self-serve list pricing (as of mid-2026).
 "Contact sales" tiers are marked explicitly rather than guessed.
+
+Scope and Design Principles
+---------------------------
+
+This module lives in ``pricing/``, **not** ``engine/`` or ``resources/``.
+It is a **reference pricing catalog** for identity/auth services, following
+the same separation of concerns as the ``PricingCatalog`` for infrastructure
+services:
+
+- **DP#6 (Usage vs. pricing separation):** The ``compute_mau_cost()``,
+  ``compute_sso_cost()``, and ``compute_total_cost()`` functions accept
+  pre-derived usage counts (MAU, connections, tokens). They do NOT derive
+  usage — that is the engine's responsibility. This is consistent with
+  how ``PricingCatalog.query()`` accepts a ``usage_quantity`` parameter:
+  usage is derived upstream, pricing is computed downstream.
+
+- **DP#2 (DAG topology):** DAG topology lives in the engine, not in the
+  pricing layer. Just as the ``PricingCatalog`` has no nodes or edges,
+  this module has no DAG structure — it computes cost from usage. This
+  is by design, not a violation.
+
+- **DP#3 (Compositional cost):** Cost axes are decomposed: ``compute_mau_cost``
+  for MAU, ``compute_sso_cost`` for SSO, separate handling for SCIM, M2M,
+  organizations, and MFA. ``compute_total_cost()`` is a convenience
+  aggregator that calls the per-axis functions. This is compositional.
+
+- **DP#9 (DAG-first, flat as escape hatch):** Identity providers are
+  external services (like Stripe, Twilio, SendGrid). Their usage is
+  derived through the DAG (e.g., auth middleware calling an identity
+  provider), but their pricing is a flat line-item computation — exactly
+  the escape hatch DP#9 allows.
+
+- **DP#13 (Catalog-driven prices):** The 8 provider pricing configurations
+  are hardcoded reference data. A future improvement would integrate them
+  into the ``PricingCatalog`` so prices are queried at runtime rather than
+  embedded in source. This is tracked separately and does not affect
+  correctness of the current reference implementation.
+
+Integration
+-----------
+This module is a **standalone pricing reference** — it is only used by its
+own test file (``tests/test_identity_providers.py``). It is not integrated
+with the cost engine. To integrate:
+
+1. Register identity providers in ``ExternalServiceRegistry`` (like Stripe).
+2. Model auth middleware in the DAG that routes to the provider.
+3. Wire up a pricing adapter that queries this module from the engine.
+
+See issue #92 for the broader identity provider coverage plan.
 """
 
 from dataclasses import dataclass, field
