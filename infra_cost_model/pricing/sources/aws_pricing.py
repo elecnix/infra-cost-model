@@ -74,6 +74,22 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
     now = datetime.now().isoformat()
     seen = set()
 
+    # Skip seed file loading if the cache already has entries for these
+    # services (e.g., seed_prices loaded them already). Prevents duplicate
+    # tiered entries from two code paths reading the same JSON file.
+    if services:
+        import sqlite3
+        conn = sqlite3.connect(cache.db_path)
+        placeholders = ','.join(['?'] * len(services))
+        existing = conn.execute(
+            f"SELECT COUNT(*) FROM prices WHERE vendor='aws' AND region=? "
+            f"AND service IN ({placeholders})",
+            [region] + list(services)
+        ).fetchone()[0]
+        conn.close()
+        if existing > 0:
+            return existing  # Already seeded, nothing to do
+
     # First, load from seed file if it exists
     if SEED_PRICES_PATH.exists():
         try:
@@ -100,6 +116,8 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
                     usage_metric=item["usage_metric"],
                     unit=item["unit"],
                     price_usd=item["price_usd"],
+                    start_usage_amount=item.get("start_usage_amount"),
+                    end_usage_amount=item.get("end_usage_amount"),
                     source="seed-initial",
                     effective_date=now,
                     fetched_at=now,

@@ -10,7 +10,7 @@ registered through the ResourceRegistry with provider-based dispatch.
 """
 
 from .types import ResourceType, ComputeResource, StorageResource, RoutingResource, ExternalResource
-from .lambda_func import LambdaFunction, calculate_gb_seconds, apply_free_tier
+from .lambda_func import LambdaFunction, calculate_gb_seconds, apply_free_tier, get_lambda_free_tier_limits
 from .external import ExternalNode, ExternalServiceRegistry
 from .s3 import S3Bucket
 from .sqs import SQSQueue
@@ -30,6 +30,7 @@ __all__ = [
     "LambdaFunction",
     "calculate_gb_seconds",
     "apply_free_tier",
+    "get_lambda_free_tier_limits",
     "ExternalNode",
     "ExternalServiceRegistry",
     "S3Bucket",

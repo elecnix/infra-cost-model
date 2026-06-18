@@ -88,6 +88,18 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
     count = 0
     now = datetime.now().isoformat()
     
+    # Clean up old seed entries for metrics being updated to tiered
+    # pricing. Deleting ALL Lambda seed entries (not just flat) handles
+    # SQLite's NULL-in-UNIQUE behavior where rows with purchase_option=NULL
+    # are always considered distinct, causing duplicates from different
+    # code paths (seed_prices vs aws_fallback_prices).
+    conn.execute("""
+        DELETE FROM prices
+        WHERE vendor = 'aws' AND service = 'AWSLambda'
+        AND source IN ('seed', 'seed-initial')
+    """)
+    conn.commit()
+    
     try:
         seed_data = json.loads(SEED_PRICES_PATH.read_text())
         for item in seed_data:
