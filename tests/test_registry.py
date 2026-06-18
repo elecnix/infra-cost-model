@@ -260,3 +260,100 @@ def test_extract_resources_from_pulumi():
     results = extract_resources_from_pulumi(pulumi_json)
     
     assert len(results) >= 1
+
+class TestCdkExtraction:
+    """Tests for CDK resource extraction."""
+
+    def test_extract_cdk_lambda(self):
+        """Extract Lambda from CDK CloudFormation template."""
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+
+        cdk_json = {
+            "Resources": {
+                "MyFunction": {
+                    "Type": "AWS::Lambda::Function",
+                    "Properties": {
+                        "Handler": "index.handler",
+                        "Runtime": "python3.9",
+                        "MemorySize": 256,
+                        "Timeout": 30,
+                    },
+                }
+            }
+        }
+
+        nodes = extract_resources_from_cdk(cdk_json)
+        assert "AWS::Lambda::Function:MyFunction" in nodes
+        assert nodes["AWS::Lambda::Function:MyFunction"]["nodeType"] == "compute"
+
+    def test_extract_cdk_dynamodb(self):
+        """Extract DynamoDB from CDK CloudFormation template."""
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+
+        cdk_json = {
+            "Resources": {
+                "MyTable": {
+                    "Type": "AWS::DynamoDB::Table",
+                    "Properties": {
+                        "TableName": "my-table",
+                        "BillingMode": "PAY_PER_REQUEST",
+                    },
+                }
+            }
+        }
+
+        nodes = extract_resources_from_cdk(cdk_json)
+        assert "AWS::DynamoDB::Table:MyTable" in nodes
+        assert nodes["AWS::DynamoDB::Table:MyTable"]["nodeType"] == "storage"
+
+    def test_extract_cdk_apigw(self):
+        """Extract API Gateway from CDK CloudFormation template."""
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+
+        cdk_json = {
+            "Resources": {
+                "MyApi": {
+                    "Type": "AWS::ApiGatewayV2::Api",
+                    "Properties": {
+                        "Name": "my-api",
+                        "ProtocolType": "HTTP",
+                    },
+                }
+            }
+        }
+
+        nodes = extract_resources_from_cdk(cdk_json)
+        assert "AWS::ApiGatewayV2::Api:MyApi" in nodes
+        assert nodes["AWS::ApiGatewayV2::Api:MyApi"]["nodeType"] == "routing"
+
+    def test_extract_cdk_unsupported_warns(self):
+        """Unsupported CDK resource types produce warning."""
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+
+        cdk_json = {
+            "Resources": {
+                "MyFn": {
+                    "Type": "AWS::Lambda::Function",
+                    "Properties": {"MemorySize": 128},
+                },
+                "MyBucket": {
+                    "Type": "AWS::S3::Bucket",
+                    "Properties": {"BucketName": "my-bucket"},
+                },
+            }
+        }
+
+        with pytest.warns(UserWarning, match="1 resource"):
+            nodes = extract_resources_from_cdk(cdk_json)
+
+        assert "AWS::Lambda::Function:MyFn" in nodes
+        # S3 bucket is not a registered resource type
+        assert "AWS::S3::Bucket:MyBucket" not in nodes
+
+    def test_extract_cdk_empty_resources(self):
+        """Empty CDK template returns empty dict."""
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+
+        cdk_json = {"Resources": {}}
+        nodes = extract_resources_from_cdk(cdk_json)
+        assert nodes == {}

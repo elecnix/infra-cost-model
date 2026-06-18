@@ -28,6 +28,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("  validate <yaml-file>  - Validate a cost model YAML file")
         print("  compute <yaml-file>   - Compute costs from a cost model")
         print("  analyze <yaml-file> [--json]  - Full analysis with derived usage")
+        print("  extract <path>        - Extract resources from IaC (Terraform/Pulumi/CDK)")
         print("  seed-pricing          - Seed pricing cache from seed file")
         print("  graph <yaml-file>     - Render DAG visualization")
         return 0
@@ -40,6 +41,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_compute(argv[1:] if len(argv) > 1 else [])
     elif command == "analyze":
         return cmd_analyze(argv[1:] if len(argv) > 1 else [])
+    elif command == "extract":
+        return cmd_extract(argv[1:] if len(argv) > 1 else [])
     elif command == "seed-pricing":
         return cmd_seed_pricing(argv[1:] if len(argv) > 1 else [])
     elif command == "graph":
@@ -286,6 +289,70 @@ def cmd_graph(args: list[str]) -> int:
             print(f"  {arrow} {target} (rate: {rate})")
     
     return 0
+
+
+def cmd_extract(args: list[str]) -> int:
+    """Extract resources from IaC tool output.
+    
+    Usage: extract <path> [--from terraform|pulumi|cdk] [--json]
+    
+    Extracts cost model nodes from infrastructure-as-code tools.
+    Supports Terraform state files, Pulumi stack exports, and CDK templates.
+    """
+    from pathlib import Path
+    
+    if not args:
+        print("Usage: extract <path> [--from terraform|pulumi|cdk] [--json]", file=sys.stderr)
+        print()
+        print("Extract resources from infrastructure-as-code:", file=sys.stderr)
+        print("  extract terraform.tfstate.json   - Extract from Terraform state", file=sys.stderr)
+        print("  extract stack.json --from pulumi - Extract from Pulumi stack export", file=sys.stderr)
+        print("  extract template.json --from cdk - Extract from CDK template", file=sys.stderr)
+        return 1
+    
+    path = Path(args[0])
+    source_format = "terraform"  # default
+    output_json = "--json" in args
+    
+    # Parse --from flag
+    for i, arg in enumerate(args):
+        if arg == "--from" and i + 1 < len(args):
+            source_format = args[i + 1]
+            break
+    
+    if not path.exists():
+        print(f"File not found: {path}", file=sys.stderr)
+        return 1
+    
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        
+        if source_format == "terraform":
+            from infra_cost_model.resources.registry import extract_resources_from_tf
+            nodes = extract_resources_from_tf(data)
+        elif source_format == "pulumi":
+            from infra_cost_model.resources.registry import extract_resources_from_pulumi
+            nodes = extract_resources_from_pulumi(data)
+        elif source_format == "cdk":
+            from infra_cost_model.resources.registry import extract_resources_from_cdk
+            nodes = extract_resources_from_cdk(data)
+        else:
+            print(f"Unknown source format: {source_format}", file=sys.stderr)
+            print("Valid formats: terraform, pulumi, cdk", file=sys.stderr)
+            return 1
+        
+        if output_json:
+            print(json.dumps(nodes, indent=2))
+        else:
+            print(f"Extracted {len(nodes)} resource(s) from {source_format}:")
+            for addr, node in nodes.items():
+                print(f"  [{node.get('nodeType', '?')}] {addr}")
+        
+        return 0
+    except json.JSONDecodeError as e:
+        print(f"Invalid JSON in {path}: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
