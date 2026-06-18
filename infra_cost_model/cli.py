@@ -103,6 +103,12 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Use pricing catalog")
     p_sens.set_defaults(func=cmd_sensitivity)
 
+    # codegen
+    p_codegen = sub.add_parser("codegen", help="Generate resource handler from terraform provider schema")
+    p_codegen.add_argument("schema_json", metavar="<schema-json>", help="Path to terraform providers schema JSON file")
+    p_codegen.add_argument("--resource", metavar="<type>", help="Specific resource type to generate (default: all)")
+    p_codegen.set_defaults(func=cmd_codegen)
+
     return parser
 
 
@@ -480,6 +486,56 @@ def cmd_sensitivity(args: argparse.Namespace) -> int:
 
         return 0
     except ValueError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
+
+
+def cmd_codegen(args: argparse.Namespace) -> int:
+    """Generate resource handler from terraform provider schema.
+
+    Reads a terraform providers schema -json file and generates typed
+    Python resource handler classes per DP#10.
+    """
+    path = Path(args.schema_json)
+    if not path.exists():
+        _print_stderr(f"File not found: {path}")
+        return 1
+
+    target_resource = args.resource
+
+    try:
+        from infra_cost_model.codegen.schema_reader import SchemaReader
+        from infra_cost_model.codegen.generator import CodeGenerator
+
+        providers = SchemaReader.parse_file(str(path))
+        gen = CodeGenerator()
+
+        count = 0
+        for provider in providers:
+            for resource in provider.resources:
+                if target_resource and resource.resource_type != target_resource:
+                    continue
+
+                source = gen.generate_handler(resource)
+                print(source)
+                print()  # blank line between handlers
+                count += 1
+
+        if count == 0:
+            if target_resource:
+                _print_stderr(f"Resource type '{target_resource}' not found in schema.")
+                return 1
+            else:
+                _print_stderr("No resources found in schema.")
+                return 1
+
+        _print_stderr(f"# Generated {count} resource handler(s) from {path}")
+        return 0
+
+    except json.JSONDecodeError as e:
+        _print_stderr(f"Invalid JSON in {path}: {e}")
+        return 1
+    except Exception as e:
         _print_stderr(f"Error: {e}")
         return 1
 
