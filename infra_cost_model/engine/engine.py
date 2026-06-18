@@ -321,6 +321,12 @@ class CostAggregator:
         For services like Stripe: 2.9% + $0.30 per transaction.
         Uses catalog query if available, otherwise uses pricingRates.
         
+        The node may specify a 'percentageBase' field to name which
+        usageMetric provides the transaction volume. If absent, the
+        first metric whose name contains 'volume' is used (the
+        'transaction' substring is no longer matched to avoid picking
+        up unrelated metrics).
+        
         Args:
             address: Resource address
             node: Node configuration dict
@@ -335,16 +341,37 @@ class CostAggregator:
         percentage_rate = pricing_rates.get("percentageRate", 0.0)
         fixed_per_tx = pricing_rates.get("fixedPerTransaction", 0.0)
         
-        # External services need transaction volume - use value from usageMetrics
+        # Determine transaction volume from usageMetrics.
+        # Prefer explicit 'percentageBase' field; fall back to first
+        # metric whose name contains 'volume' (not 'transaction').
         volume = 0.0
         usage_metrics = node.get("usageMetrics", {})
-        for metric_name, metric_def in usage_metrics.items():
-            if "volume" in metric_name.lower() or "transaction" in metric_name.lower():
+        percentage_base = node.get("percentageBase")
+        
+        if percentage_base is not None:
+            # Explicit field: look up the named metric directly
+            metric_def = usage_metrics.get(percentage_base)
+            if metric_def is not None:
                 if isinstance(metric_def, dict):
                     volume = metric_def.get("value", 0)
                 else:
                     volume = metric_def
-                break
+            else:
+                msg = (
+                    f"Node '{address}': percentageBase '{percentage_base}' not found "
+                    f"in usageMetrics. Available metrics: {list(usage_metrics.keys())}. "
+                    f"Volume defaults to 0."
+                )
+                warnings.warn(msg)
+        else:
+            # Legacy: scan metric names for 'volume' substring
+            for metric_name, metric_def in usage_metrics.items():
+                if "volume" in metric_name.lower():
+                    if isinstance(metric_def, dict):
+                        volume = metric_def.get("value", 0)
+                    else:
+                        volume = metric_def
+                    break
         
         return (volume * percentage_rate) + (invocations * fixed_per_tx)
 

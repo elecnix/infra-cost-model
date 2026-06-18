@@ -397,6 +397,7 @@ class TestCostAggregator:
                 "nodeType": "external",
                 "resourceAddress": "external.stripe_payments",
                 "pricingModel": "percentage",
+                "percentageBase": "transactionVolume",
                 "pricingRates": {
                     "percentageRate": 0.029,
                     "fixedPerTransaction": 0.30,
@@ -414,6 +415,104 @@ class TestCostAggregator:
         costs = aggregator.aggregate()
         
         # Expected: $10000 * 0.029 + 100 * 0.30 = $290 + $30 = $320
+        assert costs["stripe"] == pytest.approx(320.0)
+
+    def test_percentage_pricing_explicit_base(self):
+        """Test percentageBase field explicitly names the volume metric."""
+        nodes = {
+            "stripe": {
+                "nodeType": "external",
+                "resourceAddress": "external.stripe_payments",
+                "pricingModel": "percentage",
+                "percentageBase": "monthlyRevenue",
+                "pricingRates": {
+                    "percentageRate": 0.029,
+                    "fixedPerTransaction": 0.30,
+                },
+                "usageMetrics": {
+                    "monthlyRevenue": {"value": 5000},
+                }
+            }
+        }
+        derived = {"stripe": DerivedUsage("stripe", 50.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+        
+        # Expected: $5000 * 0.029 + 50 * 0.30 = $145 + $15 = $160
+        assert costs["stripe"] == pytest.approx(160.0)
+
+    def test_percentage_pricing_missing_base_warns(self):
+        """Test that missing percentageBase field emits a warning."""
+        nodes = {
+            "stripe": {
+                "nodeType": "external",
+                "resourceAddress": "external.stripe_payments",
+                "pricingModel": "percentage",
+                "percentageBase": "nonexistentMetric",
+                "pricingRates": {
+                    "percentageRate": 0.029,
+                    "fixedPerTransaction": 0.30,
+                },
+                "usageMetrics": {
+                    "transactionVolume": {"value": 10000},
+                }
+            }
+        }
+        derived = {"stripe": DerivedUsage("stripe", 100.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        
+        with pytest.warns(UserWarning, match="percentageBase"):
+            costs = aggregator.aggregate()
+        
+        # Volume defaults to 0; cost is just fixed per transaction
+        assert costs["stripe"] == pytest.approx(100 * 0.30)
+
+    def test_percentage_pricing_transaction_substring_not_matched(self):
+        """Test that 'transaction' substring alone no longer triggers volume lookup."""
+        # A metric named 'monthlyTransactions' should NOT be picked up by substring search
+        # because we only search for 'volume' now (not 'transaction')
+        nodes = {
+            "stripe": {
+                "nodeType": "external",
+                "resourceAddress": "external.stripe_payments",
+                "pricingModel": "percentage",
+                "pricingRates": {
+                    "percentageRate": 0.029,
+                    "fixedPerTransaction": 0.30,
+                },
+                "usageMetrics": {
+                    "monthlyTransactions": {"value": 10000},  # no 'volume' substring
+                }
+            }
+        }
+        derived = {"stripe": DerivedUsage("stripe", 100.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+        
+        # Volume stays 0 because no metric has 'volume' substring and no percentageBase set
+        assert costs["stripe"] == pytest.approx(100 * 0.30)  # only fixed per tx
+
+    def test_percentage_pricing_legacy_volume_fallback(self):
+        """Test legacy behavior: substring match on 'volume' when no percentageBase."""
+        nodes = {
+            "stripe": {
+                "nodeType": "external",
+                "resourceAddress": "external.stripe_payments",
+                "pricingModel": "percentage",
+                "pricingRates": {
+                    "percentageRate": 0.029,
+                    "fixedPerTransaction": 0.30,
+                },
+                "usageMetrics": {
+                    "transactionVolume": {"value": 10000},
+                }
+            }
+        }
+        derived = {"stripe": DerivedUsage("stripe", 100.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+        
+        # Falls back to 'volume' substring match
         assert costs["stripe"] == pytest.approx(320.0)
     
     def test_tiered_pricing_with_catalog(self):
