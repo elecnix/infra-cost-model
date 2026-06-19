@@ -80,6 +80,7 @@ class APIGatewayHTTP(RoutingResource):
 
 def _apigw_total_cost(requests: float, data_out_gb: float = 0.0,
                       catalog=None,
+                      provider: str = "aws",
                       region: str = "us-east-1") -> float:
     """Calculate total API Gateway HTTP API cost including egress.
     
@@ -95,21 +96,21 @@ def _apigw_total_cost(requests: float, data_out_gb: float = 0.0,
     if catalog is None:
         catalog = PricingCatalog()
     
-    request_cost = _request_cost(requests, catalog, region)
-    egress_cost = _egress_cost(data_out_gb, catalog, region)
+    request_cost = _request_cost(requests, catalog, provider, region)
+    egress_cost = _egress_cost(data_out_gb, catalog, provider, region)
     return request_cost + egress_cost
 
 
-def _request_cost(requests: float, catalog=None, region: str = "us-east-1") -> float:
+def _request_cost(requests: float, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     """Calculate API Gateway request cost using catalog."""
     if catalog is None:
         catalog = PricingCatalog()
-    result = catalog.query("aws", "AmazonAPIGatewayHTTP", region,
+    result = catalog.query(provider, "AmazonAPIGatewayHTTP", region,
                            "APIGateway-HTTP-Request", requests)
     return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
 
 
-def _egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") -> float:
+def _egress_cost(data_out_gb: float, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     """Calculate API Gateway egress cost with tiered pricing.
     
     Tiered egress (first 10TB at $0.09/GB):
@@ -124,13 +125,13 @@ def _egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") ->
     if catalog is None:
         catalog = PricingCatalog()
     
-    result = catalog.query("aws", "AmazonAPIGateway", region,
+    result = catalog.query(provider, "AmazonAPIGateway", region,
                            "APIGateway-Egress", data_out_gb)
     return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
 
 
-def _apigw_egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") -> float:
+def _apigw_egress_cost(data_out_gb: float, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     """Alias for egress cost calculation."""
     if catalog is None:
         catalog = PricingCatalog()
-    return _egress_cost(data_out_gb, catalog, region)
+    return _egress_cost(data_out_gb, catalog, provider, region)

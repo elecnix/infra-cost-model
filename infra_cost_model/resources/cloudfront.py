@@ -92,7 +92,7 @@ class CloudFrontDistribution(RoutingResource):
 
 
 def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, origin_requests=0,
-                     origin_is_s3=True, catalog=None) -> float:
+                     origin_is_s3=True, catalog=None, provider: str = "aws") -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
@@ -100,16 +100,16 @@ def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, origin_requests
     http_req = requests * (1.0 - https_ratio)
     https_req = requests * https_ratio
     if http_req > 0:
-        r = catalog.query("aws", "AmazonCloudFront", region, "CloudFront-HTTP-Request", http_req)
+        r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-HTTP-Request", http_req)
         if r and hasattr(r, "total_cost"): total += r.total_cost
     if https_req > 0:
-        r = catalog.query("aws", "AmazonCloudFront", region, "CloudFront-HTTPS-Request", https_req)
+        r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-HTTPS-Request", https_req)
         if r and hasattr(r, "total_cost"): total += r.total_cost
     if data_out_gb > 0:
-        r = catalog.query("aws", "AmazonCloudFront", region, "CloudFront-DataTransfer", data_out_gb)
+        r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-DataTransfer", data_out_gb)
         if r and hasattr(r, "total_cost"): total += r.total_cost
     if origin_requests > 0:
         metric = "CloudFront-OriginRequest-S3" if origin_is_s3 else "CloudFront-OriginRequest-Custom"
-        r = catalog.query("aws", "AmazonCloudFront", region, metric, origin_requests)
+        r = catalog.query(provider, "AmazonCloudFront", region, metric, origin_requests)
         if r and hasattr(r, "total_cost"): total += r.total_cost
     return total
