@@ -13,6 +13,8 @@ import {
   perMinute,
   perHour,
   perDay,
+  perWeek,
+  perMonth,
   parseFrequency,
   parseYamlDsl,
 } from "../src/index";
@@ -37,6 +39,14 @@ describe("Frequency constructors", () => {
     expect(perDay(1)).toEqual({ value: 1, unit: "perDay" });
   });
 
+  it("perWeek creates correct frequency", () => {
+    expect(perWeek(100)).toEqual({ value: 100, unit: "perWeek" });
+  });
+
+  it("perMonth creates correct frequency", () => {
+    expect(perMonth(1000)).toEqual({ value: 1000, unit: "perMonth" });
+  });
+
   it("parseFrequency parses valid shorthand", () => {
     expect(parseFrequency("1000/min")).toEqual({
       value: 1000,
@@ -47,6 +57,14 @@ describe("Frequency constructors", () => {
     expect(parseFrequency("86400/day")).toEqual({
       value: 86400,
       unit: "perDay",
+    });
+    expect(parseFrequency("100/week")).toEqual({
+      value: 100,
+      unit: "perWeek",
+    });
+    expect(parseFrequency("1000/month")).toEqual({
+      value: 1000,
+      unit: "perMonth",
     });
   });
 
@@ -232,6 +250,42 @@ nodes:
     expect(model.workflow.frequency).toEqual({
       value: 1000,
       unit: "perMinute",
+    });
+  });
+
+  it("parses shorthand frequency with week and month units", () => {
+    const weekYaml = `
+version: "1.0"
+workflow:
+  name: test-weekly
+  entry: gw
+  frequency: "100/week"
+nodes:
+  gw:
+    nodeType: routing
+    resourceAddress: gw
+`;
+    const weekModel = parseYamlDsl(weekYaml);
+    expect(weekModel.workflow.frequency).toEqual({
+      value: 100,
+      unit: "perWeek",
+    });
+
+    const monthYaml = `
+version: "1.0"
+workflow:
+  name: test-monthly
+  entry: gw
+  frequency: "1000/month"
+nodes:
+  gw:
+    nodeType: routing
+    resourceAddress: gw
+`;
+    const monthModel = parseYamlDsl(monthYaml);
+    expect(monthModel.workflow.frequency).toEqual({
+      value: 1000,
+      unit: "perMonth",
     });
   });
 
