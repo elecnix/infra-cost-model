@@ -1,0 +1,188 @@
+# Example: E-commerce Microservices (CDK)
+# Demonstrates: shared-node accumulation, external percentage pricing (Stripe),
+# conditional branching, multi-hop depth, SQS decoupling.
+#
+# Issue: https://github.com/elecnix/infra-cost-model/issues/8
+
+version: "1.0"
+
+workflow:
+  name: ecommerce-api
+  entry: aws_apigatewayv2_api.ecommerce_api
+  frequency:
+    unit: perMinute
+    value: 2000
+
+nodes:
+  aws_apigatewayv2_api.ecommerce_api:
+    nodeType: routing
+    resourceAddress: aws_apigatewayv2_api.ecommerce_api
+    provider: aws
+    service: ApiGatewayV2
+    usageMetrics:
+      requests: { unit: requests, value: 1 }
+      dataOutGb: { unit: GB, value: 0.00002 }    # 20KB per request
+    pricingRates:
+      requests: 1.00e-6
+      dataOutGb: 0.09
+
+  aws_lambda_function.auth:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.auth
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.0025 }   # 20ms × 128MB = 0.0025 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_lambda_function.get_products:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_products
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.025 }    # 100ms × 256MB = 0.025 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_lambda_function.create_order:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.create_order
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.1 }      # 200ms × 512MB = 0.1 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_lambda_function.process_payment:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.process_payment
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.125 }    # 500ms × 256MB = 0.125 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_lambda_function.fulfill_order:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.fulfill_order
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.075 }    # 300ms × 256MB = 0.075 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_dynamodb_table.products:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.products
+    provider: aws
+    service: AmazonDynamoDB
+    usageMetrics:
+      readRequests: { unit: requests, value: 3 }   # 3 reads per get_products call
+    pricingRates:
+      readRequests: 0.25e-6     # $0.25 per million read requests
+
+  aws_dynamodb_table.orders:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.orders
+    provider: aws
+    service: AmazonDynamoDB
+    usageMetrics:
+      writeRequests: { unit: requests, value: 1 }
+    pricingRates:
+      writeRequests: 1.25e-6
+
+  aws_sqs_queue.order_queue:
+    nodeType: routing
+    resourceAddress: aws_sqs_queue.order_queue
+    provider: aws
+    service: AmazonSQS
+    usageMetrics:
+      messages: { unit: messages, value: 1 }
+    pricingRates:
+      messages: 0.40e-6        # $0.40 per million messages
+
+  external_api.stripe:
+    nodeType: external
+    resourceAddress: external_api.stripe
+    pricingModel: percentage
+    pricingRates:
+      percentageRate: 0.029     # 2.9% per transaction
+      fixedPerTransaction: 0.30 # $0.30 per transaction
+    usageMetrics:
+      transactionVolume: { unit: USD, value: 50 }  # $50 average order value
+
+  aws_sns_topic.notifications:
+    nodeType: routing
+    resourceAddress: aws_sns_topic.notifications
+    provider: aws
+    service: AmazonSNS
+    usageMetrics:
+      notifications: { unit: notifications, value: 1 }
+    pricingRates:
+      notifications: 0.50e-6    # $0.50 per million notifications
+
+edges:
+  # Entry → Auth (every request authenticated)
+  - from: aws_apigatewayv2_api.ecommerce_api
+    to: aws_lambda_function.auth
+    rate: 1
+
+  # Auth branching: 60% browse, 40% create order
+  - from: aws_lambda_function.auth
+    to: aws_lambda_function.get_products
+    rate: 0.6
+  - from: aws_lambda_function.auth
+    to: aws_lambda_function.create_order
+    rate: 0.4
+
+  # Browse path: get_products → DynamoDB products (3 reads per call)
+  - from: aws_lambda_function.get_products
+    to: aws_dynamodb_table.products
+    rate: 3
+    type: read
+
+  # Create order path: write to DynamoDB, enqueue to SQS
+  - from: aws_lambda_function.create_order
+    to: aws_dynamodb_table.orders
+    rate: 1
+    type: write
+  - from: aws_lambda_function.create_order
+    to: aws_sqs_queue.order_queue
+    rate: 1
+
+  # Async path: SQS → process_payment
+  - from: aws_sqs_queue.order_queue
+    to: aws_lambda_function.process_payment
+    rate: 1
+
+  # Payment processing: external Stripe + conditional fulfillment (95%)
+  - from: aws_lambda_function.process_payment
+    to: external_api.stripe
+    rate: 1
+  - from: aws_lambda_function.process_payment
+    to: aws_lambda_function.fulfill_order
+    rate: 0.95                    # 5% payment failures
+
+  # Fulfillment: update DynamoDB + send notification
+  - from: aws_lambda_function.fulfill_order
+    to: aws_dynamodb_table.orders
+    rate: 1
+    type: write
+  - from: aws_lambda_function.fulfill_order
+    to: aws_sns_topic.notifications
+    rate: 1
