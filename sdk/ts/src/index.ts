@@ -35,7 +35,15 @@ export type {
 } from "./types";
 
 // Frequency constructors
-export { perSecond, perMinute, perHour, perDay, parseFrequency } from "./frequency";
+export {
+  perSecond,
+  perMinute,
+  perHour,
+  perDay,
+  perWeek,
+  perMonth,
+  parseFrequency,
+} from "./frequency";
 
 // YAML DSL parser
 export { parseYamlDsl } from "./yaml";

@@ -24,9 +24,19 @@ export function perDay(value: number): Frequency {
   return { value, unit: "perDay" };
 }
 
+/** Create a per-week frequency. */
+export function perWeek(value: number): Frequency {
+  return { value, unit: "perWeek" };
+}
+
+/** Create a per-month frequency. */
+export function perMonth(value: number): Frequency {
+  return { value, unit: "perMonth" };
+}
+
 /** Parse a shorthand frequency string like "1000/min". */
 export function parseFrequency(shorthand: string): Frequency {
-  const match = shorthand.match(/^([\d.]+)\/(sec|min|hr|day)$/);
+  const match = shorthand.match(/^([\d.]+)\/(sec|min|hr|day|week|month)$/);
   if (!match) {
     throw new Error(
       `Invalid frequency shorthand: "${shorthand}". Expected format: "1000/min".`
@@ -38,6 +48,8 @@ export function parseFrequency(shorthand: string): Frequency {
     min: "perMinute",
     hr: "perHour",
     day: "perDay",
+    week: "perWeek",
+    month: "perMonth",
   };
   return { value, unit: unitMap[match[2]!]! };
 }
