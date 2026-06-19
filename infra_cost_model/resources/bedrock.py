@@ -151,12 +151,6 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
                           "Bedrock-Cached-Input-Token", cached_input_tokens)
     if result and hasattr(result, 'total_cost'):
         cached_cost = result.total_cost
-    elif cached_input_tokens:
-        # Fallback: 50% discount on input token price
-        uncached_result = catalog.query("aws", "AmazonBedrock", region,
-                                       "Bedrock-Input-Token", cached_input_tokens)
-        if uncached_result and hasattr(uncached_result, 'total_cost'):
-            cached_cost = uncached_result.total_cost * 0.5
 
     result = catalog.query("aws", "AmazonBedrock", region,
                           "Bedrock-Output-Token", output_tokens)
