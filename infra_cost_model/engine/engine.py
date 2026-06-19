@@ -296,6 +296,17 @@ class CostAggregator:
         pricing_rates = node.get("pricingRates", {})
         flat_override = node.get("flatOverride", False)
         
+        # Warn when flatOverride=true conflicts with incoming DAG edges (DP#9).
+        # The engine is the canonical computation path; this ensures the
+        # design principle is enforced at the core level, not just at CLI.
+        if flat_override and any(e.get("to") == address for e in self.edges):
+            warnings.warn(
+                f"Node '{address}' has flatOverride=true but also receives "
+                f"incoming DAG edges. Per DP#9, flat overrides are an escape "
+                f"hatch and should not be combined with DAG-derived usage. "
+                f"The DAG-derived invocation count is being ignored for this node."
+            )
+        
         # Handle percentage-based pricing (external services like Stripe)
         if pricing_model == "percentage":
             return self._compute_percentage_cost(address, node, usage.invocation_count)
