@@ -561,10 +561,11 @@ class CostEngine:
     def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None,
                  time_basis: str = "perSecond"):
         self.cost_model = cost_model
-        self.workflow = cost_model["workflow"]
+        self.workflow = cost_model.get("workflow")
+        self.workflows = cost_model.get("workflows")
         self.nodes = cost_model["nodes"]
         self.edges = cost_model.get("edges", [])
-        self.parameters = self.workflow.get("parameters", {})
+        self.parameters = self.workflow.get("parameters", {}) if self.workflow else {}
         self.catalog = catalog
         self.time_basis = time_basis
         
@@ -582,12 +583,29 @@ class CostEngine:
     def compute(self) -> dict[str, float]:
         """Run full cost derivation and aggregation.
         
+        Supports both single-workflow and multi-workflow (workflows array)
+        models. For multi-workflow, each workflow is derived independently
+        and costs are aggregated across workflows.
+        
         Returns:
             Dict mapping resource address to total cost.
             
         Raises:
-            ValueError: If DAG validation fails.
+            ValueError: If DAG validation fails or if neither workflow
+                        nor workflows is provided.
         """
+        if self.workflows:
+            return self._compute_multi_workflow()
+        
+        if self.workflow is None:
+            raise ValueError(
+                "Cost model must have either 'workflow' or 'workflows' field"
+            )
+        
+        return self._compute_single_workflow()
+    
+    def _compute_single_workflow(self) -> dict[str, float]:
+        """Compute costs for a single-workflow cost model."""
         if not self.validator.validate():
             raise ValueError(f"Invalid DAG: {'; '.join(self.validator.errors)}")
         
@@ -599,13 +617,71 @@ class CostEngine:
                                      self.catalog, parameters=self.parameters)
         self.costs = aggregator.aggregate()
         
-        # Apply time basis conversion (per-second internal → output period)
-        multiplier = self._time_multiplier
-        if multiplier != 1.0:
-            self.costs = {addr: cost * multiplier for addr, cost in self.costs.items()}
+        # Apply time basis conversion (per-second internal → output period).
+        # Skip flatOverride nodes — their values are already flat monthly totals.
+        self._apply_time_basis()
         
         return self.costs
     
+    def _compute_multi_workflow(self) -> dict[str, float]:
+        """Compute costs for a multi-workflow cost model.
+        
+        Each workflow is derived independently from its own entry point.
+        Costs for shared nodes are summed across workflows.
+        """
+        if not self.validator.validate():
+            raise ValueError(f"Invalid DAG: {'; '.join(self.validator.errors)}")
+        
+        all_costs: dict[str, float] = {}
+        all_derived: dict[str, DerivedUsage] = {}
+        
+        for wf in self.workflows:
+            wf_params = wf.get("parameters", {})
+            deriver = WorkloadDeriver(wf, self.nodes, self.edges,
+                                       parameters=wf_params)
+            derived = deriver.derive()
+            
+            aggregator = CostAggregator(self.nodes, derived, self.edges,
+                                         self.catalog, parameters=wf_params)
+            costs = aggregator.aggregate()
+            
+            # Sum costs across workflows (shared nodes accumulate)
+            for addr, cost in costs.items():
+                all_costs[addr] = all_costs.get(addr, 0.0) + cost
+            
+            # Merge derived usage (sum invocation counts for shared nodes)
+            for addr, du in derived.items():
+                if addr in all_derived:
+                    all_derived[addr].invocation_count += du.invocation_count
+                    all_derived[addr].data_in += du.data_in
+                    all_derived[addr].input_tokens += du.input_tokens
+                    all_derived[addr].edge_types |= du.edge_types
+                else:
+                    all_derived[addr] = du
+        
+        self.derived_usage = all_derived
+        self.costs = all_costs
+        
+        # Apply time basis conversion (per-second internal → output period).
+        # Skip flatOverride nodes — their values are already flat monthly totals.
+        self._apply_time_basis()
+        
+        return self.costs
+    
+    def _apply_time_basis(self) -> None:
+        """Convert per-second costs to the output time basis.
+        
+        Nodes with flatOverride=true are skipped because their usageMetrics
+        values are already flat totals in the output unit (Principle 9).
+        """
+        multiplier = self._time_multiplier
+        if multiplier == 1.0:
+            return
+        for addr in list(self.costs.keys()):
+            node = self.nodes.get(addr, {})
+            if not node.get("flatOverride", False):
+                self.costs[addr] *= multiplier
+
     def total_cost(self) -> float:
         """Get total system cost in the configured time basis."""
         if not self.costs:
