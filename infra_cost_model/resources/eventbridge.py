@@ -82,18 +82,20 @@ def _eventbridge_cost(events_published=0, events_matched=0, schedule_invocations
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
-    billable_custom = max(0, events_published - 1_000_000)
-    if billable_custom > 0:
-        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-CustomEvent", billable_custom)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
+    if events_published > 0:
+        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-CustomEvent", events_published)
+        if r and hasattr(r, "total_cost"):
+            total += r.total_cost
     if schedule_invocations > 0:
         r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-Schedule", schedule_invocations)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
+        if r and hasattr(r, "total_cost"):
+            total += r.total_cost
     if archive_replay_events > 0:
         r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-ArchiveReplay", archive_replay_events)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    matched_billable = max(0, events_matched - 1_000_000)
-    if matched_billable > 0:
-        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-CustomEvent", matched_billable)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
+        if r and hasattr(r, "total_cost"):
+            total += r.total_cost
+    if events_matched > 0:
+        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-CustomEvent", events_matched)
+        if r and hasattr(r, "total_cost"):
+            total += r.total_cost
     return total

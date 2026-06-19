@@ -62,16 +62,14 @@ def _sns_cost(publishes=0, sqs_deliveries=0, lambda_deliveries=0, http_deliverie
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
-    if publishes > 1_000_000:
-        r = catalog.query("aws", "AmazonSNS", region, "SNS-Publish", publishes - 1_000_000)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    if sqs_deliveries > 1_000_000:
-        r = catalog.query("aws", "AmazonSNS", region, "SNS-Delivery-SQS", sqs_deliveries - 1_000_000)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    if lambda_deliveries > 1_000_000:
-        r = catalog.query("aws", "AmazonSNS", region, "SNS-Delivery-Lambda", lambda_deliveries - 1_000_000)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    if http_deliveries > 100_000:
-        r = catalog.query("aws", "AmazonSNS", region, "SNS-Delivery-HTTP", http_deliveries - 100_000)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
+    for quantity, metric in [
+        (publishes, "SNS-Publish"),
+        (sqs_deliveries, "SNS-Delivery-SQS"),
+        (lambda_deliveries, "SNS-Delivery-Lambda"),
+        (http_deliveries, "SNS-Delivery-HTTP"),
+    ]:
+        if quantity > 0:
+            r = catalog.query("aws", "AmazonSNS", region, metric, quantity)
+            if r and hasattr(r, "total_cost"):
+                total += r.total_cost
     return total
