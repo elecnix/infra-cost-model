@@ -75,8 +75,8 @@ class BedrockModel(ComputeResource):
         )
 
 
-def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet",
-                  catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
+def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet", *,
+                  catalog=None, provider: str = "aws", region: str) -> float:
     """Calculate Bedrock/LLM model cost using catalog prices.
     
     Args:
@@ -89,14 +89,14 @@ def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claud
     Returns:
         Total cost in USD.
     """
-    return _bedrock_token_cost(input_tokens, 0.0, output_tokens, model, catalog, provider, region)
+    return _bedrock_token_cost(input_tokens, 0.0, output_tokens, model, catalog=catalog, provider=provider, region=region)
 
 
 def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
-                                output_tokens: float,
+                                output_tokens: float, *,
                                 model: str = "claude-3-5-sonnet",
                                 catalog=None, provider: str = "aws",
-                                region: str = "us-east-1") -> float:
+                                region: str) -> float:
     """Calculate Bedrock cost with cached prompt input discounted at 50%."""
     if catalog is None:
         catalog = PricingCatalog()
@@ -124,16 +124,16 @@ def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
     return total
 
 
-def _streaming_bedrock_cost(input_tokens: float, output_tokens: float,
+def _streaming_bedrock_cost(input_tokens: float, output_tokens: float, *,
                             model: str = "claude-3-5-sonnet",
                             catalog=None, provider: str = "aws",
-                            region: str = "us-east-1") -> float:
+                            region: str) -> float:
     """Streaming delivery does not change total token cost."""
-    return _bedrock_cost(input_tokens, output_tokens, model, catalog, provider, region)
+    return _bedrock_cost(input_tokens, output_tokens, model, catalog=catalog, provider=provider, region=region)
 
 
 def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float,
-                        output_tokens: float, model: str, catalog, provider: str = "aws", region: str = "us-east-1") -> float:
+                        output_tokens: float, model: str, *, catalog, provider: str = "aws", region: str) -> float:
     """Internal: calculate Bedrock token cost using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
@@ -160,10 +160,11 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
     return input_cost + cached_cost + output_cost
 
 
-def _model_cost_comparison(input_tokens: float, output_tokens: float, provider: str = "aws") -> dict:
+def _model_cost_comparison(input_tokens: float, output_tokens: float, provider: str = "aws", region: str = "us-east-1") -> dict:
     """Compare costs across LLM models.
     
-    Note: Uses seed prices for comparison.
+    Note: Uses seed prices for comparison. Region defaults to us-east-1
+    since this is a cross-model comparison utility, not a per-region cost helper.
     """
     from infra_cost_model.pricing.catalog import PricingCatalog
     
@@ -176,9 +177,9 @@ def _model_cost_comparison(input_tokens: float, output_tokens: float, provider: 
         ("claude-3-5-haiku", ""),
         ("claude-3-opus", ""),
     ]:
-        input_result = catalog.query(provider, "AmazonBedrock", "us-east-1",
+        input_result = catalog.query(provider, "AmazonBedrock", region,
                                       "Bedrock-Input-Token", input_tokens)
-        output_result = catalog.query(provider, "AmazonBedrock", "us-east-1",
+        output_result = catalog.query(provider, "AmazonBedrock", region,
                                       "Bedrock-Output-Token", output_tokens)
         
         total = 0.0

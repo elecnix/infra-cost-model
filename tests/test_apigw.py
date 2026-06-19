@@ -68,28 +68,28 @@ def test_apigw_extract_cdk():
 
 def test_apigw_request_cost():
     """Test API Gateway HTTP API request cost calculation."""
-    cost = _request_cost(1_000_000)  # 1M requests
+    cost = _request_cost(1_000_000, region="us-east-1")  # 1M requests
     
     assert cost == pytest.approx(1.00, rel=0.01)
 
 
 def test_apigw_egress_cost():
     """Test API Gateway egress cost calculation."""
-    cost = _apigw_egress_cost(100)  # 100GB out (first tier)
+    cost = _apigw_egress_cost(100, region="us-east-1")  # 100GB out (first tier)
     
     assert cost == pytest.approx(9.00, rel=0.01)
 
 
 def test_apigw_egress_tiered_10tb():
     """Test egress cost at exactly 10TB boundary."""
-    cost = _apigw_egress_cost(10_000)
+    cost = _apigw_egress_cost(10_000, region="us-east-1")
     
     assert cost == pytest.approx(900.00, rel=0.01)
 
 
 def test_apigw_egress_tiered_50tb():
     """Test egress cost in second tier (10-50TB)."""
-    cost = _apigw_egress_cost(25_000)  # 25TB
+    cost = _apigw_egress_cost(25_000, region="us-east-1")  # 25TB
     
     # 10TB at $0.09 + 15TB at $0.085
     expected = 10_000 * 0.09 + 15_000 * 0.085
@@ -98,7 +98,7 @@ def test_apigw_egress_tiered_50tb():
 
 def test_apigw_total_cost():
     """Test total cost includes both requests and egress."""
-    cost = _apigw_total_cost(1_000_000, 100)
+    cost = _apigw_total_cost(1_000_000, 100, region="us-east-1")
     
     expected = 1.00 + 9.00  # $1 requests + $9 egress
     assert cost == pytest.approx(expected, rel=0.01)
