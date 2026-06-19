@@ -185,7 +185,9 @@ def test_provisioned_concurrency_cost():
         catalog=catalog,
     )
 
-    fixed = 10 * (256 / 1024) * 24 * 3600 * 0.000003606
+    rate_result = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-ProvisionedConcurrency-GB-Second")
+    rate = rate_result.price_usd if rate_result else 0.000003606
+    fixed = 10 * (256 / 1024) * 24 * 3600 * rate
     requests = 5_000 * 0.20e-6
 
     assert cost == pytest.approx(fixed + requests, rel=0.01)

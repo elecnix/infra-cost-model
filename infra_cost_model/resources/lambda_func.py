@@ -185,10 +185,14 @@ def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
         Total hourly provisioned concurrency cost plus request charges.
     """
     gb = memory_mb / 1024
-    fixed_cost = provisioned_concurrency * gb * hours * 3600 * 0.000003606
-    
     if catalog is None:
         catalog = PricingCatalog()
+    
+    rate_result = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-ProvisionedConcurrency-GB-Second")
+    rate = 0.000003606
+    if rate_result is not None and hasattr(rate_result, "price_usd"):
+        rate = rate_result.price_usd
+    fixed_cost = provisioned_concurrency * gb * hours * 3600 * rate
     
     request_price = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request", invocations)
     
