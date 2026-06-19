@@ -92,7 +92,11 @@ def _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20,
     if r and hasattr(r, "total_cost"):
         instance_cost = r.total_cost
         if multi_az:
-            instance_cost *= 2.0
+            mult_result = catalog.query("aws", "AmazonRDS", region, "RDS-Multi-AZ-Multiplier")
+            multi_az_rate = 2.0
+            if mult_result is not None and hasattr(mult_result, "price_usd"):
+                multi_az_rate = mult_result.price_usd
+            instance_cost *= multi_az_rate
         total += instance_cost
     if storage_gb > 0:
         r = catalog.query("aws", "AmazonRDS", region, "RDS-Storage-gp3", storage_gb)
