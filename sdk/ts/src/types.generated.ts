@@ -6,50 +6,59 @@
  */
 
 /**
- * Node type determines valid usage metrics and edge permissions. External nodes are leaf nodes for third-party services (Stripe, Twilio).
- */
-export type NodeType = "compute" | "storage" | "routing" | "external";
-
-/**
  * Single source of truth JSON Schema for YAML, TypeScript, and Python interfaces
  */
-export interface InfrastructureCostModelRepresentation {
+export type InfrastructureCostModelRepresentation = {
+  [k: string]: unknown;
+} & {
   /**
    * Schema version
    */
   version: "1.0";
-  workflow: {
-    /**
-     * Workflow identifier
-     */
-    name: string;
-    /**
-     * Address of the entry node (receives external traffic)
-     */
-    entry: string;
-    frequency: {
-      /**
-       * Time unit for entry frequency
-       */
-      unit: "perSecond" | "perMinute" | "perHour" | "perDay" | "perWeek" | "perMonth";
-      /**
-       * Invocation rate at the entry node
-       */
-      value: number;
-      [k: string]: unknown;
-    };
-    /**
-     * Symbolic variables for what-if analysis
-     */
-    parameters?: {
-      [k: string]: number;
-    };
-    [k: string]: unknown;
-  };
+  workflow?: Workflow;
+  /**
+   * Multiple independent workflows sharing the same infrastructure nodes. Each workflow has its own entry point, frequency, and optional parameters. Costs are aggregated across all workflows.
+   *
+   * @minItems 1
+   */
+  workflows?: [Workflow, ...Workflow[]];
   nodes: {
     [k: string]: Node;
   };
   edges?: Edge[];
+  [k: string]: unknown;
+};
+/**
+ * Node type determines valid usage metrics and edge permissions. External nodes are leaf nodes for third-party services (Stripe, Twilio).
+ */
+export type NodeType = "compute" | "storage" | "routing" | "external";
+
+export interface Workflow {
+  /**
+   * Workflow identifier
+   */
+  name: string;
+  /**
+   * Address of the entry node (receives external traffic)
+   */
+  entry: string;
+  frequency: {
+    /**
+     * Time unit for entry frequency
+     */
+    unit: "perSecond" | "perMinute" | "perHour" | "perDay" | "perWeek" | "perMonth";
+    /**
+     * Invocation rate at the entry node
+     */
+    value: number;
+    [k: string]: unknown;
+  };
+  /**
+   * Symbolic variables for what-if analysis
+   */
+  parameters?: {
+    [k: string]: number;
+  };
   [k: string]: unknown;
 }
 export interface Node {
@@ -126,6 +135,20 @@ export interface Edge {
     average?: number;
     minimum?: number;
     maximum?: number;
+    [k: string]: unknown;
+  };
+  /**
+   * Token flow for LLM-based edges. Input tokens flow downstream to LLM nodes; output tokens flow upstream to orchestration nodes.
+   */
+  tokenFlow?: {
+    /**
+     * Input/prompt tokens flowing through this edge per parent invocation
+     */
+    input?: number;
+    /**
+     * Output/completion tokens flowing through this edge per parent invocation
+     */
+    output?: number;
     [k: string]: unknown;
   };
   [k: string]: unknown;
