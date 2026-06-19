@@ -127,11 +127,6 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
                     if "data_size" in value or "dataSize" in value:
                         edge["dataSize"] = value.get("dataSize", value.get("data_size"))
                     edges.append(edge)
-            elif key == "data_out":
-                # Keep data_out in nodes for reference
-                if source_addr not in nodes:
-                    nodes[source_addr] = {}
-                nodes[source_addr]["dataOut"] = value
     
     return {
         "version": "1.0",

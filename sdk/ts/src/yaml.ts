@@ -73,12 +73,7 @@ export function parseYamlDsl(yamlContent: string): CostModel {
               dataSize: (v.dataSize ?? v.data_size) as Edge["dataSize"],
             });
           }
-        } else if (key === "data_out") {
-          if (!nodes[sourceAddr]) {
-            nodes[sourceAddr] = {};
-          }
-          nodes[sourceAddr]!.dataOut = value;
-        }
+
       }
     }
   }
