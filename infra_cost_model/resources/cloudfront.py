@@ -92,11 +92,10 @@ class CloudFrontDistribution(RoutingResource):
 
 
 def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, origin_requests=0,
-                     origin_is_s3=True, catalog=None, provider: str = "aws") -> float:
+                     origin_is_s3=True, *, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
-    region = "us-east-1"
     http_req = requests * (1.0 - https_ratio)
     https_req = requests * https_ratio
     if http_req > 0:

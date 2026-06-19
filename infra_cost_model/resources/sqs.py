@@ -96,9 +96,10 @@ def _sqs_cost(
     messages_received: float = 0,
     fifo: bool = False,
     retention_gb: float = 0,
+    *,
     catalog=None,
     provider: str = "aws",
-    region: str = "us-east-1",
+    region: str,
 ) -> float:
     """Calculate SQS cost using catalog pricing.
 

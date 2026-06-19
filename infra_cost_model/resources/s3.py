@@ -131,9 +131,10 @@ def _s3_cost(
     get_requests: float = 0,
     storage_gb: float = 0,
     data_out_gb: float = 0,
+    *,
     catalog=None,
     provider: str = "aws",
-    region: str = "us-east-1",
+    region: str,
 ) -> float:
     """Calculate S3 cost using catalog pricing.
 

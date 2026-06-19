@@ -26,7 +26,7 @@ def test_bedrock_cost_calculation():
     """Test Bedrock cost calculation using catalog prices."""
     # Using seed prices: input $0.003/1K, output $0.015/1K
     # 2.16B input + 4.32B output
-    cost = _bedrock_cost(2_160_000_000, 4_320_000_000, "claude-3-5-sonnet")
+    cost = _bedrock_cost(2_160_000_000, 4_320_000_000, "claude-3-5-sonnet", region="us-east-1")
     
     expected = 2_160_000_000 * 0.003 / 1000 + 4_320_000_000 * 0.015 / 1000
     # = 6480 + 64800 = $71,280
@@ -40,8 +40,8 @@ def test_bedrock_model_switching():
     input_tokens = 1_000_000_000
     output_tokens = 2_000_000_000
     
-    sonnet_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
-    haiku_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-haiku")
+    sonnet_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet", region="us-east-1")
+    haiku_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-haiku", region="us-east-1")
     
     # All models currently use the same seed prices, so costs are equal
     # In a real implementation, models would have different pricing
@@ -54,7 +54,7 @@ def test_bedrock_asymmetric_pricing():
     input_tokens = 1_000_000
     output_tokens = 1_000_000
     
-    cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
+    cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet", region="us-east-1")
     input_cost = input_tokens * 0.003 / 1000
     output_cost = output_tokens * 0.015 / 1000
     
@@ -88,6 +88,7 @@ def test_cached_prompt_cost_discount():
         cached_input_tokens=500_000,
         output_tokens=1_000_000,
         model="claude-3-5-sonnet",
+        region="us-east-1",
     )
 
     expected = (
@@ -101,4 +102,4 @@ def test_cached_prompt_cost_discount():
 
 def test_streaming_cost_matches_total_tokens():
     """Streaming changes delivery, not total token cost."""
-    assert _streaming_bedrock_cost(1_000_000, 2_000_000) == _bedrock_cost(1_000_000, 2_000_000)
+    assert _streaming_bedrock_cost(1_000_000, 2_000_000, region="us-east-1") == _bedrock_cost(1_000_000, 2_000_000, region="us-east-1")
