@@ -73,7 +73,7 @@ export function parseYamlDsl(yamlContent: string): CostModel {
               dataSize: (v.dataSize ?? v.data_size) as Edge["dataSize"],
             });
           }
-
+        }
       }
     }
   }
