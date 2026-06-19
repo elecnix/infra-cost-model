@@ -1,0 +1,84 @@
+# Example: Serverless API (Terraform)
+# Demonstrates: entry node branching with call rates, shared leaf node (DynamoDB),
+# different Lambda configurations, PAY_PER_REQUEST DynamoDB pricing.
+#
+# Issue: https://github.com/elecnix/infra-cost-model/issues/3
+
+version: "1.0"
+
+workflow:
+  name: serverless-api
+  entry: aws_apigatewayv2_api.items_api
+  frequency:
+    unit: perMinute
+    value: 1000
+
+nodes:
+  aws_apigatewayv2_api.items_api:
+    nodeType: routing
+    resourceAddress: aws_apigatewayv2_api.items_api
+    provider: aws
+    service: ApiGatewayV2
+    usageMetrics:
+      requests: { unit: requests, value: 1 }
+      dataOutGb: { unit: GB, value: 0.00005 }    # 50KB per request
+    pricingRates:
+      requests: 1.00e-6
+      dataOutGb: 0.09
+
+  aws_lambda_function.get_items:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_items
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.0125 }   # 50ms × 256MB = 0.0125 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_lambda_function.create_item:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.create_item
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.1 }      # 200ms × 512MB = 0.1 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_dynamodb_table.items:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.items
+    provider: aws
+    service: AmazonDynamoDB
+    usageMetrics:
+      readRequests: { unit: requests, value: 1 }
+      writeRequests: { unit: requests, value: 1 }
+    pricingRates:
+      readRequests: 0.25e-6      # $0.25 per million read requests
+      writeRequests: 1.25e-6     # $1.25 per million write requests
+
+edges:
+  # Entry branching: 70% reads, 30% writes
+  - from: aws_apigatewayv2_api.items_api
+    to: aws_lambda_function.get_items
+    rate: 0.7
+  - from: aws_apigatewayv2_api.items_api
+    to: aws_lambda_function.create_item
+    rate: 0.3
+
+  # Read path
+  - from: aws_lambda_function.get_items
+    to: aws_dynamodb_table.items
+    rate: 1
+    type: read
+
+  # Write path
+  - from: aws_lambda_function.create_item
+    to: aws_dynamodb_table.items
+    rate: 1
+    type: write
