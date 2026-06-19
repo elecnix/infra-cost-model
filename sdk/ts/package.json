@@ -12,23 +12,33 @@
       "require": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build:types": "json2ts -i ../../infra_cost_model/schema/cost-model.schema.json -o src/types.generated.ts",
+    "build": "npm run build:types && tsc",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "json-schema-to-typescript": "^15.0.4",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0",
-    "@types/js-yaml": "^4.0.9"
+    "vitest": "^2.1.0"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
   },
-  "keywords": ["infra-cost-model", "cost-modeling", "finops", "dag"],
+  "keywords": [
+    "infra-cost-model",
+    "cost-modeling",
+    "finops",
+    "dag"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/elecnix/infra-cost-model"
