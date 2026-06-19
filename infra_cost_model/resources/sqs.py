@@ -109,14 +109,12 @@ def _sqs_cost(
         catalog = PricingCatalog()
 
     total = 0.0
-    free_tier = 1_000_000
     total_requests = messages_sent + messages_received
-    billable_requests = max(0, total_requests - free_tier)
 
-    if billable_requests > 0:
+    if total_requests > 0:
         metric = "SQS-FIFO-Request" if fifo else "SQS-Standard-Request"
         result = catalog.query("aws", "AmazonSQS", region, metric,
-                               billable_requests)
+                               total_requests)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 
