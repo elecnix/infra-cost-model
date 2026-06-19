@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from infra_cost_model.pricing.catalog import PricingCatalog
+
 from .types import ExternalResource, ResourceExtract
 
 
@@ -150,13 +152,14 @@ STRIPE_STANDARD = {"percentage_rate": 0.029, "fixed_per_transaction": 0.30}
 STRIPE_INTERNATIONAL = {"percentage_rate": 0.039, "fixed_per_transaction": 0.30}
 
 
-def _stripe_cost(transactions: float, volume: float, international: bool = False) -> float:
+def _stripe_cost(transactions: float, volume: float, international: bool = False, catalog=None) -> float:
     """Calculate Stripe cost.
     
     Args:
         transactions: Number of charges
         volume: Transaction volume in USD
         international: Whether cards are international (+1% fee)
+        catalog: Optional PricingCatalog for querying fees (DP#13)
         
     Returns:
         Total Stripe fee in USD.
@@ -166,7 +169,16 @@ def _stripe_cost(transactions: float, volume: float, international: bool = False
     base_cost = volume * config["percentage_rate"] + transactions * config["fixed_per_transaction"]
     
     if international:
-        base_cost += volume * 0.01  # Additional currency conversion fee
+        if catalog is None:
+            catalog = PricingCatalog()
+        conversion_result = catalog.query(
+            "external", "ExternalAPI", "global",
+            "currency_conversion_fee"
+        )
+        conversion_rate = 0.01
+        if conversion_result is not None and hasattr(conversion_result, 'price_usd'):
+            conversion_rate = conversion_result.price_usd
+        base_cost += volume * conversion_rate
     
     return base_cost
 
