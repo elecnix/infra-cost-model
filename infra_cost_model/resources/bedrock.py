@@ -76,7 +76,7 @@ class BedrockModel(ComputeResource):
 
 
 def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet",
-                  catalog=None, region: str = "us-east-1") -> float:
+                  catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     """Calculate Bedrock/LLM model cost using catalog prices.
     
     Args:
@@ -89,13 +89,13 @@ def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claud
     Returns:
         Total cost in USD.
     """
-    return _bedrock_token_cost(input_tokens, 0.0, output_tokens, model, catalog, region)
+    return _bedrock_token_cost(input_tokens, 0.0, output_tokens, model, catalog, provider, region)
 
 
 def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
                                 output_tokens: float,
                                 model: str = "claude-3-5-sonnet",
-                                catalog=None,
+                                catalog=None, provider: str = "aws",
                                 region: str = "us-east-1") -> float:
     """Calculate Bedrock cost with cached prompt input discounted at 50%."""
     if catalog is None:
@@ -107,14 +107,14 @@ def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
     # Get cached input token price (50% discount)
     cached_cost = 0.0
     if cached_input_tokens > 0:
-        cached_result = catalog.query("aws", "AmazonBedrock", region,
+        cached_result = catalog.query(provider, "AmazonBedrock", region,
                                       "Bedrock-Cached-Input-Token", cached_input_tokens)
         if cached_result and hasattr(cached_result, 'total_cost'):
             cached_cost = cached_result.total_cost
     
-    uncached_result = catalog.query("aws", "AmazonBedrock", region,
+    uncached_result = catalog.query(provider, "AmazonBedrock", region,
                                     "Bedrock-Input-Token", uncached_input_tokens)
-    output_result = catalog.query("aws", "AmazonBedrock", region,
+    output_result = catalog.query(provider, "AmazonBedrock", region,
                                   "Bedrock-Output-Token", output_tokens)
     
     total = cached_cost
@@ -126,14 +126,14 @@ def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
 
 def _streaming_bedrock_cost(input_tokens: float, output_tokens: float,
                             model: str = "claude-3-5-sonnet",
-                            catalog=None,
+                            catalog=None, provider: str = "aws",
                             region: str = "us-east-1") -> float:
     """Streaming delivery does not change total token cost."""
-    return _bedrock_cost(input_tokens, output_tokens, model, catalog, region)
+    return _bedrock_cost(input_tokens, output_tokens, model, catalog, provider, region)
 
 
 def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float,
-                        output_tokens: float, model: str, catalog, region: str = "us-east-1") -> float:
+                        output_tokens: float, model: str, catalog, provider: str = "aws", region: str = "us-east-1") -> float:
     """Internal: calculate Bedrock token cost using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
@@ -142,17 +142,17 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
     cached_cost = 0.0
     output_cost = 0.0
 
-    result = catalog.query("aws", "AmazonBedrock", region,
+    result = catalog.query(provider, "AmazonBedrock", region,
                           "Bedrock-Input-Token", uncached_input_tokens)
     if result and hasattr(result, 'total_cost'):
         input_cost = result.total_cost
 
-    result = catalog.query("aws", "AmazonBedrock", region,
+    result = catalog.query(provider, "AmazonBedrock", region,
                           "Bedrock-Cached-Input-Token", cached_input_tokens)
     if result and hasattr(result, 'total_cost'):
         cached_cost = result.total_cost
 
-    result = catalog.query("aws", "AmazonBedrock", region,
+    result = catalog.query(provider, "AmazonBedrock", region,
                           "Bedrock-Output-Token", output_tokens)
     if result and hasattr(result, 'total_cost'):
         output_cost = result.total_cost
@@ -160,7 +160,7 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
     return input_cost + cached_cost + output_cost
 
 
-def _model_cost_comparison(input_tokens: float, output_tokens: float) -> dict:
+def _model_cost_comparison(input_tokens: float, output_tokens: float, provider: str = "aws") -> dict:
     """Compare costs across LLM models.
     
     Note: Uses seed prices for comparison.
@@ -176,9 +176,9 @@ def _model_cost_comparison(input_tokens: float, output_tokens: float) -> dict:
         ("claude-3-5-haiku", ""),
         ("claude-3-opus", ""),
     ]:
-        input_result = catalog.query("aws", "AmazonBedrock", "us-east-1",
+        input_result = catalog.query(provider, "AmazonBedrock", "us-east-1",
                                       "Bedrock-Input-Token", input_tokens)
-        output_result = catalog.query("aws", "AmazonBedrock", "us-east-1",
+        output_result = catalog.query(provider, "AmazonBedrock", "us-east-1",
                                       "Bedrock-Output-Token", output_tokens)
         
         total = 0.0

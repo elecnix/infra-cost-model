@@ -78,24 +78,24 @@ class EventBridgeRule(RoutingResource):
 
 
 def _eventbridge_cost(events_published=0, events_matched=0, schedule_invocations=0,
-                      archive_replay_events=0, catalog=None, region="us-east-1") -> float:
+                      archive_replay_events=0, catalog=None, provider: str = "aws", region="us-east-1") -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
     if events_published > 0:
-        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-CustomEvent", events_published)
+        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-CustomEvent", events_published)
         if r and hasattr(r, "total_cost"):
             total += r.total_cost
     if schedule_invocations > 0:
-        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-Schedule", schedule_invocations)
+        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-Schedule", schedule_invocations)
         if r and hasattr(r, "total_cost"):
             total += r.total_cost
     if archive_replay_events > 0:
-        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-ArchiveReplay", archive_replay_events)
+        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-ArchiveReplay", archive_replay_events)
         if r and hasattr(r, "total_cost"):
             total += r.total_cost
     if events_matched > 0:
-        r = catalog.query("aws", "AmazonEventBridge", region, "EventBridge-CustomEvent", events_matched)
+        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-CustomEvent", events_matched)
         if r and hasattr(r, "total_cost"):
             total += r.total_cost
     return total

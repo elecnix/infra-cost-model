@@ -83,12 +83,12 @@ class RDSInstance(StorageResource):
 
 
 def _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20,
-              backup_storage_gb=0, multi_az=False, catalog=None, region="us-east-1") -> float:
+              backup_storage_gb=0, multi_az=False, catalog=None, provider: str = "aws", region="us-east-1") -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
     metric = f"RDS-Instance-Hour-{instance_class}"
-    r = catalog.query("aws", "AmazonRDS", region, metric, instance_hours)
+    r = catalog.query(provider, "AmazonRDS", region, metric, instance_hours)
     if r and hasattr(r, "total_cost"):
         instance_cost = r.total_cost
         if multi_az:
@@ -99,9 +99,9 @@ def _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20,
             instance_cost *= multi_az_rate
         total += instance_cost
     if storage_gb > 0:
-        r = catalog.query("aws", "AmazonRDS", region, "RDS-Storage-gp3", storage_gb)
+        r = catalog.query(provider, "AmazonRDS", region, "RDS-Storage-gp3", storage_gb)
         if r and hasattr(r, "total_cost"): total += r.total_cost
     if backup_storage_gb > 0:
-        r = catalog.query("aws", "AmazonRDS", region, "RDS-Backup-Storage", backup_storage_gb)
+        r = catalog.query(provider, "AmazonRDS", region, "RDS-Backup-Storage", backup_storage_gb)
         if r and hasattr(r, "total_cost"): total += r.total_cost
     return total

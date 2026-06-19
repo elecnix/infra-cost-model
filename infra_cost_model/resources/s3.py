@@ -132,6 +132,7 @@ def _s3_cost(
     storage_gb: float = 0,
     data_out_gb: float = 0,
     catalog=None,
+    provider: str = "aws",
     region: str = "us-east-1",
 ) -> float:
     """Calculate S3 cost using catalog pricing.
@@ -154,28 +155,28 @@ def _s3_cost(
 
     # PUT requests: $0.005/1K
     if put_requests > 0:
-        result = catalog.query("aws", "AmazonS3", region,
+        result = catalog.query(provider, "AmazonS3", region,
                                "S3-PutRequest", put_requests)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 
     # GET requests: $0.0004/1K
     if get_requests > 0:
-        result = catalog.query("aws", "AmazonS3", region,
+        result = catalog.query(provider, "AmazonS3", region,
                                "S3-GetRequest", get_requests)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 
     # Storage: tiered pricing (first 50TB at $0.023/GB)
     if storage_gb > 0:
-        result = catalog.query("aws", "AmazonS3", region,
+        result = catalog.query(provider, "AmazonS3", region,
                                "S3-Storage", storage_gb)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 
     # Data transfer: tiered pricing (first 10TB at $0.09/GB)
     if data_out_gb > 0:
-        result = catalog.query("aws", "AmazonS3", region,
+        result = catalog.query(provider, "AmazonS3", region,
                                "S3-DataTransfer", data_out_gb)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost

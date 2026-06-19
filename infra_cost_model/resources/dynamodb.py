@@ -87,7 +87,7 @@ class DynamoDBTable(StorageResource):
 
 def _dynamodb_cost(read_requests: float, write_requests: float, storage_gb: float,
                    billing_mode: str = "PAY_PER_REQUEST",
-                   catalog=None, gsi_read_requests: float = 0,
+                   catalog=None, provider: str = "aws", gsi_read_requests: float = 0,
                    gsi_write_requests: float = 0,
                    region: str = "us-east-1") -> float:
     """Calculate DynamoDB cost.
@@ -113,24 +113,24 @@ def _dynamodb_cost(read_requests: float, write_requests: float, storage_gb: floa
     
     if billing_mode == "PROVISIONED":
         return _provisioned_cost(
-            read_requests, write_requests, storage_gb, catalog,
+            read_requests, write_requests, storage_gb, catalog, provider,
             region
         )
     return _on_demand_cost(
-        read_requests, write_requests, storage_gb, catalog,
+        read_requests, write_requests, storage_gb, catalog, provider,
         region
     )
 
 
 def _on_demand_cost(read_requests: float, write_requests: float, storage_gb: float,
-                    catalog=None, region: str = "us-east-1") -> float:
+                    catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     """On-demand pricing using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
     
-    read_cost = catalog.query("aws", "AmazonDynamoDB", region, "Dynamo-ReadRequest", read_requests)
-    write_cost = catalog.query("aws", "AmazonDynamoDB", region, "Dynamo-WriteRequest", write_requests)
-    storage_cost = catalog.query("aws", "AmazonDynamoDB", region, "Dynamo-Storage", storage_gb)
+    read_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-ReadRequest", read_requests)
+    write_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-WriteRequest", write_requests)
+    storage_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-Storage", storage_gb)
 
     total = 0.0
     for result in [read_cost, write_cost, storage_cost]:
@@ -140,14 +140,14 @@ def _on_demand_cost(read_requests: float, write_requests: float, storage_gb: flo
 
 
 def _provisioned_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
-                      catalog=None, region: str = "us-east-1") -> float:
+                      catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     """Provisioned pricing using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
     
-    rcu_cost = catalog.query("aws", "AmazonDynamoDB", region, "Dynamo-RCU-Hour", rcu_hours)
-    wcu_cost = catalog.query("aws", "AmazonDynamoDB", region, "Dynamo-WCU-Hour", wcu_hours)
-    storage_cost = catalog.query("aws", "AmazonDynamoDB", region, "Dynamo-Storage", storage_gb)
+    rcu_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-RCU-Hour", rcu_hours)
+    wcu_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-WCU-Hour", wcu_hours)
+    storage_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-Storage", storage_gb)
 
     total = 0.0
     for result in [rcu_cost, wcu_cost, storage_cost]:
@@ -157,12 +157,12 @@ def _provisioned_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
 
 
 def _provisioned_dynamodb_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
-                               catalog=None,
+                               catalog=None, provider: str = "aws",
                                gsi_rcu_hours: float = 0, gsi_wcu_hours: float = 0,
                                region: str = "us-east-1") -> float:
     """Calculate DynamoDB provisioned costs from RCU/WCU hours."""
     total_rcu = rcu_hours + gsi_rcu_hours
     total_wcu = wcu_hours + gsi_wcu_hours
     return _provisioned_cost(
-        total_rcu, total_wcu, storage_gb, catalog, region
+        total_rcu, total_wcu, storage_gb, catalog, provider, region
     )

@@ -58,7 +58,7 @@ class SNSTopic(RoutingResource):
 
 
 def _sns_cost(publishes=0, sqs_deliveries=0, lambda_deliveries=0, http_deliveries=0,
-              catalog=None, region="us-east-1") -> float:
+              catalog=None, provider: str = "aws", region="us-east-1") -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
@@ -69,7 +69,7 @@ def _sns_cost(publishes=0, sqs_deliveries=0, lambda_deliveries=0, http_deliverie
         (http_deliveries, "SNS-Delivery-HTTP"),
     ]:
         if quantity > 0:
-            r = catalog.query("aws", "AmazonSNS", region, metric, quantity)
+            r = catalog.query(provider, "AmazonSNS", region, metric, quantity)
             if r and hasattr(r, "total_cost"):
                 total += r.total_cost
     return total

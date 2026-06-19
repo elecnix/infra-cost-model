@@ -97,6 +97,7 @@ def _sqs_cost(
     fifo: bool = False,
     retention_gb: float = 0,
     catalog=None,
+    provider: str = "aws",
     region: str = "us-east-1",
 ) -> float:
     """Calculate SQS cost using catalog pricing.
@@ -113,13 +114,13 @@ def _sqs_cost(
 
     if total_requests > 0:
         metric = "SQS-FIFO-Request" if fifo else "SQS-Standard-Request"
-        result = catalog.query("aws", "AmazonSQS", region, metric,
+        result = catalog.query(provider, "AmazonSQS", region, metric,
                                total_requests)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 
     if retention_gb > 0:
-        result = catalog.query("aws", "AmazonSQS", region, "SQS-Retention",
+        result = catalog.query(provider, "AmazonSQS", region, "SQS-Retention",
                                retention_gb)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
