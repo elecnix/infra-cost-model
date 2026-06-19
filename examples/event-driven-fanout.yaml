@@ -1,0 +1,196 @@
+# Example: Event-Driven Fan-Out (CDK)
+# Demonstrates: SNS fan-out to multiple SQS queues with different call rates,
+# multi-path DAG accumulation via Kahn's algorithm, long-running compute,
+# data volume metrics.
+#
+# Issue: https://github.com/elecnix/infra-cost-model/issues/5
+
+version: "1.0"
+
+workflow:
+  name: event-driven-orders
+  entry: aws_apigatewayv2_api.orders_api
+  frequency:
+    unit: perMinute
+    value: 500
+
+nodes:
+  aws_apigatewayv2_api.orders_api:
+    nodeType: routing
+    resourceAddress: aws_apigatewayv2_api.orders_api
+    provider: aws
+    service: ApiGatewayV2
+    usageMetrics:
+      requests: { unit: requests, value: 1 }
+      dataOutGb: { unit: GB, value: 0.00001 }    # 10KB per request
+    pricingRates:
+      requests: 1.00e-6
+      dataOutGb: 0.09
+
+  aws_lambda_function.producer:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.producer
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.025 }    # 100ms × 256MB = 0.025 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_sns_topic.order_events:
+    nodeType: routing
+    resourceAddress: aws_sns_topic.order_events
+    provider: aws
+    service: AmazonSNS
+    usageMetrics:
+      notifications: { unit: notifications, value: 1 }
+    pricingRates:
+      notifications: 0.50e-6
+
+  aws_sqs_queue.orders_queue:
+    nodeType: routing
+    resourceAddress: aws_sqs_queue.orders_queue
+    provider: aws
+    service: AmazonSQS
+    usageMetrics:
+      messages: { unit: messages, value: 1 }
+    pricingRates:
+      messages: 0.40e-6
+
+  aws_sqs_queue.notifications_queue:
+    nodeType: routing
+    resourceAddress: aws_sqs_queue.notifications_queue
+    provider: aws
+    service: AmazonSQS
+    usageMetrics:
+      messages: { unit: messages, value: 1 }
+    pricingRates:
+      messages: 0.40e-6
+
+  aws_sqs_queue.analytics_queue:
+    nodeType: routing
+    resourceAddress: aws_sqs_queue.analytics_queue
+    provider: aws
+    service: AmazonSQS
+    usageMetrics:
+      messages: { unit: messages, value: 1 }
+    pricingRates:
+      messages: 0.40e-6
+
+  aws_lambda_function.order_processor:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.order_processor
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.15 }     # 300ms × 512MB = 0.15 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_lambda_function.notifier:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.notifier
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.0125 }   # 50ms × 256MB = 0.0125 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_lambda_function.analyzer:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.analyzer
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 5.0 }      # 5000ms × 1024MB = 5.0 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_dynamodb_table.orders:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.orders
+    provider: aws
+    service: AmazonDynamoDB
+    usageMetrics:
+      writeRequests: { unit: requests, value: 2 }   # 2 writes per order processor
+    pricingRates:
+      writeRequests: 1.25e-6
+
+  aws_sns_topic.alerts:
+    nodeType: routing
+    resourceAddress: aws_sns_topic.alerts
+    provider: aws
+    service: AmazonSNS
+    usageMetrics:
+      notifications: { unit: notifications, value: 1 }
+    pricingRates:
+      notifications: 0.50e-6
+
+  aws_s3_bucket.data_lake:
+    nodeType: storage
+    resourceAddress: aws_s3_bucket.data_lake
+    provider: aws
+    service: AmazonS3
+    usageMetrics:
+      putRequests: { unit: requests, value: 1 }
+    pricingRates:
+      putRequests: 0.005e-3
+
+edges:
+  # Entry: API Gateway → Producer Lambda
+  - from: aws_apigatewayv2_api.orders_api
+    to: aws_lambda_function.producer
+    rate: 1
+
+  # Producer → SNS (fan-out source)
+  - from: aws_lambda_function.producer
+    to: aws_sns_topic.order_events
+    rate: 1
+
+  # SNS fan-out to 3 SQS queues with different call rates
+  - from: aws_sns_topic.order_events
+    to: aws_sqs_queue.orders_queue
+    rate: 0.8              # 80% are order events
+  - from: aws_sns_topic.order_events
+    to: aws_sqs_queue.notifications_queue
+    rate: 1.0              # 100% get notifications
+  - from: aws_sns_topic.order_events
+    to: aws_sqs_queue.analytics_queue
+    rate: 0.5              # 50% sampled for analytics
+
+  # Orders path: SQS → order_processor → DynamoDB
+  - from: aws_sqs_queue.orders_queue
+    to: aws_lambda_function.order_processor
+    rate: 1
+  - from: aws_lambda_function.order_processor
+    to: aws_dynamodb_table.orders
+    rate: 2
+    type: write
+
+  # Notifications path: SQS → notifier → SNS alerts
+  - from: aws_sqs_queue.notifications_queue
+    to: aws_lambda_function.notifier
+    rate: 1
+  - from: aws_lambda_function.notifier
+    to: aws_sns_topic.alerts
+    rate: 1
+
+  # Analytics path: SQS → analyzer → S3
+  - from: aws_sqs_queue.analytics_queue
+    to: aws_lambda_function.analyzer
+    rate: 1
+  - from: aws_lambda_function.analyzer
+    to: aws_s3_bucket.data_lake
+    rate: 1
+    dataSize:
+      unit: kB
+      average: 500              # 500KB per analytics event
