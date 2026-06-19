@@ -1,0 +1,159 @@
+# Example: Data Processing Pipeline (Terraform)
+# Demonstrates: multi-workflow model, mixed time units (perDay),
+# provisioned RDS (flatOverride), batch processing, data volume metrics.
+#
+# Issue: https://github.com/elecnix/infra-cost-model/issues/6
+
+version: "1.0"
+
+workflows:
+  - name: data-pipeline
+    entry: aws_s3_bucket.uploads
+    frequency:
+      unit: perDay
+      value: 1000
+
+  - name: daily-analytics
+    entry: aws_eventbridge_rule.daily_schedule
+    frequency:
+      unit: perDay
+      value: 1
+
+nodes:
+  aws_s3_bucket.uploads:
+    nodeType: storage
+    resourceAddress: aws_s3_bucket.uploads
+    provider: aws
+    service: AmazonS3
+    usageMetrics:
+      putRequests: { unit: requests, value: 1 }
+      storageGb: { unit: GB-Mo, value: 1500 }
+    pricingRates:
+      putRequests: 0.005e-3       # $0.005 per 1K PUT requests
+      storageGb: 0.023            # $0.023 per GB-month
+
+  aws_eventbridge_rule.upload_trigger:
+    nodeType: routing
+    resourceAddress: aws_eventbridge_rule.upload_trigger
+    provider: aws
+    service: EventBridge
+    usageMetrics:
+      events: { unit: events, value: 1 }
+    pricingRates:
+      events: 1.0e-6              # $1.00 per million events
+
+  aws_lambda_function.extractor:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.extractor
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.42667 }   # 5000ms × 512MB = 2.56 GB-sec / 6 (per-sec internal)
+    pricingRates:
+      invocations: 0.20e-6        # $0.20 per million requests
+      gb_seconds: 0.0000166667    # $0.0000166667 per GB-second
+
+  aws_lambda_function.transformer:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.transformer
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.34133 }   # 2000ms × 1024MB = 2.048 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_dynamodb_table.data:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.data
+    provider: aws
+    service: AmazonDynamoDB
+    usageMetrics:
+      writeRequests: { unit: requests, value: 1 }
+      storageGb: { unit: GB-Mo, value: 3 }    # 3GB data stored
+    pricingRates:
+      writeRequests: 1.25e-6       # $1.25 per million write requests
+      storageGb: 0.25              # $0.25 per GB-month
+
+  aws_eventbridge_rule.daily_schedule:
+    nodeType: routing
+    resourceAddress: aws_eventbridge_rule.daily_schedule
+    provider: aws
+    service: EventBridge
+    usageMetrics:
+      events: { unit: events, value: 1 }
+    pricingRates:
+      events: 1.0e-6
+
+  aws_lambda_function.aggregator:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.aggregator
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 10.24 }  # 300s × 2048MB = 614.4 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_db_instance.analytics:
+    nodeType: storage
+    resourceAddress: aws_db_instance.analytics
+    provider: aws
+    service: AmazonRDS
+    flatOverride: true              # RDS is provisioned — flat monthly cost
+    usageMetrics:
+      instanceHours: { unit: hours, value: 730 }    # 730 hours/month
+    pricingRates:
+      instanceHours: 0.021         # ~$0.021/hour for db.t3.micro
+
+  aws_s3_bucket.reports:
+    nodeType: storage
+    resourceAddress: aws_s3_bucket.reports
+    provider: aws
+    service: AmazonS3
+    usageMetrics:
+      putRequests: { unit: requests, value: 1 }
+      storageGb: { unit: GB-Mo, value: 0.3 }    # 300MB reports
+    pricingRates:
+      putRequests: 0.005e-3
+      storageGb: 0.023
+
+edges:
+  # -- data-pipeline edges --
+  - from: aws_s3_bucket.uploads
+    to: aws_eventbridge_rule.upload_trigger
+    rate: 1
+  - from: aws_eventbridge_rule.upload_trigger
+    to: aws_lambda_function.extractor
+    rate: 1
+  - from: aws_lambda_function.extractor
+    to: aws_lambda_function.transformer
+    rate: 1
+    dataSize:
+      unit: kB
+      average: 100                    # 100KB CSV data per extraction
+
+  - from: aws_lambda_function.transformer
+    to: aws_dynamodb_table.data
+    rate: 1
+    type: write
+
+  # -- daily-analytics edges --
+  - from: aws_eventbridge_rule.daily_schedule
+    to: aws_lambda_function.aggregator
+    rate: 1
+  - from: aws_lambda_function.aggregator
+    to: aws_db_instance.analytics
+    rate: 1
+    type: read
+  - from: aws_lambda_function.aggregator
+    to: aws_s3_bucket.reports
+    rate: 1
+    dataSize:
+      unit: MB
+      average: 10                     # 10MB report per day
