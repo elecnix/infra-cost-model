@@ -1,0 +1,105 @@
+# Example: Large Language Model-Augmented API (Terraform)
+# Demonstrates: token-based cost propagation, asymmetric prompt/completion pricing,
+# Bedrock LLM as economic sink, token flow through edges.
+#
+# Issue: https://github.com/elecnix/infra-cost-model/issues/9
+
+version: "1.0"
+
+workflow:
+  name: llm-augmented-api
+  entry: aws_apigatewayv2_api.llm_api
+  frequency:
+    unit: perMinute
+    value: 100
+
+nodes:
+  aws_apigatewayv2_api.llm_api:
+    nodeType: routing
+    resourceAddress: aws_apigatewayv2_api.llm_api
+    provider: aws
+    service: ApiGatewayV2
+    usageMetrics:
+      requests: { unit: requests, value: 1 }
+      dataOutGb: { unit: GB, value: 0.000005 }    # 5KB per request
+    pricingRates:
+      requests: 1.00e-6            # $1.00 per million HTTP requests
+      dataOutGb: 0.09              # $0.09 per GB egress
+
+  aws_lambda_function.orchestrator:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.orchestrator
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.125 }   # 500ms × 256MB = 0.125 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_bedrock_model.claude_sonnet:
+    nodeType: compute
+    resourceAddress: aws_bedrock_model.claude_sonnet
+    provider: bedrock
+    service: claude-3-5-sonnet
+    region: us-east-1
+    pricingModel: token_based
+    usageMetrics:
+      inputTokens: { unit: tokens, value: 500 }
+      outputTokens: { unit: tokens, value: 1000 }
+    pricingRates:
+      inputTokens: 0.003e-3        # $0.003 per 1K input tokens
+      outputTokens: 0.015e-3       # $0.015 per 1K output tokens
+
+  aws_s3_bucket.prompt_logs:
+    nodeType: storage
+    resourceAddress: aws_s3_bucket.prompt_logs
+    provider: aws
+    service: AmazonS3
+    usageMetrics:
+      putRequests: { unit: requests, value: 1 }
+    pricingRates:
+      putRequests: 0.005e-3
+
+  aws_lambda_function.processor:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.processor
+    provider: aws
+    service: AWSLambda
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.1 }   # 200ms × 512MB = 0.1 GB-sec
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  aws_dynamodb_table.results:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.results
+    provider: aws
+    service: AmazonDynamoDB
+    usageMetrics:
+      writeRequests: { unit: requests, value: 1 }
+    pricingRates:
+      writeRequests: 1.25e-6
+
+edges:
+  - from: aws_apigatewayv2_api.llm_api
+    to: aws_lambda_function.orchestrator
+    rate: 1
+  - from: aws_lambda_function.orchestrator
+    to: aws_bedrock_model.claude_sonnet
+    rate: 1
+    tokenFlow:
+      input: 500                   # 500 prompt tokens per request
+  - from: aws_lambda_function.orchestrator
+    to: aws_s3_bucket.prompt_logs
+    rate: 1
+  - from: aws_bedrock_model.claude_sonnet
+    to: aws_lambda_function.processor
+    rate: 1
+  - from: aws_lambda_function.processor
+    to: aws_dynamodb_table.results
+    rate: 1
+    type: write

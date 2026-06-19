@@ -167,6 +167,14 @@
             "minimum": { "type": "number" },
             "maximum": { "type": "number" }
           }
+        },
+        "tokenFlow": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "number", "description": "Input/prompt tokens flowing through this edge per parent invocation" },
+            "output": { "type": "number", "description": "Output/completion tokens flowing through this edge per parent invocation" }
+          },
+          "description": "Token flow for LLM-based edges. Input tokens flow downstream to LLM nodes; output tokens flow upstream to orchestration nodes."
         }
       }
     },
