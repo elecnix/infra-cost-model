@@ -83,7 +83,7 @@ class RDSInstance(StorageResource):
 
 
 def _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20,
-              backup_storage_gb=0, multi_az=False, catalog=None, region="us-east-1") -> float:
+              backup_storage_gb=0, multi_az=False, *, region, catalog=None) -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0

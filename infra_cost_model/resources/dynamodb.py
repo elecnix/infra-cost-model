@@ -87,9 +87,10 @@ class DynamoDBTable(StorageResource):
 
 def _dynamodb_cost(read_requests: float, write_requests: float, storage_gb: float,
                    billing_mode: str = "PAY_PER_REQUEST",
-                   catalog=None, gsi_read_requests: float = 0,
+                   *,
+                   region: str, gsi_read_requests: float = 0,
                    gsi_write_requests: float = 0,
-                   region: str = "us-east-1") -> float:
+                   catalog=None) -> float:
     """Calculate DynamoDB cost.
     
     Args:
@@ -113,17 +114,17 @@ def _dynamodb_cost(read_requests: float, write_requests: float, storage_gb: floa
     
     if billing_mode == "PROVISIONED":
         return _provisioned_cost(
-            read_requests, write_requests, storage_gb, catalog,
-            region
+            read_requests, write_requests, storage_gb, region,
+            catalog
         )
     return _on_demand_cost(
-        read_requests, write_requests, storage_gb, catalog,
-        region
+        read_requests, write_requests, storage_gb, region,
+        catalog
     )
 
 
 def _on_demand_cost(read_requests: float, write_requests: float, storage_gb: float,
-                    catalog=None, region: str = "us-east-1") -> float:
+                    region: str, catalog=None) -> float:
     """On-demand pricing using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
@@ -140,7 +141,7 @@ def _on_demand_cost(read_requests: float, write_requests: float, storage_gb: flo
 
 
 def _provisioned_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
-                      catalog=None, region: str = "us-east-1") -> float:
+                      region: str, catalog=None) -> float:
     """Provisioned pricing using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
@@ -157,12 +158,12 @@ def _provisioned_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
 
 
 def _provisioned_dynamodb_cost(rcu_hours: float, wcu_hours: float, storage_gb: float,
-                               catalog=None,
+                               region: str,
                                gsi_rcu_hours: float = 0, gsi_wcu_hours: float = 0,
-                               region: str = "us-east-1") -> float:
+                               catalog=None) -> float:
     """Calculate DynamoDB provisioned costs from RCU/WCU hours."""
     total_rcu = rcu_hours + gsi_rcu_hours
     total_wcu = wcu_hours + gsi_wcu_hours
     return _provisioned_cost(
-        total_rcu, total_wcu, storage_gb, catalog, region
+        total_rcu, total_wcu, storage_gb, region, catalog
     )

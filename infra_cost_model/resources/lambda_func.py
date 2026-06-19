@@ -121,7 +121,7 @@ def apply_free_tier(invocations: float, gb_seconds: float,
     return billed_invocations, billed_gb_seconds
 
 
-def get_lambda_free_tier_limits(catalog=None) -> Optional[Dict[str, float]]:
+def get_lambda_free_tier_limits(catalog=None, region: str = "us-east-1") -> Optional[Dict[str, float]]:
     """Retrieve Lambda free tier limits from the pricing catalog.
     
     Per DP#4, free tier limits are first-class data, not hardcoded constants.
@@ -130,6 +130,7 @@ def get_lambda_free_tier_limits(catalog=None) -> Optional[Dict[str, float]]:
     
     Args:
         catalog: Optional PricingCatalog. If None, returns None.
+        region: AWS region for pricing lookup (default us-east-1).
     
     Returns:
         Dict with 'requests' and 'gb_seconds' keys, or None if unavailable.
@@ -143,7 +144,7 @@ def get_lambda_free_tier_limits(catalog=None) -> Optional[Dict[str, float]]:
     # tier with price $0 and a non-None end_usage_amount gives the request
     # free tier limit.
     try:
-        request_result = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request")
+        request_result = catalog.query("aws", "AWSLambda", region, "Lambda-Request")
         if request_result is not None:
             tiers = request_result.tiers if hasattr(request_result, 'tiers') else [request_result]
             for tier in sorted(tiers, key=lambda t: t.start_usage_amount or 0):
@@ -155,7 +156,7 @@ def get_lambda_free_tier_limits(catalog=None) -> Optional[Dict[str, float]]:
     
     # Query for Lambda-GB-Second free tier limit
     try:
-        gbs_result = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-GB-Second")
+        gbs_result = catalog.query("aws", "AWSLambda", region, "Lambda-GB-Second")
         if gbs_result is not None:
             tiers = gbs_result.tiers if hasattr(gbs_result, 'tiers') else [gbs_result]
             for tier in sorted(tiers, key=lambda t: t.start_usage_amount or 0):
@@ -171,7 +172,7 @@ def get_lambda_free_tier_limits(catalog=None) -> Optional[Dict[str, float]]:
 def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
                                   memory_mb: float = 128,
                                   invocations: float = 0,
-                                  catalog=None) -> float:
+                                  catalog=None, region: str = "us-east-1") -> float:
     """Calculate fixed provisioned-concurrency cost plus request charges.
     
     Args:
@@ -180,6 +181,7 @@ def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
         memory_mb: Memory in MB (affects GB calculation)
         invocations: Number of invocations for request pricing
         catalog: Optional PricingCatalog (uses default if None)
+        region: AWS region for pricing lookup
         
     Returns:
         Total hourly provisioned concurrency cost plus request charges.
@@ -190,7 +192,7 @@ def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
     if catalog is None:
         catalog = PricingCatalog()
     
-    request_price = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request", invocations)
+    request_price = catalog.query("aws", "AWSLambda", region, "Lambda-Request", invocations)
     
     if not request_price:
         raise PricingUnavailableError(
@@ -202,7 +204,7 @@ def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
 
 
 def _lambda_cost(invocations: float, memory_mb: float, avg_duration_ms: float,
-                 catalog=None, region: str = "us-east-1") -> float:
+                 region: str, catalog=None) -> float:
     """Calculate Lambda cost with pricing catalog lookup.
     
     Per DP#4, free tier limits are data-driven: the seed pricing catalog

@@ -133,7 +133,7 @@ def test_lambda_cost_calculation():
     _lambda_cost passes full quantities; the catalog applies the free tier
     automatically via tiered pricing.
     """
-    cost = _lambda_cost(10_000_000, 256, 200)
+    cost = _lambda_cost(10_000_000, 256, 200, region="us-east-1")
     
     # Full quantities: 10M invocations, 500K GB-s (from 256MB, 200ms, 10M calls)
     # Catalog tiered pricing:
@@ -152,7 +152,7 @@ def test_get_lambda_free_tier_limits():
     from infra_cost_model.pricing.catalog import PricingCatalog
     
     catalog = PricingCatalog()
-    limits = get_lambda_free_tier_limits(catalog)
+    limits = get_lambda_free_tier_limits(catalog, region="us-east-1")
     
     assert limits is not None, "Free tier limits should be available from seed data"
     assert limits["requests"] == 1_000_000
@@ -182,8 +182,7 @@ def test_provisioned_concurrency_cost():
         hours=24,
         memory_mb=256,
         invocations=5_000,
-        catalog=catalog,
-    )
+        catalog=catalog, region="us-east-1")
 
     fixed = 10 * (256 / 1024) * 24 * 3600 * 0.000003606
     requests = 5_000 * 0.20e-6

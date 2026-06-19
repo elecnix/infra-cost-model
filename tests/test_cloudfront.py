@@ -36,41 +36,41 @@ class TestCloudFrontExtraction:
 class TestCloudFrontPricing:
     def setup_method(self): self.catalog = PricingCatalog()
     def test_http_request_pricing(self):
-        cost = _cloudfront_cost(requests=1_000_000, https_ratio=0.0, catalog=self.catalog)
+        cost = _cloudfront_cost(requests=1_000_000, https_ratio=0.0, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(0.75, rel=0.01)
     def test_https_request_pricing(self):
-        cost = _cloudfront_cost(requests=1_000_000, https_ratio=1.0, catalog=self.catalog)
+        cost = _cloudfront_cost(requests=1_000_000, https_ratio=1.0, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(1.00, rel=0.01)
     def test_https_more_expensive_than_http(self):
-        http = _cloudfront_cost(requests=1_000_000, https_ratio=0.0, catalog=self.catalog)
-        https = _cloudfront_cost(requests=1_000_000, https_ratio=1.0, catalog=self.catalog)
+        http = _cloudfront_cost(requests=1_000_000, https_ratio=0.0, catalog=self.catalog, region="us-east-1")
+        https = _cloudfront_cost(requests=1_000_000, https_ratio=1.0, catalog=self.catalog, region="us-east-1")
         assert https > http
     def test_mixed_http_https(self):
-        cost = _cloudfront_cost(requests=1_000_000, https_ratio=0.8, catalog=self.catalog)
+        cost = _cloudfront_cost(requests=1_000_000, https_ratio=0.8, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(0.95, rel=0.01)
     def test_data_transfer_first_tier(self):
-        cost = _cloudfront_cost(data_out_gb=5000, catalog=self.catalog)
+        cost = _cloudfront_cost(data_out_gb=5000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(425.00, rel=0.01)
     def test_data_transfer_crossing_tiers(self):
-        cost = _cloudfront_cost(data_out_gb=15000, catalog=self.catalog)
+        cost = _cloudfront_cost(data_out_gb=15000, catalog=self.catalog, region="us-east-1")
         expected = 10240 * 0.085 + 4760 * 0.080
         assert cost == pytest.approx(expected, rel=0.01)
     def test_origin_requests_s3(self):
-        cost = _cloudfront_cost(origin_requests=500_000, origin_is_s3=True, catalog=self.catalog)
+        cost = _cloudfront_cost(origin_requests=500_000, origin_is_s3=True, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(0.375, rel=0.01)
     def test_origin_requests_custom(self):
-        cost = _cloudfront_cost(origin_requests=500_000, origin_is_s3=False, catalog=self.catalog)
+        cost = _cloudfront_cost(origin_requests=500_000, origin_is_s3=False, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(0.60, rel=0.01)
     def test_origin_custom_more_expensive_than_s3(self):
-        s3_cost = _cloudfront_cost(origin_requests=1_000_000, origin_is_s3=True, catalog=self.catalog)
-        custom_cost = _cloudfront_cost(origin_requests=1_000_000, origin_is_s3=False, catalog=self.catalog)
+        s3_cost = _cloudfront_cost(origin_requests=1_000_000, origin_is_s3=True, catalog=self.catalog, region="us-east-1")
+        custom_cost = _cloudfront_cost(origin_requests=1_000_000, origin_is_s3=False, catalog=self.catalog, region="us-east-1")
         assert custom_cost > s3_cost
     def test_combined_all_dimensions(self):
-        cost = _cloudfront_cost(requests=10_000_000, https_ratio=0.5, data_out_gb=500, origin_requests=1_000_000, origin_is_s3=True, catalog=self.catalog)
+        cost = _cloudfront_cost(requests=10_000_000, https_ratio=0.5, data_out_gb=500, origin_requests=1_000_000, origin_is_s3=True, catalog=self.catalog, region="us-east-1")
         expected = 3.75 + 5.00 + 42.50 + 0.75
         assert cost == pytest.approx(expected, rel=0.01)
     def test_zero_usage(self):
-        assert _cloudfront_cost(catalog=self.catalog) == 0.0
+        assert _cloudfront_cost(catalog=self.catalog, region="us-east-1") == 0.0
 
 class TestCloudFrontRoutingNode:
     def test_is_routing_node(self):

@@ -79,8 +79,9 @@ class APIGatewayHTTP(RoutingResource):
 
 
 def _apigw_total_cost(requests: float, data_out_gb: float = 0.0,
-                      catalog=None,
-                      region: str = "us-east-1") -> float:
+                      *,
+                      region: str,
+                      catalog=None) -> float:
     """Calculate total API Gateway HTTP API cost including egress.
     
     Args:
@@ -95,12 +96,12 @@ def _apigw_total_cost(requests: float, data_out_gb: float = 0.0,
     if catalog is None:
         catalog = PricingCatalog()
     
-    request_cost = _request_cost(requests, catalog, region)
-    egress_cost = _egress_cost(data_out_gb, catalog, region)
+    request_cost = _request_cost(requests, region, catalog)
+    egress_cost = _egress_cost(data_out_gb, region, catalog)
     return request_cost + egress_cost
 
 
-def _request_cost(requests: float, catalog=None, region: str = "us-east-1") -> float:
+def _request_cost(requests: float, region: str, catalog=None) -> float:
     """Calculate API Gateway request cost using catalog."""
     if catalog is None:
         catalog = PricingCatalog()
@@ -109,7 +110,7 @@ def _request_cost(requests: float, catalog=None, region: str = "us-east-1") -> f
     return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
 
 
-def _egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") -> float:
+def _egress_cost(data_out_gb: float, region: str, catalog=None) -> float:
     """Calculate API Gateway egress cost with tiered pricing.
     
     Tiered egress (first 10TB at $0.09/GB):
@@ -129,8 +130,8 @@ def _egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") ->
     return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
 
 
-def _apigw_egress_cost(data_out_gb: float, catalog=None, region: str = "us-east-1") -> float:
+def _apigw_egress_cost(data_out_gb: float, region: str, catalog=None) -> float:
     """Alias for egress cost calculation."""
     if catalog is None:
         catalog = PricingCatalog()
-    return _egress_cost(data_out_gb, catalog, region)
+    return _egress_cost(data_out_gb, region, catalog)

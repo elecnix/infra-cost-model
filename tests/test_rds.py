@@ -41,30 +41,30 @@ class TestRDSExtraction:
 class TestRDSPricing:
     def setup_method(self): self.catalog = PricingCatalog()
     def test_fixed_cost_t3_micro(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=0, catalog=self.catalog)
+        cost = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=0, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(24.82, rel=0.01)
     def test_fixed_cost_t3_small(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.t3.small", storage_gb=0, catalog=self.catalog)
+        cost = _rds_cost(instance_hours=730, instance_class="db.t3.small", storage_gb=0, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(49.64, rel=0.01)
     def test_fixed_cost_m5_large(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.m5.large", storage_gb=0, catalog=self.catalog)
+        cost = _rds_cost(instance_hours=730, instance_class="db.m5.large", storage_gb=0, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(249.66, rel=0.01)
     def test_storage_cost_gp3(self):
-        cost = _rds_cost(instance_hours=0, storage_gb=100, catalog=self.catalog)
+        cost = _rds_cost(instance_hours=0, storage_gb=100, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(11.50, rel=0.01)
     def test_combined_instance_and_storage(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, catalog=self.catalog)
+        cost = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(27.12, rel=0.01)
     def test_multi_az_doubles_instance_cost(self):
-        single = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, multi_az=False, catalog=self.catalog)
-        multi = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, multi_az=True, catalog=self.catalog)
+        single = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, multi_az=False, catalog=self.catalog, region="us-east-1")
+        multi = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, multi_az=True, catalog=self.catalog, region="us-east-1")
         expected = 24.82 * 2 + 2.30
         assert multi == pytest.approx(expected, rel=0.01) and multi > single
     def test_backup_storage_beyond_free_tier(self):
-        cost = _rds_cost(instance_hours=0, storage_gb=0, backup_storage_gb=50, catalog=self.catalog)
+        cost = _rds_cost(instance_hours=0, storage_gb=0, backup_storage_gb=50, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(4.75, rel=0.01)
     def test_zero_usage(self):
-        assert _rds_cost(instance_hours=0, storage_gb=0, catalog=self.catalog) == 0.0
+        assert _rds_cost(instance_hours=0, storage_gb=0, catalog=self.catalog, region="us-east-1") == 0.0
 
 class TestRDSLeafNode:
     def test_rds_is_storage_leaf_node(self):

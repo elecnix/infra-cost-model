@@ -171,10 +171,10 @@ class TestS3Pricing:
     def test_put_vs_get_different_rates(self):
         """PUT requests are more expensive than GET requests per unit."""
         # 1M PUT requests at $0.005/1K
-        put_cost = _s3_cost(put_requests=1_000_000, catalog=self.catalog)
+        put_cost = _s3_cost(put_requests=1_000_000, catalog=self.catalog, region="us-east-1")
 
         # 1M GET requests at $0.0004/1K
-        get_cost = _s3_cost(get_requests=1_000_000, catalog=self.catalog)
+        get_cost = _s3_cost(get_requests=1_000_000, catalog=self.catalog, region="us-east-1")
 
         # PUT should be ~12.5x more expensive than GET
         assert put_cost > get_cost
@@ -184,13 +184,13 @@ class TestS3Pricing:
     # Test 3: Tiered storage costing
     def test_storage_within_first_tier(self):
         """100GB storage within first tier (50TB)."""
-        cost = _s3_cost(storage_gb=100, catalog=self.catalog)
+        cost = _s3_cost(storage_gb=100, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(2.30, rel=0.01)  # 100 * $0.023
 
     def test_storage_crossing_tiers(self):
         """Storage crossing from first to second tier."""
         # 60,000 GB: first 51,200 GB at $0.023, remaining 8,800 GB at $0.022
-        cost = _s3_cost(storage_gb=60_000, catalog=self.catalog)
+        cost = _s3_cost(storage_gb=60_000, catalog=self.catalog, region="us-east-1")
 
         # Check cost is computed (tiered pricing should be handled by catalog)
         assert cost > 0
@@ -201,13 +201,13 @@ class TestS3Pricing:
     # Test 4: Tiered data transfer costing
     def test_data_transfer_within_first_tier(self):
         """100GB data transfer within first 10TB tier."""
-        cost = _s3_cost(data_out_gb=100, catalog=self.catalog)
+        cost = _s3_cost(data_out_gb=100, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(9.00, rel=0.01)  # 100 * $0.09
 
     def test_data_transfer_crossing_tiers(self):
         """Data transfer crossing from first to second tier."""
         # 15,000 GB: first 10,240 GB at $0.09, remaining 4,760 GB at $0.085
-        cost = _s3_cost(data_out_gb=15_000, catalog=self.catalog)
+        cost = _s3_cost(data_out_gb=15_000, catalog=self.catalog, region="us-east-1")
 
         assert cost > 0
         expected = 10240 * 0.09 + 4760 * 0.085
@@ -220,14 +220,13 @@ class TestS3Pricing:
             get_requests=5_000_000,  # 5M GET    = $2.00
             storage_gb=1000,         # 1TB       = $23.00
             data_out_gb=500,         # 500GB out = $45.00
-            catalog=self.catalog,
-        )
+            catalog=self.catalog, region="us-east-1")
 
         expected = 2.50 + 2.00 + 23.00 + 45.00  # $72.50
         assert cost == pytest.approx(expected, rel=0.01)
 
     def test_zero_usage_zero_cost(self):
-        cost = _s3_cost(catalog=self.catalog)
+        cost = _s3_cost(catalog=self.catalog, region="us-east-1")
         assert cost == 0.0
 
 
