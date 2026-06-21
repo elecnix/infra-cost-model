@@ -758,3 +758,122 @@ class TestCLISensitivity:
             assert result == 1
         finally:
             os.unlink(temp_path)
+
+
+YAML_COMPUTE_MONTHLY = """
+version: "1.0"
+workflow:
+  name: "monthly-test"
+  entry: "lambda_fn"
+  frequency:
+    unit: perDay
+    value: 400
+nodes:
+  lambda_fn:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.test
+    provider: aws
+    service: lambda
+    region: us-east-1
+    pricingRates:
+      compute: 0.0000166667
+    usageMetrics:
+      compute:
+        value: 1
+        unit: seconds
+edges: []
+"""
+
+
+class TestCLIComputeMonthly:
+    """Tests for compute --monthly flag."""
+
+    def test_compute_monthly_flag_works(self):
+        """compute --monthly returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            result = main(["compute", temp_path, "--monthly"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_without_monthly_still_works(self):
+        """compute without --monthly still returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            result = main(["compute", temp_path])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_monthly_shows_higher_costs(self):
+        """compute --monthly shows higher costs than per-second."""
+        import tempfile, os, io, sys, re
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            # Run per-second
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            main(["compute", temp_path])
+            per_second_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            # Run monthly
+            sys.stdout = io.StringIO()
+            main(["compute", temp_path, "--monthly"])
+            monthly_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            # Extract total from each
+            ps_total_match = re.search(r"Total: \$([\d.]+)", per_second_output)
+            mo_total_match = re.search(r"Total: \$([\d.]+)", monthly_output)
+            assert ps_total_match is not None, f"No total in: {per_second_output}"
+            assert mo_total_match is not None, f"No total in: {monthly_output}"
+            ps_total = float(ps_total_match.group(1))
+            mo_total = float(mo_total_match.group(1))
+            assert mo_total > ps_total, (
+                f"Monthly total ({mo_total}) should be > per-second total ({ps_total})"
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_monthly_matches_analyze_total(self):
+        """compute --monthly total is close to analyze total."""
+        import tempfile, os, io, sys, re
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            old_stdout = sys.stdout
+
+            # compute --monthly
+            sys.stdout = io.StringIO()
+            main(["compute", temp_path, "--monthly"])
+            compute_output = sys.stdout.getvalue()
+
+            # analyze
+            sys.stdout = io.StringIO()
+            main(["analyze", temp_path])
+            analyze_output = sys.stdout.getvalue()
+
+            sys.stdout = old_stdout
+
+            comp_total_match = re.search(r"Total: \$([\d.]+)", compute_output)
+            anal_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", analyze_output)
+            assert comp_total_match is not None, f"No total in: {compute_output}"
+            assert anal_total_match is not None, f"No total in: {analyze_output}"
+            comp_total = float(comp_total_match.group(1))
+            anal_total = float(anal_total_match.group(1))
+            assert comp_total == anal_total, (
+                f"Monthly compute ({comp_total}) should equal analyze ({anal_total})"
+            )
+        finally:
+            os.unlink(temp_path)

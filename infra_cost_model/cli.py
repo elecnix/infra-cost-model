@@ -51,6 +51,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_compute.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     p_compute.add_argument("--no-catalog", action="store_true",
                            help="Disable pricing catalog (use embedded pricing rates)")
+    p_compute.add_argument("--monthly", action="store_true",
+                           help="Compute on a monthly time basis instead of per-second")
     p_compute.set_defaults(func=cmd_compute)
 
     # analyze
@@ -203,7 +205,8 @@ def cmd_compute(args: argparse.Namespace) -> int:
         return 1
 
     catalog = PricingCatalog() if use_catalog else None
-    engine = CostEngine(model, catalog=catalog)
+    time_basis = "monthly" if args.monthly else "perSecond"
+    engine = CostEngine(model, catalog=catalog, time_basis=time_basis)
 
     try:
         costs = engine.compute()
