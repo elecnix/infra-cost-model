@@ -213,12 +213,13 @@ def cmd_compute(args: argparse.Namespace) -> int:
         total = sum(costs.values())
 
         pricing_source = "catalog" if use_catalog else "embedded pricing rates"
-        print(f"Costs for: {model['workflow']['name']} (pricing: {pricing_source})")
+        print(f"Costs for: {model['workflow']['name']} (pricing: {pricing_source}, {time_basis})")
         print("-" * 40)
         for node, cost in sorted(costs.items()):
             print(f"  {node}: ${cost:.6f}")
         print("-" * 40)
-        print(f"Total: ${total:.6f}")
+        label = "Total Monthly Cost" if time_basis == "monthly" else "Total"
+        print(f"{label}: ${total:.6f}")
         return 0
     except ValueError as e:
         _print_stderr(f"Error: {e}")

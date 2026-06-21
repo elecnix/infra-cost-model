@@ -834,9 +834,9 @@ class TestCLIComputeMonthly:
 
             # Extract total from each
             ps_total_match = re.search(r"Total: \$([\d.]+)", per_second_output)
-            mo_total_match = re.search(r"Total: \$([\d.]+)", monthly_output)
-            assert ps_total_match is not None, f"No total in: {per_second_output}"
-            assert mo_total_match is not None, f"No total in: {monthly_output}"
+            mo_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", monthly_output)
+            assert ps_total_match is not None, f"No total in per-second output: {per_second_output}"
+            assert mo_total_match is not None, f"No total in monthly output: {monthly_output}"
             ps_total = float(ps_total_match.group(1))
             mo_total = float(mo_total_match.group(1))
             assert mo_total > ps_total, (
@@ -854,19 +854,19 @@ class TestCLIComputeMonthly:
         try:
             old_stdout = sys.stdout
 
-            # compute --monthly
+            # compute --monthly --no-catalog (matching analyze's no-catalog default)
             sys.stdout = io.StringIO()
-            main(["compute", temp_path, "--monthly"])
+            main(["compute", temp_path, "--monthly", "--no-catalog"])
             compute_output = sys.stdout.getvalue()
 
-            # analyze
+            # analyze (also no catalog)
             sys.stdout = io.StringIO()
             main(["analyze", temp_path])
             analyze_output = sys.stdout.getvalue()
 
             sys.stdout = old_stdout
 
-            comp_total_match = re.search(r"Total: \$([\d.]+)", compute_output)
+            comp_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", compute_output)
             anal_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", analyze_output)
             assert comp_total_match is not None, f"No total in: {compute_output}"
             assert anal_total_match is not None, f"No total in: {analyze_output}"
