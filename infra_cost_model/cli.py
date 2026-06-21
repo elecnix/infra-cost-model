@@ -52,7 +52,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_compute.add_argument("--no-catalog", action="store_true",
                            help="Disable pricing catalog (use embedded pricing rates)")
     p_compute.add_argument("--monthly", action="store_true",
-                           help="Show costs in monthly terms (default: per-second)")
+                           help="Compute on a monthly time basis instead of per-second")
     p_compute.set_defaults(func=cmd_compute)
 
     # analyze
@@ -217,13 +217,13 @@ def cmd_compute(args: argparse.Namespace) -> int:
         total = sum(costs.values())
 
         pricing_source = "catalog" if use_catalog else "embedded pricing rates"
-        label = " (monthly)" if args.monthly else ""
-        print(f"Costs for: {model['workflow']['name']}{label} (pricing: {pricing_source})")
+        print(f"Costs for: {model['workflow']['name']} (pricing: {pricing_source}, {time_basis})")
         print("-" * 40)
         for node, cost in sorted(costs.items()):
             print(f"  {node}: ${cost:.6f}")
         print("-" * 40)
-        print(f"Total: ${total:.6f}")
+        label = "Total Monthly Cost" if time_basis == "monthly" else "Total"
+        print(f"{label}: ${total:.6f}")
         return 0
     except ValueError as e:
         _print_stderr(f"Error: {e}")

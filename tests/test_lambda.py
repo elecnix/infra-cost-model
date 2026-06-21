@@ -133,7 +133,7 @@ def test_lambda_cost_calculation():
     _lambda_cost passes full quantities; the catalog applies the free tier
     automatically via tiered pricing.
     """
-    cost = _lambda_cost(10_000_000, 256, 200)
+    cost = _lambda_cost(10_000_000, 256, 200, region="us-east-1")
     
     # Full quantities: 10M invocations, 500K GB-s (from 256MB, 200ms, 10M calls)
     # Catalog tiered pricing:
@@ -183,6 +183,7 @@ def test_provisioned_concurrency_cost():
         memory_mb=256,
         invocations=5_000,
         catalog=catalog,
+        region="us-east-1",
     )
 
     rate_result = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-ProvisionedConcurrency-GB-Second")

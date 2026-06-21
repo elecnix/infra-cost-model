@@ -10,6 +10,7 @@ systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: true
 maxSubagentDepth: 2
+tools: read, bash, edit, write, subagent
 ---
 
 # Implementation Orchestrator

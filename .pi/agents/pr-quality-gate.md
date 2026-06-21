@@ -11,6 +11,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 maxSubagentDepth: 2
+tools: read, bash, subagent
 defaultReads: DESIGN_PRINCIPLES.md,UBIQUITOUS_LANGUAGE.md
 completionGuard: false
 ---

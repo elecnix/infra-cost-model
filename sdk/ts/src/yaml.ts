@@ -39,6 +39,8 @@ export function parseYamlDsl(yamlContent: string): CostModel {
         min: "perMinute",
         hr: "perHour",
         day: "perDay",
+        week: "perWeek",
+        month: "perMonth",
       };
       workflow.frequency = {
         value: parseFloat(parts[0]!),

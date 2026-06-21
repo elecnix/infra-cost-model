@@ -608,48 +608,6 @@ nodes:
 edges: []
 """
 
-# Fixture with usageMetrics for tests that need non-zero per-second costs
-YAML_MONTHLY_CLI = """
-version: "1.0"
-workflow:
-  name: "monthly-test"
-  entry: "api_gw"
-  frequency:
-    unit: perMinute
-    value: 1000
-nodes:
-  api_gw:
-    nodeType: routing
-    resourceAddress: aws_api_gateway_rest_api.test_api
-    provider: aws
-    service: APIGateway
-    region: us-east-1
-  get_user_fn:
-    nodeType: compute
-    resourceAddress: aws_lambda_function.get_user
-    provider: aws
-    service: AWSLambda
-    region: us-east-1
-    usageMetrics:
-      invocations:
-        unit: requests
-        value: 1
-      avgDurationMs:
-        unit: ms
-        value: 200
-      memoryMb:
-        unit: MB
-        value: 256
-    pricingRates:
-      invocations: 0.2e-6
-      memoryDuration: 0.0000166667
-edges:
-  - from: api_gw
-    to: get_user_fn
-    rate: 1.0
-    type: invoke
-"""
-
 
 class TestCLIWhatif:
     """Tests for the whatif CLI command."""
@@ -836,41 +794,165 @@ class TestCLISensitivity:
             os.unlink(temp_path)
 
 
+YAML_COMPUTE_MONTHLY = """
+version: "1.0"
+workflow:
+  name: "monthly-test"
+  entry: "lambda_fn"
+  frequency:
+    unit: perDay
+    value: 400
+nodes:
+  lambda_fn:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.test
+    provider: aws
+    service: lambda
+    region: us-east-1
+    pricingRates:
+      compute: 0.0000166667
+    usageMetrics:
+      compute:
+        value: 1
+        unit: seconds
+edges: []
+"""
+
+
 class TestCLIComputeMonthly:
     """Tests for compute --monthly flag."""
 
-    def test_compute_monthly_flag(self):
-        """compute with --monthly flag shows monthly-scaled costs."""
-        import tempfile, os, io, sys, re
+    def test_compute_monthly_flag_works(self):
+        """compute --monthly returns 0."""
+        import tempfile, os
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            f.write(YAML_MONTHLY_CLI)
+            f.write(YAML_COMPUTE_MONTHLY)
             temp_path = f.name
         try:
-            # per-second
+            result = main(["compute", temp_path, "--monthly"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_without_monthly_still_works(self):
+        """compute without --monthly still returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            result = main(["compute", temp_path])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_monthly_shows_higher_costs(self):
+        """compute --monthly shows higher costs than per-second."""
+        import tempfile, os, io, sys, re
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            # Run per-second
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             main(["compute", temp_path])
-            ps_output = sys.stdout.getvalue()
+            per_second_output = sys.stdout.getvalue()
             sys.stdout = old_stdout
-            ps_match = re.search(r"Total.*: \$([\d.]+)", ps_output)
-            assert ps_match is not None, f"No total in per-second output: {ps_output}"
-            ps_total = float(ps_match.group(1))
 
-            # monthly
+            # Run monthly
             sys.stdout = io.StringIO()
             main(["compute", temp_path, "--monthly"])
-            mo_output = sys.stdout.getvalue()
+            monthly_output = sys.stdout.getvalue()
             sys.stdout = old_stdout
-            mo_match = re.search(r"Total.*: \$([\d.]+)", mo_output)
-            assert mo_match is not None, f"No total in monthly output: {mo_output}"
-            mo_total = float(mo_match.group(1))
 
-            from infra_cost_model.engine.engine import SECONDS_PER_MONTH
-            assert mo_total > ps_total * 0.9 * SECONDS_PER_MONTH, (
-                f"Monthly total ({mo_total}) not scaled from per-second ({ps_total})"
+            # Extract total from each
+            ps_total_match = re.search(r"Total: \$([\d.]+)", per_second_output)
+            mo_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", monthly_output)
+            assert ps_total_match is not None, f"No total in per-second output: {per_second_output}"
+            assert mo_total_match is not None, f"No total in monthly output: {monthly_output}"
+            ps_total = float(ps_total_match.group(1))
+            mo_total = float(mo_total_match.group(1))
+            assert mo_total > ps_total, (
+                f"Monthly total ({mo_total}) should be > per-second total ({ps_total})"
             )
         finally:
             os.unlink(temp_path)
+
+    def test_compute_monthly_matches_analyze_total(self):
+        """compute --monthly total is close to analyze total."""
+        import tempfile, os, io, sys, re
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            old_stdout = sys.stdout
+
+            # compute --monthly --no-catalog (matching analyze's no-catalog default)
+            sys.stdout = io.StringIO()
+            main(["compute", temp_path, "--monthly", "--no-catalog"])
+            compute_output = sys.stdout.getvalue()
+
+            # analyze (also no catalog)
+            sys.stdout = io.StringIO()
+            main(["analyze", temp_path])
+            analyze_output = sys.stdout.getvalue()
+
+            sys.stdout = old_stdout
+
+            comp_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", compute_output)
+            anal_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", analyze_output)
+            assert comp_total_match is not None, f"No total in: {compute_output}"
+            assert anal_total_match is not None, f"No total in: {analyze_output}"
+            comp_total = float(comp_total_match.group(1))
+            anal_total = float(anal_total_match.group(1))
+            assert comp_total == anal_total, (
+                f"Monthly compute ({comp_total}) should equal analyze ({anal_total})"
+            )
+        finally:
+            os.unlink(temp_path)
+
+# Fixture with usageMetrics for tests that need non-zero per-second costs
+YAML_MONTHLY_CLI = """
+version: "1.0"
+workflow:
+  name: "monthly-test"
+  entry: "api_gw"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gw:
+    nodeType: routing
+    resourceAddress: aws_api_gateway_rest_api.test_api
+    provider: aws
+    service: APIGateway
+    region: us-east-1
+  get_user_fn:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_user
+    provider: aws
+    service: AWSLambda
+    region: us-east-1
+    usageMetrics:
+      invocations:
+        unit: requests
+        value: 1
+      avgDurationMs:
+        unit: ms
+        value: 200
+      memoryMb:
+        unit: MB
+        value: 256
+    pricingRates:
+      invocations: 0.2e-6
+      memoryDuration: 0.0000166667
+edges:
+  - from: api_gw
+    to: get_user_fn
+    rate: 1.0
+    type: invoke
+"""
 
 
 class TestCLIWhatifMonthly:

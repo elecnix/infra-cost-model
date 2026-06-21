@@ -78,7 +78,7 @@ class EventBridgeRule(RoutingResource):
 
 
 def _eventbridge_cost(events_published=0, events_matched=0, schedule_invocations=0,
-                      archive_replay_events=0, catalog=None, provider: str = "aws", region="us-east-1") -> float:
+                      archive_replay_events=0, *, catalog=None, provider: str = "aws", region: str) -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
