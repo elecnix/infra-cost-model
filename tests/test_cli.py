@@ -758,3 +758,47 @@ class TestCLISensitivity:
             assert result == 1
         finally:
             os.unlink(temp_path)
+
+    def test_sensitivity_monthly_flag(self):
+        """sensitivity with --monthly flag returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["sensitivity", temp_path, "--parameter", "frequency", "--monthly"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+
+class TestCLIComputeMonthly:
+    """Tests for compute --monthly flag."""
+
+    def test_compute_monthly_flag(self):
+        """compute with --monthly flag returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["compute", temp_path, "--monthly"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+
+class TestCLIWhatifMonthly:
+    """Tests for whatif --monthly flag."""
+
+    def test_whatif_monthly_flag(self):
+        """whatif with --monthly flag returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_SENSITIVITY)
+            temp_path = f.name
+        try:
+            result = main(["whatif", temp_path, "--parameter", "frequency", "--value", "2000", "--monthly"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
