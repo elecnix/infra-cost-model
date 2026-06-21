@@ -6,6 +6,7 @@ systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false
 maxSubagentDepth: 2
+tools: read, bash, subagent
 ---
 
 # Design Principles Reviewer
