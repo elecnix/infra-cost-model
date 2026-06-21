@@ -1845,3 +1845,145 @@ class TestParametricSensitivityAnalyzer:
         
         with pytest.raises(ValueError, match="Unknown parameter"):
             analyzer.partial_derivative("nonexistent_param")
+
+
+class TestSensitivityAnalyzerTimeBasis:
+    """Tests for SensitivityAnalyzer with time_basis support."""
+
+    def test_what_if_monthly(self):
+        """SensitivityAnalyzer.what_if with time_basis='monthly' returns monthly costs."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = SensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = SensitivityAnalyzer(model, time_basis="monthly")
+
+        ps_cost = per_second.what_if("frequency", 150)
+        mo_cost = monthly.what_if("frequency", 150)
+
+        assert mo_cost == pytest.approx(ps_cost * SECONDS_PER_MONTH)
+
+    def test_sensitivity_monthly(self):
+        """SensitivityAnalyzer.sensitivity with time_basis='monthly' returns monthly costs."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = SensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = SensitivityAnalyzer(model, time_basis="monthly")
+
+        ps_results = per_second.sensitivity("frequency", steps=3)
+        mo_results = monthly.sensitivity("frequency", steps=3)
+
+        assert len(ps_results) == len(mo_results) == 3
+        for (ps_val, ps_cost), (mo_val, mo_cost) in zip(ps_results, mo_results):
+            assert ps_val == mo_val  # same parameter values
+            assert mo_cost == pytest.approx(ps_cost * SECONDS_PER_MONTH)
+
+    def test_parameter_impact_monthly(self):
+        """SensitivityAnalyzer.parameter_impact with time_basis='monthly' returns monthly delta."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = SensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = SensitivityAnalyzer(model, time_basis="monthly")
+
+        ps_impact = per_second.parameter_impact("frequency", delta=0.1)
+        mo_impact = monthly.parameter_impact("frequency", delta=0.1)
+
+        assert mo_impact == pytest.approx(ps_impact * SECONDS_PER_MONTH)
+
+
+class TestParametricSensitivityAnalyzerTimeBasis:
+    """Tests for ParametricSensitivityAnalyzer with time_basis support."""
+
+    def test_monthly_baseline_cost(self):
+        """ParametricSensitivityAnalyzer.baseline_cost with time_basis='monthly' returns monthly."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = ParametricSensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = ParametricSensitivityAnalyzer(model, time_basis="monthly")
+
+        assert monthly.baseline_cost == pytest.approx(per_second.baseline_cost * SECONDS_PER_MONTH)
+
+    def test_partial_derivative_monthly(self):
+        """Partial derivative with time_basis='monthly' is scaled."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = ParametricSensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = ParametricSensitivityAnalyzer(model, time_basis="monthly")
+
+        ps_deriv = per_second.partial_derivative("frequency")
+        mo_deriv = monthly.partial_derivative("frequency")
+
+        assert mo_deriv == pytest.approx(ps_deriv * SECONDS_PER_MONTH)
+
+    def test_multi_parameter_what_if_monthly(self):
+        """multi_parameter_what_if with time_basis='monthly' returns monthly."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = ParametricSensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = ParametricSensitivityAnalyzer(model, time_basis="monthly")
+
+        ps = per_second.multi_parameter_what_if({"frequency": 150})
+        mo = monthly.multi_parameter_what_if({"frequency": 150})
+
+        assert mo == pytest.approx(ps * SECONDS_PER_MONTH)
+
+    def test_what_if_monthly(self):
+        """ParametricSensitivityAnalyzer.what_if with time_basis='monthly' returns monthly."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = ParametricSensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = ParametricSensitivityAnalyzer(model, time_basis="monthly")
+
+        ps = per_second.what_if("frequency", 150)
+        mo = monthly.what_if("frequency", 150)
+
+        assert mo == pytest.approx(ps * SECONDS_PER_MONTH)
+
+    def test_most_impactful_monthly(self):
+        """ParametricSensitivityAnalyzer.most_impactful with time_basis='monthly' returns monthly impact."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = ParametricSensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = ParametricSensitivityAnalyzer(model, time_basis="monthly")
+
+        # Edge rates are parameter references; test with top-level parameter
+        ps_impact = per_second.most_impactful(["frequency"], top_n=1)
+        mo_impact = monthly.most_impactful(["frequency"], top_n=1)
+
+        assert len(mo_impact) == 1
+        assert len(ps_impact) == 1
+        assert mo_impact[0]["derivative"] == pytest.approx(ps_impact[0]["derivative"] * SECONDS_PER_MONTH)
+
+    def test_parameter_sensitivity_surface_monthly(self):
+        """ParametricSensitivityAnalyzer.parameter_sensitivity_surface with time_basis='monthly' returns monthly."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+
+        per_second = ParametricSensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = ParametricSensitivityAnalyzer(model, time_basis="monthly")
+
+        # Use an edge parameter to get a 2-param surface
+        ps_surface = per_second.parameter_sensitivity_surface("frequency", "edge:api_gateway->get_user_fn", steps=3)
+        mo_surface = monthly.parameter_sensitivity_surface("frequency", "edge:api_gateway->get_user_fn", steps=3)
+
+        assert len(mo_surface) == len(ps_surface)
+        for ps_pt, mo_pt in zip(ps_surface, mo_surface):
+            assert mo_pt["param1_value"] == pytest.approx(ps_pt["param1_value"])
+            assert mo_pt["param2_value"] == pytest.approx(ps_pt["param2_value"])
+            assert mo_pt["total_cost"] == pytest.approx(ps_pt["total_cost"] * SECONDS_PER_MONTH)

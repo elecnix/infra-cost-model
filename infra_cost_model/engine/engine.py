@@ -712,9 +712,11 @@ class SensitivityAnalyzer:
     Implements Principle 7: The model supports sensitivity analysis.
     """
     
-    def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None):
+    def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None,
+                 time_basis: str = "perSecond"):
         self.cost_model = cost_model
         self.catalog = catalog
+        self.time_basis = time_basis
     
     def what_if(self, parameter: str, value: float) -> float:
         """Run what-if analysis by varying a single parameter.
@@ -727,7 +729,7 @@ class SensitivityAnalyzer:
             Total cost with the parameter change.
         """
         modified_model = self._modify_parameter(parameter, value)
-        engine = CostEngine(modified_model, self.catalog)
+        engine = CostEngine(modified_model, self.catalog, time_basis=self.time_basis)
         return engine.total_cost()
     
     def _modify_parameter(self, parameter: str, value: float) -> dict:
@@ -815,13 +817,14 @@ class SensitivityAnalyzer:
         Raises:
             ValueError: If the parameter name is not supported.
         """
-        engine = CostEngine(self.cost_model, self.catalog)
+        engine = CostEngine(self.cost_model, self.catalog, time_basis=self.time_basis)
         baseline = engine.total_cost()
         
         if parameter == "frequency":
             current = self.cost_model["workflow"]["frequency"]["value"]
             new_value = current * (1 + delta)
-            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
+            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog,
+                                          time_basis=self.time_basis)
             return engine_modified.total_cost() - baseline
         
         if parameter.startswith("edge:"):
@@ -851,7 +854,8 @@ class SensitivityAnalyzer:
                     f"Edge '{from_node}->{to_node}' not found in cost model edges."
                 )
             new_value = float(current) * (1 + delta)
-            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
+            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog,
+                                          time_basis=self.time_basis)
             return engine_modified.total_cost() - baseline
         
         # Symbolic parameter (DP#4): get current value from workflow.parameters
@@ -859,7 +863,8 @@ class SensitivityAnalyzer:
         if parameter in params:
             current = params[parameter]
             new_value = current * (1 + delta)
-            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog)
+            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog,
+                                          time_basis=self.time_basis)
             return engine_modified.total_cost() - baseline
         
         raise ValueError(
@@ -887,9 +892,11 @@ class ParametricSensitivityAnalyzer:
     - Exposes interaction effects through multi-parameter surfaces
     """
     
-    def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None):
+    def __init__(self, cost_model: dict, catalog: Optional[PricingCatalog] = None,
+                 time_basis: str = "perSecond"):
         self.cost_model = cost_model
         self.catalog = catalog
+        self.time_basis = time_basis
         # Cache baseline for reuse
         self._baseline_engine: Optional[CostEngine] = None
     
@@ -897,7 +904,8 @@ class ParametricSensitivityAnalyzer:
     def baseline_cost(self) -> float:
         """Get or compute the baseline total cost."""
         if self._baseline_engine is None:
-            self._baseline_engine = CostEngine(self.cost_model, self.catalog)
+            self._baseline_engine = CostEngine(self.cost_model, self.catalog,
+                                                 time_basis=self.time_basis)
         return self._baseline_engine.total_cost()
     
     def _get_parameter_value(self, parameter: str) -> float:
@@ -965,10 +973,12 @@ class ParametricSensitivityAnalyzer:
             epsilon = max(abs(baseline) * 0.001, 0.001)
         
         cost_plus = CostEngine(
-            self._modify_model({parameter: baseline + epsilon}), self.catalog
+            self._modify_model({parameter: baseline + epsilon}), self.catalog,
+            time_basis=self.time_basis
         ).total_cost()
         cost_minus = CostEngine(
-            self._modify_model({parameter: baseline - epsilon}), self.catalog
+            self._modify_model({parameter: baseline - epsilon}), self.catalog,
+            time_basis=self.time_basis
         ).total_cost()
         
         return (cost_plus - cost_minus) / (2 * epsilon)
@@ -1026,7 +1036,7 @@ class ParametricSensitivityAnalyzer:
             Total cost with all parameter changes applied.
         """
         modified = self._modify_model(changes)
-        return CostEngine(modified, self.catalog).total_cost()
+        return CostEngine(modified, self.catalog, time_basis=self.time_basis).total_cost()
     
     def parameter_sensitivity_surface(
         self, param1: str, param2: str, steps: int = 10

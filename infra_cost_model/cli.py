@@ -92,6 +92,8 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="New value for the parameter")
     p_whatif.add_argument("--catalog", action="store_true",
                           help="Use pricing catalog")
+    p_whatif.add_argument("--monthly", action="store_true",
+                          help="Show costs in monthly terms (default: per-second)")
     p_whatif.set_defaults(func=cmd_whatif)
 
     # sensitivity
@@ -103,6 +105,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Number of steps (default: 10)")
     p_sens.add_argument("--catalog", action="store_true",
                         help="Use pricing catalog")
+    p_sens.add_argument("--monthly", action="store_true",
+                        help="Show costs in monthly terms (default: per-second)")
     p_sens.set_defaults(func=cmd_sensitivity)
 
     # codegen
@@ -429,15 +433,17 @@ def cmd_whatif(args: argparse.Namespace) -> int:
         return 1
 
     catalog = PricingCatalog() if args.catalog else None
+    time_basis = "monthly" if args.monthly else "perSecond"
 
     try:
-        analyzer = SensitivityAnalyzer(model, catalog)
-        baseline_engine = CostEngine(model, catalog)
+        analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
+        baseline_engine = CostEngine(model, catalog, time_basis=time_basis)
         baseline = baseline_engine.total_cost()
         new_cost = analyzer.what_if(args.parameter, args.value)
         delta = new_cost - baseline
 
-        print(f"What-if: {model['workflow']['name']}")
+        label = " (monthly)" if args.monthly else ""
+        print(f"What-if: {model['workflow']['name']}{label}")
         print(f"Parameter: {args.parameter} = {args.value}")
         print(f"Baseline cost: ${baseline:.6f}")
         print(f"New cost:      ${new_cost:.6f}")
@@ -469,14 +475,16 @@ def cmd_sensitivity(args: argparse.Namespace) -> int:
         return 1
 
     catalog = PricingCatalog() if args.catalog else None
+    time_basis = "monthly" if args.monthly else "perSecond"
 
     try:
-        analyzer = SensitivityAnalyzer(model, catalog)
-        baseline_engine = CostEngine(model, catalog)
+        analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
+        baseline_engine = CostEngine(model, catalog, time_basis=time_basis)
         baseline = baseline_engine.total_cost()
         results = analyzer.sensitivity(args.parameter, args.steps)
 
-        print(f"Sensitivity: {model['workflow']['name']}")
+        label = " (monthly)" if args.monthly else ""
+        print(f"Sensitivity: {model['workflow']['name']}{label}")
         print(f"Parameter: {args.parameter}")
         print(f"Baseline: ${baseline:.6f}")
         print()
