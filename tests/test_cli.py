@@ -608,6 +608,48 @@ nodes:
 edges: []
 """
 
+# Fixture with usageMetrics for tests that need non-zero per-second costs
+YAML_MONTHLY_CLI = """
+version: "1.0"
+workflow:
+  name: "monthly-test"
+  entry: "api_gw"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gw:
+    nodeType: routing
+    resourceAddress: aws_api_gateway_rest_api.test_api
+    provider: aws
+    service: APIGateway
+    region: us-east-1
+  get_user_fn:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_user
+    provider: aws
+    service: AWSLambda
+    region: us-east-1
+    usageMetrics:
+      invocations:
+        unit: requests
+        value: 1
+      avgDurationMs:
+        unit: ms
+        value: 200
+      memoryMb:
+        unit: MB
+        value: 256
+    pricingRates:
+      invocations: 0.2e-6
+      memoryDuration: 0.0000166667
+edges:
+  - from: api_gw
+    to: get_user_fn
+    rate: 1.0
+    type: invoke
+"""
+
 
 class TestCLIWhatif:
     """Tests for the whatif CLI command."""
@@ -760,14 +802,36 @@ class TestCLISensitivity:
             os.unlink(temp_path)
 
     def test_sensitivity_monthly_flag(self):
-        """sensitivity with --monthly flag returns 0."""
-        import tempfile, os
+        """sensitivity with --monthly flag returns monthly-scaled costs."""
+        import tempfile, os, io, sys, re
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            f.write(YAML_SENSITIVITY)
+            f.write(YAML_MONTHLY_CLI)
             temp_path = f.name
         try:
-            result = main(["sensitivity", temp_path, "--parameter", "frequency", "--monthly"])
-            assert result == 0
+            # per-second baseline
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            main(["sensitivity", temp_path, "--parameter", "frequency"])
+            ps_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            ps_match = re.search(r"Baseline: \$([\d.]+)", ps_output)
+            assert ps_match is not None, f"No baseline in per-second output: {ps_output}"
+            ps_baseline = float(ps_match.group(1))
+
+            # monthly
+            sys.stdout = io.StringIO()
+            main(["sensitivity", temp_path, "--parameter", "frequency", "--monthly"])
+            mo_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            mo_match = re.search(r"Baseline: \$([\d.]+)", mo_output)
+            assert mo_match is not None, f"No baseline in monthly output: {mo_output}"
+            mo_baseline = float(mo_match.group(1))
+
+            # monthly costs should be significantly larger than per-second
+            from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+            assert mo_baseline > ps_baseline * 0.9 * SECONDS_PER_MONTH, (
+                f"Monthly baseline ({mo_baseline}) not scaled from per-second ({ps_baseline})"
+            )
         finally:
             os.unlink(temp_path)
 
@@ -776,14 +840,35 @@ class TestCLIComputeMonthly:
     """Tests for compute --monthly flag."""
 
     def test_compute_monthly_flag(self):
-        """compute with --monthly flag returns 0."""
-        import tempfile, os
+        """compute with --monthly flag shows monthly-scaled costs."""
+        import tempfile, os, io, sys, re
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            f.write(YAML_SENSITIVITY)
+            f.write(YAML_MONTHLY_CLI)
             temp_path = f.name
         try:
-            result = main(["compute", temp_path, "--monthly"])
-            assert result == 0
+            # per-second
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            main(["compute", temp_path])
+            ps_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            ps_match = re.search(r"Total.*: \$([\d.]+)", ps_output)
+            assert ps_match is not None, f"No total in per-second output: {ps_output}"
+            ps_total = float(ps_match.group(1))
+
+            # monthly
+            sys.stdout = io.StringIO()
+            main(["compute", temp_path, "--monthly"])
+            mo_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            mo_match = re.search(r"Total.*: \$([\d.]+)", mo_output)
+            assert mo_match is not None, f"No total in monthly output: {mo_output}"
+            mo_total = float(mo_match.group(1))
+
+            from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+            assert mo_total > ps_total * 0.9 * SECONDS_PER_MONTH, (
+                f"Monthly total ({mo_total}) not scaled from per-second ({ps_total})"
+            )
         finally:
             os.unlink(temp_path)
 
@@ -792,13 +877,34 @@ class TestCLIWhatifMonthly:
     """Tests for whatif --monthly flag."""
 
     def test_whatif_monthly_flag(self):
-        """whatif with --monthly flag returns 0."""
-        import tempfile, os
+        """whatif with --monthly flag shows monthly-scaled costs."""
+        import tempfile, os, io, sys, re
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            f.write(YAML_SENSITIVITY)
+            f.write(YAML_MONTHLY_CLI)
             temp_path = f.name
         try:
-            result = main(["whatif", temp_path, "--parameter", "frequency", "--value", "2000", "--monthly"])
-            assert result == 0
+            # per-second baseline
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            main(["whatif", temp_path, "--parameter", "frequency", "--value", "2000"])
+            ps_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            ps_match = re.search(r"Baseline cost: \$([\d.]+)", ps_output)
+            assert ps_match is not None, f"No baseline in per-second output: {ps_output}"
+            ps_baseline = float(ps_match.group(1))
+
+            # monthly
+            sys.stdout = io.StringIO()
+            main(["whatif", temp_path, "--parameter", "frequency", "--value", "2000", "--monthly"])
+            mo_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            mo_match = re.search(r"Baseline cost: \$([\d.]+)", mo_output)
+            assert mo_match is not None, f"No baseline in monthly output: {mo_output}"
+            mo_baseline = float(mo_match.group(1))
+
+            from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+            assert mo_baseline > ps_baseline * 0.9 * SECONDS_PER_MONTH, (
+                f"Monthly baseline ({mo_baseline}) not scaled from per-second ({ps_baseline})"
+            )
         finally:
             os.unlink(temp_path)
