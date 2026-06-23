@@ -109,6 +109,23 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Show costs in monthly terms (default: per-second)")
     p_sens.set_defaults(func=cmd_sensitivity)
 
+    # what-if
+    p_what_if = sub.add_parser("what-if", help="Parameter sweep across explicit values with optional A/B comparison")
+    p_what_if.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_what_if.add_argument("--param", required=True, metavar="<name>",
+                           help="Parameter to sweep (e.g., frequency, edge:from->to)")
+    p_what_if.add_argument("--values", required=True, metavar="<v1,v2,...>",
+                           help="Comma-separated parameter values to evaluate")
+    p_what_if.add_argument("--output", choices=["table", "json"], default="table",
+                           help="Output format: table (default) or json")
+    p_what_if.add_argument("--compare", metavar="<other-model.yaml>",
+                           help="Path to second cost model for A/B comparison")
+    p_what_if.add_argument("--catalog", action="store_true",
+                           help="Use pricing catalog")
+    p_what_if.add_argument("--monthly", action="store_true",
+                           help="Show costs in monthly terms (default: per-second)")
+    p_what_if.set_defaults(func=cmd_what_if_sweep)
+
     # codegen
     p_codegen = sub.add_parser("codegen", help="Generate resource handler from terraform provider schema")
     p_codegen.add_argument("schema_json", metavar="<schema-json>", help="Path to terraform providers schema JSON file")
@@ -500,6 +517,164 @@ def cmd_sensitivity(args: argparse.Namespace) -> int:
     except ValueError as e:
         _print_stderr(f"Error: {e}")
         return 1
+
+
+def cmd_what_if_sweep(args: argparse.Namespace) -> int:
+    """Run what-if parameter sweep across explicit values.
+
+    Supports single-model sweep and A/B comparison mode.
+    """
+    yaml_path = Path(args.yaml_file)
+    if not yaml_path.exists():
+        _print_stderr(f"File not found: {yaml_path}")
+        return 1
+
+    from infra_cost_model.sdk import parse_yaml_dsl
+    with open(yaml_path) as f:
+        content = f.read()
+
+    try:
+        model = parse_yaml_dsl(content)
+    except ValueError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
+
+    # Parse values from comma-separated string
+    try:
+        values = [float(v.strip()) for v in args.values.split(",")]
+    except ValueError:
+        _print_stderr(f"Error: --values must be comma-separated numbers, got '{args.values}'")
+        return 1
+
+    if len(values) < 2:
+        _print_stderr(f"Error: --values must contain at least 2 values, got {len(values)}")
+        return 1
+
+    catalog = PricingCatalog() if args.catalog else None
+    time_basis = "monthly" if args.monthly else "perSecond"
+
+    analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
+
+    # Comparison mode
+    if args.compare:
+        compare_path = Path(args.compare)
+        if not compare_path.exists():
+            _print_stderr(f"Comparison file not found: {compare_path}")
+            return 1
+
+        with open(compare_path) as f:
+            compare_content = f.read()
+        try:
+            other_model = parse_yaml_dsl(compare_content)
+        except ValueError as e:
+            _print_stderr(f"Error in comparison model: {e}")
+            return 1
+
+        try:
+            results = analyzer.sweep_compare(args.param, values, other_model)
+        except ValueError as e:
+            _print_stderr(f"Error: {e}")
+            return 1
+
+        if args.output == "json":
+            import json
+            print(json.dumps(results, indent=2))
+            return 0
+
+        # Table output for comparison
+        _print_compare_table(model, other_model, args.param, results, time_basis)
+        return 0
+
+    # Single-model sweep
+    try:
+        results = analyzer.sweep_explicit(args.param, values)
+    except ValueError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
+
+    if args.output == "json":
+        import json
+        print(json.dumps(results, indent=2))
+        return 0
+
+    # Table output
+    _print_sweep_table(model, args.param, results, time_basis)
+    return 0
+
+
+def _format_param_label(value: float) -> str:
+    """Format a parameter value with human-friendly suffix."""
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.6g}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.6g}K"
+    return f"{value:.6g}"
+
+
+def _print_sweep_table(model: dict, param: str, results: list[dict],
+                       time_basis: str) -> None:
+    """Print a rich table for single-model what-if sweep results."""
+    from rich.console import Console
+    from rich.table import Table
+
+    label_suffix = "/mo" if time_basis == "monthly" else "/sec"
+    workflow_name = model.get("workflow", {}).get("name", "unnamed")
+
+    console = Console()
+
+    # Collect all node addresses across all results
+    all_nodes: list[str] = []
+    for r in results:
+        for addr in r["node_costs"]:
+            if addr not in all_nodes:
+                all_nodes.append(addr)
+
+    # Build table: Parameter | node1 | node2 | ... | Total
+    table = Table(title=f"What-if sweep: {workflow_name} — param '{param}' ({label_suffix})")
+    table.add_column(param.capitalize(), justify="right", style="cyan")
+    for node in all_nodes:
+        table.add_column(node, justify="right")
+    table.add_column("Total", justify="right", style="bold green")
+
+    for r in results:
+        row = [_format_param_label(r["param_value"])]
+        for node in all_nodes:
+            cost = r["node_costs"].get(node, 0.0)
+            row.append(f"${cost:.6f}")
+        row.append(f"${r['total_cost']:.6f}")
+        table.add_row(*row)
+
+    console.print(table)
+
+
+def _print_compare_table(model_a: dict, model_b: dict, param: str,
+                         results: list[dict], time_basis: str) -> None:
+    """Print a rich table for A/B comparison what-if sweep results."""
+    from rich.console import Console
+    from rich.table import Table
+
+    label_suffix = "/mo" if time_basis == "monthly" else "/sec"
+    name_a = model_a.get("workflow", {}).get("name", "Model A")
+    name_b = model_b.get("workflow", {}).get("name", "Model B")
+
+    console = Console()
+
+    table = Table(title=f"What-if comparison: {name_a} vs {name_b} — param '{param}' ({label_suffix})")
+    table.add_column(param.capitalize(), justify="right", style="cyan")
+    table.add_column(name_a, justify="right")
+    table.add_column(name_b, justify="right")
+    table.add_column("Delta", justify="right", style="bold yellow")
+
+    for r in results:
+        delta_str = f"${r['delta']:+.6f}"
+        table.add_row(
+            _format_param_label(r["param_value"]),
+            f"${r['model_a']['total_cost']:.6f}",
+            f"${r['model_b']['total_cost']:.6f}",
+            delta_str,
+        )
+
+    console.print(table)
 
 
 def cmd_codegen(args: argparse.Namespace) -> int:

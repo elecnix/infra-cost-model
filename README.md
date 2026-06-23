@@ -15,6 +15,30 @@ This project specifies a model where usage flows through the graph: a frontend r
 - **Symbolic cost expressions**: Cost formulas parameterized by input features, enabling what-if analysis without re-derivation (Skyler, ibid.)
 - **What-if & sensitivity analysis**: Exploring cost impact of workload changes or architectural decisions before implementation (CostHat; Skyler)
 
+## Quick Usage
+
+```bash
+# Validate a cost model
+infra-cost-model validate model.yaml
+
+# Compute costs
+infra-cost-model compute model.yaml
+
+# Full analysis with derived usage
+infra-cost-model analyze model.yaml --json
+
+# Parameter sweep across explicit values
+infra-cost-model what-if model.yaml \
+  --param frequency --values 1000,10000,100000,1000000
+
+# A/B comparison of two architectures
+infra-cost-model what-if model-a.yaml --compare model-b.yaml \
+  --param frequency --values 1000,10000,100000
+
+# Visualize the DAG
+infra-cost-model graph model.yaml
+```
+
 ## References
 
 - Leitner, Cito & Stöckli. "Modelling and Managing Deployment Costs of Microservice-Based Cloud Applications." *UCC 2016*. DOI: 10.1145/2996890.2996901
