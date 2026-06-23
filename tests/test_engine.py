@@ -1896,6 +1896,189 @@ class TestSensitivityAnalyzerTimeBasis:
         assert mo_impact == pytest.approx(ps_impact * SECONDS_PER_MONTH)
 
 
+
+class TestSensitivityAnalyzerSweep:
+    """Tests for sweep_explicit and sweep_compare methods."""
+
+    def test_sweep_explicit_single_model(self):
+        """sweep_explicit returns per-node costs for each explicit value."""
+        model = make_valid_cost_model(frequency=100)
+        analyzer = SensitivityAnalyzer(model)
+
+        results = analyzer.sweep_explicit("frequency", [100, 200, 300])
+
+        assert len(results) == 3
+        # Costs should increase with frequency
+        assert results[0]["param_value"] == 100
+        assert results[1]["param_value"] == 200
+        assert results[2]["param_value"] == 300
+        assert results[0]["total_cost"] <= results[1]["total_cost"]
+        assert results[1]["total_cost"] <= results[2]["total_cost"]
+        # Each result should have node_costs
+        for r in results:
+            assert "node_costs" in r
+            assert isinstance(r["node_costs"], dict)
+            assert sum(r["node_costs"].values()) == pytest.approx(r["total_cost"])
+
+    def test_sweep_explicit_linear_scaling(self):
+        """Cost scales linearly with frequency for flat pricing models."""
+        model = make_valid_cost_model(frequency=100)
+        analyzer = SensitivityAnalyzer(model)
+
+        results = analyzer.sweep_explicit("frequency", [100, 200, 400])
+
+        # Cost should double/triple with frequency
+        assert results[1]["total_cost"] == pytest.approx(results[0]["total_cost"] * 2, rel=0.01)
+        assert results[2]["total_cost"] == pytest.approx(results[0]["total_cost"] * 4, rel=0.01)
+
+    def test_sweep_explicit_symbolic_parameter(self):
+        """sweep_explicit works with symbolic parameters."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+                "parameters": {"cache_hit_rate": 0.5},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": "cache_hit_rate"}],
+        }
+        analyzer = SensitivityAnalyzer(model)
+
+        results = analyzer.sweep_explicit("cache_hit_rate", [0.25, 0.5, 0.75])
+
+        assert len(results) == 3
+        # Cost = 10 * rate * 0.001
+        assert results[0]["total_cost"] == pytest.approx(10 * 0.25 * 0.001)
+        assert results[1]["total_cost"] == pytest.approx(10 * 0.50 * 0.001)
+        assert results[2]["total_cost"] == pytest.approx(10 * 0.75 * 0.001)
+
+    def test_sweep_compare_two_models(self):
+        """sweep_compare returns deltas between two models."""
+        model_a = make_valid_cost_model(frequency=100)
+        model_b = make_valid_cost_model(frequency=100)
+        # Double the pricing rates in model B
+        model_b["nodes"]["get_user_fn"]["pricingRates"]["invocations"] *= 2
+        model_b["nodes"]["get_user_fn"]["pricingRates"]["memoryDuration"] *= 2
+        model_b["nodes"]["users_table"]["pricingRates"]["readRequests"] *= 2
+
+        analyzer = SensitivityAnalyzer(model_a)
+        results = analyzer.sweep_compare("frequency", [100, 200, 300], model_b)
+
+        assert len(results) == 3
+        for r in results:
+            assert "param_value" in r
+            assert "model_a" in r
+            assert "model_b" in r
+            assert "delta" in r
+            assert "total_cost" in r["model_a"]
+            assert "total_cost" in r["model_b"]
+            assert "node_costs" in r["model_a"]
+            assert "node_costs" in r["model_b"]
+            # model B should be more expensive (2x rates)
+            assert r["model_b"]["total_cost"] > r["model_a"]["total_cost"]
+            assert r["delta"] > 0
+
+    def test_sweep_compare_identical_models(self):
+        """sweep_compare with identical models produces zero deltas."""
+        model = make_valid_cost_model(frequency=100)
+        analyzer = SensitivityAnalyzer(model)
+        results = analyzer.sweep_compare("frequency", [100, 200], model)
+
+        assert len(results) == 2
+        for r in results:
+            assert r["delta"] == pytest.approx(0.0)
+            assert r["model_a"]["total_cost"] == r["model_b"]["total_cost"]
+
+    def test_sweep_explicit_edge_parameter(self):
+        """sweep_explicit works with edge rate parameters."""
+        model = {
+            "version": "1.0",
+            "workflow": {
+                "name": "test",
+                "entry": "A",
+                "frequency": {"unit": "perSecond", "value": 10.0},
+            },
+            "nodes": {
+                "A": {"nodeType": "routing", "resourceAddress": "entry"},
+                "B": {
+                    "nodeType": "compute",
+                    "resourceAddress": "compute_b",
+                    "provider": "aws",
+                    "service": "AWSLambda",
+                    "usageMetrics": {"invocations": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"invocations": 0.001},
+                },
+            },
+            "edges": [{"from": "A", "to": "B", "rate": 0.8}],
+        }
+        analyzer = SensitivityAnalyzer(model)
+        results = analyzer.sweep_explicit("edge:A->B", [0.5, 1.0])
+
+        assert len(results) == 2
+        # 10 * 0.5 * 0.001 = 0.005, 10 * 1.0 * 0.001 = 0.01
+        assert results[0]["total_cost"] == pytest.approx(0.005)
+        assert results[1]["total_cost"] == pytest.approx(0.01)
+
+    def test_sweep_explicit_single_value(self):
+        """sweep_explicit works with a single explicit value."""
+        model = make_valid_cost_model(frequency=100)
+        analyzer = SensitivityAnalyzer(model)
+        results = analyzer.sweep_explicit("frequency", [200])
+
+        assert len(results) == 1
+        assert results[0]["param_value"] == 200
+        assert results[0]["total_cost"] > 0
+
+    def test_sweep_explicit_monthly_time_basis(self):
+        """sweep_explicit with time_basis='monthly' returns monthly costs."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+        per_second = SensitivityAnalyzer(model, time_basis="perSecond")
+        monthly = SensitivityAnalyzer(model, time_basis="monthly")
+
+        ps_results = per_second.sweep_explicit("frequency", [100, 200])
+        mo_results = monthly.sweep_explicit("frequency", [100, 200])
+
+        for ps, mo in zip(ps_results, mo_results):
+            assert mo["total_cost"] == pytest.approx(ps["total_cost"] * SECONDS_PER_MONTH)
+            for addr in mo["node_costs"]:
+                assert mo["node_costs"][addr] == pytest.approx(
+                    ps["node_costs"][addr] * SECONDS_PER_MONTH
+                )
+
+    def test_sweep_compare_monthly_time_basis(self):
+        """sweep_compare with time_basis='monthly' returns monthly deltas."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model_a = make_valid_cost_model(frequency=100)
+        model_b = make_valid_cost_model(frequency=100)
+
+        per_second = SensitivityAnalyzer(model_a, time_basis="perSecond")
+        monthly = SensitivityAnalyzer(model_a, time_basis="monthly")
+
+        ps_results = per_second.sweep_compare("frequency", [100, 200], model_b)
+        mo_results = monthly.sweep_compare("frequency", [100, 200], model_b)
+
+        for ps, mo in zip(ps_results, mo_results):
+            assert mo["delta"] == pytest.approx(ps["delta"] * SECONDS_PER_MONTH)
+            assert mo["model_a"]["total_cost"] == pytest.approx(
+                ps["model_a"]["total_cost"] * SECONDS_PER_MONTH
+            )
+
+
 class TestParametricSensitivityAnalyzerTimeBasis:
     """Tests for ParametricSensitivityAnalyzer with time_basis support."""
 

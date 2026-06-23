@@ -955,6 +955,47 @@ edges:
 """
 
 
+YAML_WHAT_IF_SWEEP = """
+version: "1.0"
+workflow:
+  name: "what-if-sweep-test"
+  entry: "api_gw"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  api_gw:
+    nodeType: routing
+    resourceAddress: aws_api_gateway_rest_api.test_api
+    provider: aws
+    service: APIGateway
+  get_user_fn:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_user
+    provider: aws
+    service: AWSLambda
+    region: us-east-1
+    usageMetrics:
+      invocations:
+        unit: requests
+        value: 1
+      avgDurationMs:
+        unit: ms
+        value: 200
+      memoryMb:
+        unit: MB
+        value: 256
+    pricingRates:
+      invocations: 0.2e-6
+      memoryDuration: 0.0000166667
+edges:
+  - from: api_gw
+    to: get_user_fn
+    rate: 1.0
+    type: invoke
+"""
+
+
 class TestCLIWhatifMonthly:
     """Tests for whatif --monthly flag."""
 
@@ -988,5 +1029,206 @@ class TestCLIWhatifMonthly:
             assert mo_baseline > ps_baseline * 0.9 * SECONDS_PER_MONTH, (
                 f"Monthly baseline ({mo_baseline}) not scaled from per-second ({ps_baseline})"
             )
+        finally:
+            os.unlink(temp_path)
+
+
+class TestCLIWhatIfSweep:
+    """Tests for the what-if CLI subcommand."""
+
+    def test_what_if_sweep_missing_args(self):
+        """what-if with no args returns 1."""
+        result = main(["what-if"])
+        assert result == 1
+
+    def test_what_if_sweep_missing_param(self):
+        """what-if without --param returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--values", "1000,2000"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_missing_values(self):
+        """what-if without --values returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--param", "frequency"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_missing_file(self):
+        """what-if with nonexistent file returns 1."""
+        result = main(["what-if", "/nonexistent/file.yaml",
+                       "--param", "frequency", "--values", "1000,2000"])
+        assert result == 1
+
+    def test_what_if_sweep_invalid_values(self):
+        """what-if with non-numeric values returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--param", "frequency",
+                           "--values", "abc,def"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_single_value(self):
+        """what-if with a single value returns 1 (needs >= 2)."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--param", "frequency",
+                           "--values", "1000"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_table_output(self):
+        """what-if with --output table (default) returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--param", "frequency",
+                           "--values", "1000,2000,3000"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_json_output(self):
+        """what-if with --output json returns 0 and valid JSON."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["what-if", temp_path, "--param", "frequency",
+                           "--values", "1000,2000,3000", "--output", "json"])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            assert result == 0
+            data = json.loads(output)
+            assert isinstance(data, list)
+            assert len(data) == 3
+            for entry in data:
+                assert "param_value" in entry
+                assert "total_cost" in entry
+                assert "node_costs" in entry
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_compare_mode(self):
+        """what-if --compare returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--param", "frequency",
+                           "--values", "1000,2000", "--compare", temp_path])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_compare_missing_file(self):
+        """what-if --compare with missing file returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--param", "frequency",
+                           "--values", "1000,2000", "--compare", "/nonexistent.yaml"])
+            assert result == 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_compare_json_output(self):
+        """what-if --compare --output json returns valid JSON."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["what-if", temp_path, "--param", "frequency",
+                           "--values", "1000,2000", "--compare", temp_path,
+                           "--output", "json"])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            assert result == 0
+            data = json.loads(output)
+            assert isinstance(data, list)
+            assert len(data) == 2
+            for entry in data:
+                assert "param_value" in entry
+                assert "model_a" in entry
+                assert "model_b" in entry
+                assert "delta" in entry
+                # Identical models should have zero delta
+                assert entry["delta"] == 0.0
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_edge_parameter(self):
+        """what-if with edge parameter works."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            result = main(["what-if", temp_path, "--param", "edge:api_gw->get_user_fn",
+                           "--values", "0.5,1.0"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_what_if_sweep_monthly_flag(self):
+        """what-if --monthly shows monthly-scaled costs."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_WHAT_IF_SWEEP)
+            temp_path = f.name
+        try:
+            # per-second
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            main(["what-if", temp_path, "--param", "frequency",
+                  "--values", "1000,2000", "--output", "json"])
+            ps_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            ps_data = json.loads(ps_output)
+
+            # monthly
+            sys.stdout = io.StringIO()
+            main(["what-if", temp_path, "--param", "frequency",
+                  "--values", "1000,2000", "--output", "json", "--monthly"])
+            mo_output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            mo_data = json.loads(mo_output)
+
+            from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+            for ps, mo in zip(ps_data, mo_data):
+                assert mo["total_cost"] > ps["total_cost"] * 0.9 * SECONDS_PER_MONTH
         finally:
             os.unlink(temp_path)

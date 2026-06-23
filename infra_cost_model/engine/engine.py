@@ -802,6 +802,71 @@ class SensitivityAnalyzer:
         
         return results
     
+    def sweep_explicit(self, parameter: str, values: list[float]) -> list[dict]:
+        """Run what-if sweep across explicit parameter values.
+        
+        Unlike sensitivity() which auto-generates a range, this evaluates
+        exactly the values provided by the user — e.g., [1000, 10000, 100000].
+        
+        Returns per-node cost breakdowns for table/JSON output.
+        
+        Args:
+            parameter: Parameter name (frequency, edge:from->to, or symbolic param).
+            values: Explicit list of parameter values to evaluate.
+            
+        Returns:
+            List of dicts, each with:
+                - param_value: The parameter value evaluated
+                - total_cost: Total system cost at this value
+                - node_costs: Dict mapping node address to cost
+        """
+        results = []
+        for value in values:
+            modified = self._modify_parameter(parameter, value)
+            engine = CostEngine(modified, self.catalog, time_basis=self.time_basis)
+            node_costs = engine.compute()
+            total = sum(node_costs.values())
+            results.append({
+                "param_value": value,
+                "total_cost": total,
+                "node_costs": dict(node_costs),
+            })
+        return results
+    
+    def sweep_compare(self, parameter: str, values: list[float],
+                      other_model: dict) -> list[dict]:
+        """Run what-if sweep against two models and compare costs.
+        
+        Evaluates the same parameter values against both self.cost_model
+        and other_model, returning deltas for A/B architecture comparison.
+        
+        Args:
+            parameter: Parameter name to vary.
+            values: Explicit list of parameter values to evaluate.
+            other_model: Second cost model to compare against.
+            
+        Returns:
+            List of dicts, each with:
+                - param_value: The parameter value evaluated
+                - model_a: Dict with total_cost and node_costs for primary model
+                - model_b: Dict with total_cost and node_costs for other model
+                - delta: model_b.total_cost - model_a.total_cost
+        """
+        other_analyzer = SensitivityAnalyzer(other_model, self.catalog,
+                                               time_basis=self.time_basis)
+        results_a = self.sweep_explicit(parameter, values)
+        results_b = other_analyzer.sweep_explicit(parameter, values)
+        
+        return [
+            {
+                "param_value": a["param_value"],
+                "model_a": {"total_cost": a["total_cost"], "node_costs": a["node_costs"]},
+                "model_b": {"total_cost": b["total_cost"], "node_costs": b["node_costs"]},
+                "delta": b["total_cost"] - a["total_cost"],
+            }
+            for a, b in zip(results_a, results_b)
+        ]
+    
     def parameter_impact(self, parameter: str, delta: float = 0.1) -> float:
         """Calculate cost impact of a parameter change.
         
