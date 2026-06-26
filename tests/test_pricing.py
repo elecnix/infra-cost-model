@@ -191,3 +191,88 @@ def test_seed_file_loading():
         # Verify prices were loaded
         result = cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request")
         assert result is not None
+
+# ── Seed data integrity and duplicate-row handling (catalog robustness) ───────
+
+def test_seed_file_is_valid_json():
+    """The bundled seed price list must be parseable, non-empty JSON.
+
+    A malformed seed file makes seed_prices() raise and silently leaves the
+    catalog empty, so every catalog-backed cost computes as $0.
+    """
+    import json
+    from infra_cost_model.pricing.cache import SEED_PRICES_PATH
+
+    data = json.loads(Path(SEED_PRICES_PATH).read_text())
+    assert isinstance(data, list)
+    assert len(data) > 0
+    for entry in data:
+        assert "vendor" in entry and "service" in entry
+        assert "usage_metric" in entry and "price_usd" in entry
+
+
+def _seed_price(**overrides) -> Price:
+    base = dict(
+        vendor="aws", service="AmazonS3", region="us-east-1",
+        product_family=None, attributes={}, usage_metric="S3-Storage",
+        unit="GB-Mo", price_usd=0.023, start_usage_amount=0.0,
+        end_usage_amount=51200.0, purchase_option=None,
+        source="seed", effective_date="2024-01-01",
+        fetched_at="2024-01-01T00:00:00",
+    )
+    base.update(overrides)
+    return Price(**base)
+
+
+def test_query_deduplicates_identical_rows():
+    """Identical rows (e.g. re-seeded with NULL purchase_option) collapse to one.
+
+    SQLite treats NULL as distinct in a UNIQUE constraint, so seed rows with
+    purchase_option=NULL can be inserted repeatedly. A query must not return a
+    single logical price as a spurious multi-tier TieredPrice.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+        price = _seed_price(end_usage_amount=None)  # single flat tier
+        for _ in range(5):
+            cache.upsert(price)
+
+        result = cache.query("aws", "AmazonS3", "us-east-1", "S3-Storage")
+        assert not isinstance(result, TieredPrice)
+        assert result.price_usd == pytest.approx(0.023)
+
+
+def test_tiered_cost_unaffected_by_duplicate_rows():
+    """Tiered cost is correct even when each tier row is duplicated."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+        tier1 = _seed_price(start_usage_amount=0.0, end_usage_amount=51200.0, price_usd=0.023)
+        tier2 = _seed_price(start_usage_amount=51200.0, end_usage_amount=512000.0, price_usd=0.022)
+        for _ in range(3):
+            cache.upsert(tier1)
+            cache.upsert(tier2)
+
+        catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+        # 100 GB-Mo within the first tier: 100 × $0.023, NOT multiplied by dups.
+        result = catalog.query("aws", "AmazonS3", "us-east-1", "S3-Storage", 100)
+        assert result.total_cost == pytest.approx(2.30)
+
+
+def test_seed_prices_is_idempotent():
+    """Loading seed prices twice must not accumulate duplicate rows."""
+    from infra_cost_model.pricing.cache import seed_prices
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+        seed_prices(cache)
+        conn = sqlite3.connect(cache.db_path)
+        count_once = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+        conn.close()
+
+        seed_prices(cache)
+        conn = sqlite3.connect(cache.db_path)
+        count_twice = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+        conn.close()
+
+        assert count_once > 0
+        assert count_twice == count_once
