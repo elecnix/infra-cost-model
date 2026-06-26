@@ -53,12 +53,16 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="Disable pricing catalog (use embedded pricing rates)")
     p_compute.add_argument("--monthly", action="store_true",
                            help="Compute on a monthly time basis instead of per-second")
+    p_compute.add_argument("--budget", type=float, metavar="<usd>",
+                           help="Exit with code 1 if total cost exceeds this USD threshold")
     p_compute.set_defaults(func=cmd_compute)
 
     # analyze
     p_analyze = sub.add_parser("analyze", help="Full analysis with derived usage")
     p_analyze.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     p_analyze.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_analyze.add_argument("--budget", type=float, metavar="<usd>",
+                           help="Exit with code 1 if total cost exceeds this USD threshold")
     p_analyze.set_defaults(func=cmd_analyze)
 
     # extract
@@ -233,6 +237,11 @@ def cmd_compute(args: argparse.Namespace) -> int:
         costs = engine.compute()
         total = sum(costs.values())
 
+        if args.budget is not None and total > args.budget:
+            overage = total - args.budget
+            _print_stderr(f"BUDGET BREACH: total ${total:.6f} exceeds budget ${args.budget:.6f} by ${overage:.6f}")
+            return 1
+
         pricing_source = "catalog" if use_catalog else "embedded pricing rates"
         print(f"Costs for: {model['workflow']['name']} (pricing: {pricing_source}, {time_basis})")
         print("-" * 40)
@@ -271,6 +280,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         derived = engine.get_derived_usage()
 
         total = sum(costs.values())
+
+        if args.budget is not None and total > args.budget:
+            overage = total - args.budget
+            _print_stderr(f"BUDGET BREACH: total ${total:.6f} exceeds budget ${args.budget:.6f} by ${overage:.6f}")
+            return 1
+
         output = {
             "workflow": model["workflow"]["name"],
             "derived_usage": {

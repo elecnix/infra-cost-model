@@ -1232,3 +1232,113 @@ class TestCLIWhatIfSweep:
                 assert mo["total_cost"] > ps["total_cost"] * 0.9 * SECONDS_PER_MONTH
         finally:
             os.unlink(temp_path)
+class TestCLIBudget:
+    """Tests for --budget flag on compute and analyze commands."""
+
+    def test_compute_within_budget_returns_zero(self):
+        """compute --budget with a high threshold returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            result = main(["compute", temp_path, "--budget", "1000000"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_budget_breach_returns_one(self):
+        """compute --budget with a 0 threshold returns 1 and prints breach."""
+        import tempfile, os, io, sys
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            old_stderr = sys.stderr
+            sys.stderr = io.StringIO()
+            result = main(["compute", temp_path, "--budget", "0"])
+            stderr_output = sys.stderr.getvalue()
+            sys.stderr = old_stderr
+            assert result == 1, f"Expected exit code 1, got {result}"
+            assert "BUDGET BREACH" in stderr_output, (
+                f"Expected BUDGET BREACH in stderr, got: {stderr_output}"
+            )
+            assert "exceeds budget" in stderr_output
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_no_budget_flag_returns_zero(self):
+        """compute without --budget returns 0 (unchanged behavior)."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COMPUTE_MONTHLY)
+            temp_path = f.name
+        try:
+            result = main(["compute", temp_path])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_analyze_within_budget_returns_zero(self):
+        """analyze --budget with a high threshold returns 0."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_MONTHLY_CLI)
+            temp_path = f.name
+        try:
+            result = main(["analyze", temp_path, "--budget", "1000000"])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_analyze_budget_breach_returns_one(self):
+        """analyze --budget with a 0 threshold returns 1 and prints breach."""
+        import tempfile, os, io, sys
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_MONTHLY_CLI)
+            temp_path = f.name
+        try:
+            old_stderr = sys.stderr
+            sys.stderr = io.StringIO()
+            result = main(["analyze", temp_path, "--budget", "0"])
+            stderr_output = sys.stderr.getvalue()
+            sys.stderr = old_stderr
+            assert result == 1, f"Expected exit code 1, got {result}"
+            assert "BUDGET BREACH" in stderr_output, (
+                f"Expected BUDGET BREACH in stderr, got: {stderr_output}"
+            )
+            assert "exceeds budget" in stderr_output
+        finally:
+            os.unlink(temp_path)
+
+    def test_analyze_no_budget_flag_returns_zero(self):
+        """analyze without --budget returns 0 (unchanged behavior)."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_MONTHLY_CLI)
+            temp_path = f.name
+        try:
+            result = main(["analyze", temp_path])
+            assert result == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_analyze_json_with_budget(self):
+        """analyze --json --budget returns JSON with total_cost when within budget."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_MONTHLY_CLI)
+            temp_path = f.name
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["analyze", temp_path, "--json", "--budget", "1000000"])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+            assert result == 0
+            data = json.loads(output)
+            assert "total_cost" in data
+            assert data["total_cost"] <= 1000000
+        finally:
+            os.unlink(temp_path)
+
