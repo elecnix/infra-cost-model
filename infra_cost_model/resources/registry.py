@@ -19,6 +19,7 @@ from .sqs import SQSQueue
 from .sns import SNSTopic
 from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
+from .networking import NATGateway, VpcEndpoint
 from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup
 from .ecs import ECSFargateService
@@ -72,6 +73,7 @@ class ResourceRegistry:
                 "eventbridge": "aws", "cloudfront": "aws",
                 "rds": "aws", "ecs": "aws",
                 "alb": "aws",
+                "networking": "aws",
                 "rds": "aws",
                 "gcp": "gcp", "azure": "azure",
             }
@@ -178,6 +180,8 @@ ResourceRegistry.register(SQSQueue)
 ResourceRegistry.register(SNSTopic)
 ResourceRegistry.register(EventBridgeRule)
 ResourceRegistry.register(CloudFrontDistribution)
+ResourceRegistry.register(NATGateway)
+ResourceRegistry.register(VpcEndpoint)
 ResourceRegistry.register(RDSInstance)
 ResourceRegistry.register(CloudWatchLogGroup)
 ResourceRegistry.register(ECSFargateService)

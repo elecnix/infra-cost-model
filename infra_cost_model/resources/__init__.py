@@ -17,6 +17,7 @@ from .sqs import SQSQueue
 from .sns import SNSTopic
 from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
+from .networking import NATGateway, VpcEndpoint
 from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup
 from .ecs import ECSFargateService
@@ -41,6 +42,8 @@ __all__ = [
     "SNSTopic",
     "EventBridgeRule",
     "CloudFrontDistribution",
+    "NATGateway",
+    "VpcEndpoint",
     "RDSInstance",
     "CloudWatchLogGroup",
     "ECSFargateService",
