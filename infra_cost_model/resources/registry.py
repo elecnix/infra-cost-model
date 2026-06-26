@@ -21,6 +21,7 @@ from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
 from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup
+from .ecs import ECSFargateService
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -68,7 +69,7 @@ class ResourceRegistry:
                 "bedrock": "aws", "external": "external",
                 "s3": "aws", "sqs": "aws", "sns": "aws",
                 "eventbridge": "aws", "cloudfront": "aws",
-                "rds": "aws",
+                "rds": "aws", "ecs": "aws",
                 "gcp": "gcp", "azure": "azure",
             }
             return known_providers.get(leaf)
@@ -176,6 +177,7 @@ ResourceRegistry.register(EventBridgeRule)
 ResourceRegistry.register(CloudFrontDistribution)
 ResourceRegistry.register(RDSInstance)
 ResourceRegistry.register(CloudWatchLogGroup)
+ResourceRegistry.register(ECSFargateService)
 ResourceRegistry.register(BedrockModel)
 ResourceRegistry.register(ExternalNode)
 

@@ -19,6 +19,7 @@ from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
 from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup
+from .ecs import ECSFargateService
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -41,6 +42,7 @@ __all__ = [
     "CloudFrontDistribution",
     "RDSInstance",
     "CloudWatchLogGroup",
+    "ECSFargateService",
     "CloudFunction",
     "CloudStorage",
     "CloudRun",
