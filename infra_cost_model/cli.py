@@ -361,14 +361,18 @@ def cmd_graph(args: argparse.Namespace) -> int:
     for edge in edges:
         edge_targets.add(edge.get("to"))
 
-    # Check if any node has flatOverride AND incoming edges (conflict per DP#9)
+    # Warn only on the genuine flat-vs-derived conflict (DP#9): a node whose
+    # cost is ENTIRELY fixed (flatOverride, or every metric marked fixed) that
+    # also receives incoming edges. A node mixing fixed and usage-driven metrics
+    # legitimately consumes its edges and is not flagged (Issue #196).
+    from infra_cost_model.engine.engine import _node_is_fully_fixed
     for node_addr, node_data in nodes.items():
-        flat_override = node_data.get("flatOverride", False)
         has_incoming_edges = node_addr in edge_targets
 
-        if flat_override and has_incoming_edges:
+        if _node_is_fully_fixed(node_data) and has_incoming_edges:
             warnings_list.append(
-                f"⚠ Conflict: '{node_addr}' has flatOverride=true AND incoming call edges. "
+                f"⚠ Conflict: '{node_addr}' is fully fixed (flatOverride, or every "
+                f"metric marked fixed) AND has incoming call edges. "
                 f"Flat overrides are an escape hatch (DP#9); derive usage from topology instead."
             )
 
