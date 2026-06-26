@@ -22,6 +22,7 @@ from .cloudfront import CloudFrontDistribution
 from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup
 from .ecs import ECSFargateService
+from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -70,6 +71,8 @@ class ResourceRegistry:
                 "s3": "aws", "sqs": "aws", "sns": "aws",
                 "eventbridge": "aws", "cloudfront": "aws",
                 "rds": "aws", "ecs": "aws",
+                "alb": "aws",
+                "rds": "aws",
                 "gcp": "gcp", "azure": "azure",
             }
             return known_providers.get(leaf)
@@ -178,6 +181,7 @@ ResourceRegistry.register(CloudFrontDistribution)
 ResourceRegistry.register(RDSInstance)
 ResourceRegistry.register(CloudWatchLogGroup)
 ResourceRegistry.register(ECSFargateService)
+ResourceRegistry.register(ApplicationLoadBalancer)
 ResourceRegistry.register(BedrockModel)
 ResourceRegistry.register(ExternalNode)
 
