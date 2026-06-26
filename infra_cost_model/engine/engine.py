@@ -470,8 +470,11 @@ class CostAggregator:
         """Compute token-based cost for LLM models (DP#8).
         
         Token pricing uses both invocation-derived token flow and node-level
-        usage metrics. Input tokens flow from upstream edges; output tokens
-        are produced by the node based on its per-invocation output metric.
+        usage metrics. Input tokens flow from upstream edges; output and
+        cached tokens are per-invocation node metrics.
+        
+        Recognized usageMetrics keys: inputTokens, outputTokens,
+        cachedReadTokens, cacheWriteTokens.
         
         Uses catalog query if available (preferred per Principle 13),
         otherwise falls back to embedded pricingRates.
@@ -481,51 +484,73 @@ class CostAggregator:
         provider = node.get("provider")
         service = node.get("service", "")
         region = node.get("region")
-        
-        # Total input tokens: from token flow distribution through edges
+
+        # Recognized token metric keys (Issue #194, #195)
+        _RECOGNIZED_KEYS = {
+            "inputTokens", "outputTokens", "cachedReadTokens", "cacheWriteTokens",
+        }
+        # Warn about unrecognized usageMetrics keys for token_based nodes (Issue #195)
+        unrecognized = set(node_metrics.keys()) - _RECOGNIZED_KEYS
+        if unrecognized:
+            sorted_unrecognized = sorted(unrecognized)
+            sorted_recognized = sorted(_RECOGNIZED_KEYS)
+            warnings.warn(
+                f"Node '{address}' has pricingModel 'token_based' with "
+                f"unrecognized usageMetrics keys: "
+                f"{', '.join(sorted_unrecognized)}. "
+                f"Recognized keys for token_based pricing are: "
+                f"{', '.join(sorted_recognized)}. "
+                f"Unrecognized keys are ignored in cost computation."
+            )
+
+        # Total input tokens: from token flow distribution through edges,
+        # with fallback to per-invocation node metric.
         total_input_tokens = usage.input_tokens
-        
-        # Total output tokens: invocation_count × per-invocation output tokens
-        output_per_call = 0.0
-        if "outputTokens" in node_metrics:
-            om = node_metrics["outputTokens"]
-            output_per_call = self._resolve_param(om.get("value", 0) if isinstance(om, dict) else om)
-        total_output_tokens = usage.invocation_count * output_per_call
-        
-        # Also check for direct input token specification on the node
-        input_per_call = 0.0
-        if "inputTokens" in node_metrics:
+        if total_input_tokens == 0.0 and "inputTokens" in node_metrics:
             im = node_metrics["inputTokens"]
-            input_per_call = self._resolve_param(im.get("value", 0) if isinstance(im, dict) else im)
-        if total_input_tokens == 0.0:
+            input_per_call = self._resolve_param(
+                im.get("value", 0) if isinstance(im, dict) else im
+            )
             total_input_tokens = usage.invocation_count * input_per_call
-        
+
+        # Per-invocation token metrics (output and cached tokens).
+        # These are NOT accumulated from edge tokenFlow; only inputTokens flows
+        # through edges.
+        def _resolve_per_invocation(key: str) -> float:
+            if key not in node_metrics:
+                return 0.0
+            m = node_metrics[key]
+            per_call = self._resolve_param(
+                m.get("value", 0) if isinstance(m, dict) else m
+            )
+            return usage.invocation_count * per_call
+
+        total_output_tokens = _resolve_per_invocation("outputTokens")
+        total_cached_read_tokens = _resolve_per_invocation("cachedReadTokens")
+        total_cache_write_tokens = _resolve_per_invocation("cacheWriteTokens")
+
+        # Query each token class: catalog first (Principle 13), fallback to
+        # embedded pricingRates.
         total_cost = 0.0
-        
-        # Try catalog for input tokens
-        if self.catalog is not None and total_input_tokens > 0:
-            result = self.catalog.query(
-                provider, service, region, "inputTokens", total_input_tokens
-            )
-            if result is not None:
-                total_cost += result.total_cost
-            elif "inputTokens" in pricing_rates:
-                total_cost += total_input_tokens * pricing_rates["inputTokens"]
-        elif "inputTokens" in pricing_rates:
-            total_cost += total_input_tokens * pricing_rates["inputTokens"]
-        
-        # Try catalog for output tokens
-        if self.catalog is not None and total_output_tokens > 0:
-            result = self.catalog.query(
-                provider, service, region, "outputTokens", total_output_tokens
-            )
-            if result is not None:
-                total_cost += result.total_cost
-            elif "outputTokens" in pricing_rates:
-                total_cost += total_output_tokens * pricing_rates["outputTokens"]
-        elif "outputTokens" in pricing_rates:
-            total_cost += total_output_tokens * pricing_rates["outputTokens"]
-        
+        token_classes = [
+            ("inputTokens", total_input_tokens),
+            ("outputTokens", total_output_tokens),
+            ("cachedReadTokens", total_cached_read_tokens),
+            ("cacheWriteTokens", total_cache_write_tokens),
+        ]
+        for token_name, total_tokens in token_classes:
+            if total_tokens <= 0:
+                continue
+            if self.catalog is not None:
+                result = self.catalog.query(
+                    provider, service, region, token_name, total_tokens
+                )
+                if result is not None:
+                    total_cost += result.total_cost
+                    continue
+            if token_name in pricing_rates:
+                total_cost += total_tokens * pricing_rates[token_name]
+
         return total_cost
     
     def _compute_percentage_cost(self, address: str, node: dict, invocations: float) -> float:
