@@ -20,6 +20,7 @@ from .cloudfront import CloudFrontDistribution
 from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup
 from .ecs import ECSFargateService
+from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -43,6 +44,7 @@ __all__ = [
     "RDSInstance",
     "CloudWatchLogGroup",
     "ECSFargateService",
+    "ApplicationLoadBalancer",
     "CloudFunction",
     "CloudStorage",
     "CloudRun",
