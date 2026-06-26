@@ -1,5 +1,7 @@
 """Tests for cost engine module."""
 
+import warnings
+
 import pytest
 from infra_cost_model.engine.engine import (
     DAGValidator, WorkloadDeriver, CostAggregator, CostEngine, DerivedUsage,
@@ -1513,6 +1515,289 @@ class TestTokenDistribution:
         # 200 * 750 * $0.015/1K = $2.25
         expected = 200 * 750 * 0.015 / 1000
         assert costs["llm"] == pytest.approx(expected)
+
+
+    def test_cached_read_tokens_with_pricing_rates(self):
+        """cachedReadTokens contribute at cache read rate (Issue #194)."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "inputTokens": {"unit": "tokens", "value": 1000},
+                    "outputTokens": {"unit": "tokens", "value": 500},
+                    "cachedReadTokens": {"unit": "tokens", "value": 400},
+                },
+                "pricingRates": {
+                    "inputTokens": 0.003 / 1000,
+                    "outputTokens": 0.015 / 1000,
+                    "cachedReadTokens": 0.0003 / 1000,
+                },
+            }
+        }
+
+        usage = DerivedUsage("llm", invocation_count=100.0)
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+        costs = aggregator.aggregate()
+
+        # Input: 100 * 1000 * $0.003/1K = $0.30
+        # Output: 100 * 500 * $0.015/1K = $0.75
+        # CachedRead: 100 * 400 * $0.0003/1K = $0.012
+        # Total: $1.062
+        expected = (
+            100 * 1000 * 0.003 / 1000
+            + 100 * 500 * 0.015 / 1000
+            + 100 * 400 * 0.0003 / 1000
+        )
+        assert costs["llm"] == pytest.approx(expected)
+
+    def test_cache_write_tokens_with_pricing_rates(self):
+        """cacheWriteTokens contribute at cache write rate (Issue #194)."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "inputTokens": {"unit": "tokens", "value": 1000},
+                    "cacheWriteTokens": {"unit": "tokens", "value": 200},
+                },
+                "pricingRates": {
+                    "inputTokens": 0.003 / 1000,
+                    "cacheWriteTokens": 0.00375 / 1000,
+                },
+            }
+        }
+
+        usage = DerivedUsage("llm", invocation_count=100.0)
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+        costs = aggregator.aggregate()
+
+        # Input: 100 * 1000 * $0.003/1K = $0.30
+        # CacheWrite: 100 * 200 * $0.00375/1K = $0.075
+        expected = (
+            100 * 1000 * 0.003 / 1000
+            + 100 * 200 * 0.00375 / 1000
+        )
+        assert costs["llm"] == pytest.approx(expected)
+
+    def test_cached_tokens_with_catalog(self):
+        """cachedReadTokens and cacheWriteTokens use catalog (Issue #194)."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            cache.upsert(Price(
+                vendor="aws", service="Bedrock", region="us-east-1",
+                product_family="Bedrock", attributes={},
+                usage_metric="cachedReadTokens", unit="tokens",
+                price_usd=0.0003 / 1000,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+            cache.upsert(Price(
+                vendor="aws", service="Bedrock", region="us-east-1",
+                product_family="Bedrock", attributes={},
+                usage_metric="cacheWriteTokens", unit="tokens",
+                price_usd=0.00375 / 1000,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00"
+            ))
+
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+
+            nodes = {
+                "llm": {
+                    "nodeType": "compute",
+                    "resourceAddress": "bedrock.claude",
+                    "provider": "aws",
+                    "service": "Bedrock",
+                    "region": "us-east-1",
+                    "pricingModel": "token_based",
+                    "usageMetrics": {
+                        "cachedReadTokens": {"unit": "tokens", "value": 400},
+                        "cacheWriteTokens": {"unit": "tokens", "value": 200},
+                    },
+                    "pricingRates": {
+                        "cachedReadTokens": 0.001 / 1000,
+                        "cacheWriteTokens": 0.001 / 1000,
+                    },
+                }
+            }
+
+            usage = DerivedUsage("llm", invocation_count=100.0)
+            aggregator = CostAggregator(nodes, {"llm": usage}, [], catalog)
+            costs = aggregator.aggregate()
+
+            # CachedRead from catalog: 100 * 400 * $0.0003/1K = $0.012
+            # CacheWrite from catalog: 100 * 200 * $0.00375/1K = $0.075
+            expected = (
+                100 * 400 * 0.0003 / 1000
+                + 100 * 200 * 0.00375 / 1000
+            )
+            assert costs["llm"] == pytest.approx(expected)
+
+    def test_unrecognized_token_metrics_warning(self):
+        """Unrecognized usageMetrics emit UserWarning (Issue #195)."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "inputTokens": {"unit": "tokens", "value": 1000},
+                    "freshInputTokens": {"unit": "tokens", "value": 500},
+                    "cachedReadTokens": {"unit": "tokens", "value": 400},
+                },
+                "pricingRates": {
+                    "inputTokens": 0.003 / 1000,
+                    "cachedReadTokens": 0.0003 / 1000,
+                },
+            }
+        }
+
+        usage = DerivedUsage("llm", invocation_count=100.0)
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+
+        with pytest.warns(UserWarning, match="freshInputTokens") as record:
+            costs = aggregator.aggregate()
+
+        assert len(record) == 1
+        wm = record[0].message.args[0]
+        assert "freshInputTokens" in wm
+        assert "token_based" in wm
+        assert "Recognized keys" in wm
+
+        # Despite warning, recognized keys are still priced correctly
+        expected = (
+            100 * 1000 * 0.003 / 1000
+            + 100 * 400 * 0.0003 / 1000
+        )
+        assert costs["llm"] == pytest.approx(expected)
+
+    def test_no_warning_when_all_keys_recognized(self):
+        """No warning when all usageMetrics keys are recognized (Issue #195)."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "inputTokens": {"unit": "tokens", "value": 1000},
+                    "outputTokens": {"unit": "tokens", "value": 500},
+                    "cachedReadTokens": {"unit": "tokens", "value": 400},
+                    "cacheWriteTokens": {"unit": "tokens", "value": 200},
+                },
+                "pricingRates": {
+                    "inputTokens": 0.003 / 1000,
+                    "outputTokens": 0.015 / 1000,
+                    "cachedReadTokens": 0.0003 / 1000,
+                    "cacheWriteTokens": 0.00375 / 1000,
+                },
+            }
+        }
+
+        usage = DerivedUsage("llm", invocation_count=100.0)
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            costs = aggregator.aggregate()
+
+        token_warnings = [
+            w for w in record
+            if "unrecognized usageMetrics keys" in str(w.message)
+        ]
+        assert len(token_warnings) == 0
+
+        expected = (
+            100 * 1000 * 0.003 / 1000
+            + 100 * 500 * 0.015 / 1000
+            + 100 * 400 * 0.0003 / 1000
+            + 100 * 200 * 0.00375 / 1000
+        )
+        assert costs["llm"] == pytest.approx(expected)
+
+    def test_all_four_token_classes_combined(self):
+        """All four token classes contribute to total cost simultaneously."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "inputTokens": {"unit": "tokens", "value": 800},
+                    "outputTokens": {"unit": "tokens", "value": 300},
+                    "cachedReadTokens": {"unit": "tokens", "value": 500},
+                    "cacheWriteTokens": {"unit": "tokens", "value": 100},
+                },
+                "pricingRates": {
+                    "inputTokens": 0.003 / 1000,
+                    "outputTokens": 0.015 / 1000,
+                    "cachedReadTokens": 0.0003 / 1000,
+                    "cacheWriteTokens": 0.00375 / 1000,
+                },
+            }
+        }
+
+        usage = DerivedUsage("llm", invocation_count=50.0)
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+        costs = aggregator.aggregate()
+
+        expected = (
+            50 * 800 * 0.003 / 1000
+            + 50 * 300 * 0.015 / 1000
+            + 50 * 500 * 0.0003 / 1000
+            + 50 * 100 * 0.00375 / 1000
+        )
+        assert costs["llm"] == pytest.approx(expected)
+
+    def test_unrecognized_keys_only_warn_no_other_keys(self):
+        """Warning fires even when ALL usageMetrics keys are unrecognized."""
+        nodes = {
+            "llm": {
+                "nodeType": "compute",
+                "resourceAddress": "bedrock.claude",
+                "provider": "aws",
+                "service": "Bedrock",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "freshInputTokens": {"unit": "tokens", "value": 500},
+                    "cachedInputTokens": {"unit": "tokens", "value": 300},
+                },
+                "pricingRates": {},
+            }
+        }
+
+        usage = DerivedUsage("llm", invocation_count=100.0)
+        aggregator = CostAggregator(nodes, {"llm": usage}, [])
+
+        with pytest.warns(UserWarning, match="freshInputTokens") as record:
+            costs = aggregator.aggregate()
+
+        assert len(record) == 1
+        wm = record[0].message.args[0]
+        assert "freshInputTokens" in wm
+        assert "cachedInputTokens" in wm
+
+        # No recognized keys, so cost is zero
+        assert costs["llm"] == 0.0
 
 
 class TestParametricSensitivityAnalyzer:
