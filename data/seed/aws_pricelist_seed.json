@@ -55,5 +55,7 @@
   {"vendor": "aws", "service": "AmazonRDS", "region": "us-east-1", "usage_metric": "RDS-Instance-Hour-db.t3.small", "unit": "Hours", "price_usd": 0.068, "source": "seed", "description": "RDS db.t3.small instance hourly pricing ($0.068 per hour)"},
   {"vendor": "aws", "service": "AmazonRDS", "region": "us-east-1", "usage_metric": "RDS-Instance-Hour-db.m5.large", "unit": "Hours", "price_usd": 0.342, "source": "seed", "description": "RDS db.m5.large instance hourly pricing ($0.342 per hour)"},
   {"vendor": "aws", "service": "AmazonRDS", "region": "us-east-1", "usage_metric": "RDS-Storage-gp3", "unit": "GB-Mo", "price_usd": 0.115, "source": "seed", "description": "RDS gp3 storage pricing ($0.115 per GB-month)"},
-  {"vendor": "aws", "service": "AmazonRDS", "region": "us-east-1", "usage_metric": "RDS-Backup-Storage", "unit": "GB-Mo", "price_usd": 0.095, "source": "seed", "description": "RDS backup storage pricing beyond free tier ($0.095 per GB-month)"}
+  {"vendor": "aws", "service": "AmazonRDS", "region": "us-east-1", "usage_metric": "RDS-Backup-Storage", "unit": "GB-Mo", "price_usd": 0.095, "source": "seed", "description": "RDS backup storage pricing beyond free tier ($0.095 per GB-month)"},
+  {"vendor": "aws", "service": "AmazonCloudWatch", "region": "us-east-1", "usage_metric": "CloudWatch-Log-Ingestion", "unit": "GB", "price_usd": 0.50, "source": "seed", "description": "CloudWatch Logs ingestion pricing ($0.50 per GB ingested)"},
+  {"vendor": "aws", "service": "AmazonCloudWatch", "region": "us-east-1", "usage_metric": "CloudWatch-Log-Storage", "unit": "GB-Mo", "price_usd": 0.03, "source": "seed", "description": "CloudWatch Logs storage pricing ($0.03 per GB-month stored)"}
 ]
