@@ -24,6 +24,7 @@ from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
+from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 
 __all__ = [
     "ResourceType",
@@ -57,4 +58,7 @@ __all__ = [
     "APIManagement",
     "AzureOpenAI",
     "AzureBlobStorage",
+    "SecretsManagerSecret",
+    "ECRRepository",
+    "Route53Zone",
 ]

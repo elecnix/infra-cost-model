@@ -73,4 +73,9 @@
   {"vendor": "aws", "service": "AmazonVPC", "region": "us-east-1", "usage_metric": "NAT-Gateway-DataProcessed", "unit": "GB", "price_usd": 0.045, "source": "seed", "description": "NAT Gateway data processing pricing ($0.045 per GB processed)"},
   {"vendor": "aws", "service": "AmazonVPC", "region": "us-east-1", "usage_metric": "VPC-Endpoint-Hour", "unit": "Hours", "price_usd": 0.01, "source": "seed", "description": "VPC Interface Endpoint hourly pricing ($0.01 per ENI-hour)"},
   {"vendor": "aws", "service": "AmazonVPC", "region": "us-east-1", "usage_metric": "VPC-Endpoint-DataProcessed", "unit": "GB", "price_usd": 0.01, "source": "seed", "description": "VPC Interface Endpoint data processing pricing ($0.01 per GB processed)"}
+  {"vendor": "aws", "service": "AWSSecretsManager", "region": "us-east-1", "usage_metric": "SecretsManager-Secret", "unit": "Secrets", "price_usd": 0.40, "source": "seed", "description": "Secrets Manager per-secret monthly pricing ($0.40 per secret-month)"},
+  {"vendor": "aws", "service": "AWSSecretsManager", "region": "us-east-1", "usage_metric": "SecretsManager-API-Call", "unit": "10k-Calls", "price_usd": 0.05, "source": "seed", "description": "Secrets Manager API call pricing ($0.05 per 10K API calls)"},
+  {"vendor": "aws", "service": "AmazonECR", "region": "us-east-1", "usage_metric": "ECR-Storage", "unit": "GB-Mo", "price_usd": 0.10, "source": "seed", "description": "ECR image storage pricing ($0.10 per GB-month)"},
+  {"vendor": "aws", "service": "AmazonRoute53", "region": "us-east-1", "usage_metric": "Route53-HostedZone", "unit": "Zones", "price_usd": 0.50, "source": "seed", "description": "Route53 hosted zone monthly pricing ($0.50 per zone-month)"},
+  {"vendor": "aws", "service": "AmazonRoute53", "region": "us-east-1", "usage_metric": "Route53-Query", "unit": "1M-Queries", "price_usd": 0.40, "source": "seed", "description": "Route53 standard query pricing ($0.40 per 1M queries)"}
 ]

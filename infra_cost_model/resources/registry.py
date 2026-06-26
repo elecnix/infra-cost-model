@@ -26,6 +26,7 @@ from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
+from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 
 
 class ResourceRegistry:
@@ -75,6 +76,7 @@ class ResourceRegistry:
                 "alb": "aws",
                 "networking": "aws",
                 "rds": "aws",
+                "rds": "aws", "misc_services": "aws",
                 "gcp": "gcp", "azure": "azure",
             }
             return known_providers.get(leaf)
@@ -201,6 +203,11 @@ ResourceRegistry.register(AzureFunction)
 ResourceRegistry.register(CosmosDB)
 ResourceRegistry.register(AzureOpenAI)
 ResourceRegistry.register(AzureBlobStorage)
+
+# AWS miscellaneous services (Secrets Manager, ECR, Route53)
+ResourceRegistry.register(SecretsManagerSecret)
+ResourceRegistry.register(ECRRepository)
+ResourceRegistry.register(Route53Zone)
 
 
 def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
