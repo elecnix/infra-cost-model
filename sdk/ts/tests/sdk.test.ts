@@ -87,6 +87,17 @@ describe("NodeUsage", () => {
       memory_mb: 128,
     });
   });
+
+  it("adds fixed (always-on) metrics alongside usage-driven ones", () => {
+    const usage = new NodeUsage()
+      .withFixedMetric("gateway_hours", 730, "hours")
+      .withMetric("gb_processed", 2, "GB");
+
+    expect(usage.metrics).toEqual({
+      gateway_hours: { value: 730, unit: "hours", fixed: true },
+      gb_processed: { value: 2, unit: "GB" },
+    });
+  });
 });
 
 // ── Workflow Builder ─────────────────────────────────────────────────────────

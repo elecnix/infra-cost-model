@@ -93,7 +93,7 @@ export interface Node {
     [k: string]: number;
   };
   /**
-   * When true, usageMetrics values are flat monthly totals (escape hatch, per DP#9). When false (default), values are per-invocation multipliers applied to the derived invocation count.
+   * When true, ALL usageMetrics values are flat monthly totals (escape hatch, per DP#9) — equivalent to marking every metric fixed. When false (default), values are per-invocation multipliers applied to the derived invocation count. For a resource with both a fixed and a usage-driven dimension, prefer the per-metric 'fixed' flag instead. A node carrying any fixed cost is always-on: it is costed without a synthetic incoming edge and is not reported as unreachable.
    */
   flatOverride?: boolean;
   [k: string]: unknown;
@@ -105,9 +105,13 @@ export interface UsageMetric {
   unit: string;
   description?: string;
   /**
-   * Per-invocation multiplier. Multiplied by the derived invocation count to compute total consumption. When flatOverride is true on the containing node, this value is used directly as a flat monthly total instead.
+   * Per-invocation multiplier. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead.
    */
   value?: number;
+  /**
+   * When true, this metric is a fixed (always-on) monthly total: its value is used directly and is NOT scaled by the derived invocation count. This lets one node carry both a fixed dimension (e.g. NAT gateway hours, ALB-hours) and a usage-driven dimension (e.g. GB processed, LCUs) without splitting into two nodes (Issue #196).
+   */
+  fixed?: boolean;
   [k: string]: unknown;
 }
 export interface Edge {

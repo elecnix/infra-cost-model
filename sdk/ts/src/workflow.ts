@@ -16,11 +16,24 @@ import type {
 
 /** A usage builder for fluent metric declaration. */
 export class NodeUsage {
-  metrics: Record<string, number | { value: number; unit?: string }> = {};
+  metrics: Record<
+    string,
+    number | { value: number; unit?: string; fixed?: boolean }
+  > = {};
 
   /** Add a usage metric. Returns this for chaining. */
   withMetric(name: string, value: number, unit?: string): this {
     this.metrics[name] = unit ? { value, unit } : value;
+    return this;
+  }
+
+  /**
+   * Add a fixed (always-on) usage metric. Its value is a flat monthly total
+   * that is NOT scaled by the derived invocation count, letting one node carry
+   * both a fixed and a usage-driven dimension (Issue #196).
+   */
+  withFixedMetric(name: string, value: number, unit?: string): this {
+    this.metrics[name] = { value, unit, fixed: true };
     return this;
   }
 }

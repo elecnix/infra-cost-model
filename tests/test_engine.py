@@ -1987,3 +1987,244 @@ class TestParametricSensitivityAnalyzerTimeBasis:
             assert mo_pt["param1_value"] == pytest.approx(ps_pt["param1_value"])
             assert mo_pt["param2_value"] == pytest.approx(ps_pt["param2_value"])
             assert mo_pt["total_cost"] == pytest.approx(ps_pt["total_cost"] * SECONDS_PER_MONTH)
+
+
+class TestFixedMetrics:
+    """Tests for per-metric fixed flags and always-on node treatment (Issue #196).
+
+    A `fixed: true` usage metric is a flat monthly total that does NOT scale
+    with the derived invocation count, so one node can carry both a fixed
+    dimension (e.g. NAT gateway hours) and a usage-driven dimension (e.g. GB
+    processed). A node carrying any fixed cost is "always-on": it is costed
+    even without an incoming edge and is not reported as unreachable.
+    """
+
+    def test_fixed_metric_not_scaled_by_invocations(self):
+        """A fixed metric's value is used directly, ignoring invocation count."""
+        nodes = {
+            "nat": {
+                "nodeType": "routing",
+                "resourceAddress": "aws_nat_gateway.main",
+                "usageMetrics": {
+                    "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+                },
+                "pricingRates": {"gatewayHours": 0.045},
+            }
+        }
+        # Even with 1000 invocations, the fixed metric uses its value directly.
+        derived = {"nat": DerivedUsage("nat", 1000.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+
+        assert costs["nat"] == pytest.approx(730 * 0.045)
+
+    def test_mixed_fixed_and_variable_metrics(self):
+        """One node carries a fixed dimension plus a usage-driven dimension."""
+        nodes = {
+            "nat": {
+                "nodeType": "routing",
+                "resourceAddress": "aws_nat_gateway.main",
+                "usageMetrics": {
+                    "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+                    "gbProcessed": {"unit": "GB", "value": 2},
+                },
+                "pricingRates": {"gatewayHours": 0.045, "gbProcessed": 0.045},
+            }
+        }
+        derived = {"nat": DerivedUsage("nat", 1000.0)}
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+
+        # Fixed part: 730 * 0.045 (flat). Variable part: 1000 * 2 * 0.045.
+        expected = 730 * 0.045 + 1000 * 2 * 0.045
+        assert costs["nat"] == pytest.approx(expected)
+        # The fixed portion is exposed separately for time-basis handling.
+        assert aggregator.fixed_costs["nat"] == pytest.approx(730 * 0.045)
+
+    def test_always_on_node_costed_without_incoming_edge(self):
+        """A node with a fixed metric is costed even with no incoming edge."""
+        model = make_valid_cost_model()
+        model["nodes"]["nat"] = {
+            "nodeType": "routing",
+            "resourceAddress": "aws_nat_gateway.main",
+            "usageMetrics": {
+                "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+            },
+            "pricingRates": {"gatewayHours": 0.045},
+        }
+        engine = CostEngine(model)
+        costs = engine.compute()
+
+        assert "nat" in costs
+        assert costs["nat"] == pytest.approx(730 * 0.045)
+
+    def test_always_on_node_no_unreachable_warning(self):
+        """An unreachable always-on node does not trigger the unreachable warning."""
+        model = make_valid_cost_model()
+        model["nodes"]["nat"] = {
+            "nodeType": "routing",
+            "resourceAddress": "aws_nat_gateway.main",
+            "usageMetrics": {
+                "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+            },
+            "pricingRates": {"gatewayHours": 0.045},
+        }
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+
+        import warnings
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            derived = deriver.derive()
+
+        unreachable_warnings = [w for w in record if "unreachable" in str(w.message).lower()]
+        assert len(unreachable_warnings) == 0
+        # The always-on node is present with zero derived traffic.
+        assert "nat" in derived
+        assert derived["nat"].invocation_count == 0.0
+
+    def test_flat_override_node_no_unreachable_warning(self):
+        """A flatOverride node with no incoming edge is treated as always-on."""
+        model = make_valid_cost_model()
+        model["nodes"]["lb"] = {
+            "nodeType": "routing",
+            "resourceAddress": "aws_lb.main",
+            "flatOverride": True,
+            "usageMetrics": {"lbHours": {"unit": "hours", "value": 730}},
+            "pricingRates": {"lbHours": 0.025},
+        }
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+
+        import warnings
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            derived = deriver.derive()
+
+        unreachable_warnings = [w for w in record if "unreachable" in str(w.message).lower()]
+        assert len(unreachable_warnings) == 0
+        assert "lb" in derived
+
+    def test_genuine_orphan_still_warns(self):
+        """A non-fixed unreachable node still emits the unreachable warning."""
+        model = make_valid_cost_model()
+        model["nodes"]["orphan_cache"] = {
+            "nodeType": "storage",
+            "resourceAddress": "aws_elasticache_cluster.cache",
+            "provider": "aws",
+            "service": "AmazonElastiCache",
+        }
+        deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
+
+        with pytest.warns(UserWarning, match="orphan_cache"):
+            deriver.derive()
+
+    def test_fully_fixed_node_with_edge_warns(self):
+        """A fully-fixed node that also receives a DAG edge triggers DP#9 warning."""
+        nodes = {
+            "api": {"nodeType": "routing", "resourceAddress": "api"},
+            "lb": {
+                "nodeType": "routing",
+                "resourceAddress": "aws_lb.main",
+                "usageMetrics": {"lbHours": {"unit": "hours", "value": 730, "fixed": True}},
+                "pricingRates": {"lbHours": 0.025},
+            },
+        }
+        edges = [{"from": "api", "to": "lb", "rate": 1.0}]
+        derived = {
+            "api": DerivedUsage("api", 100.0),
+            "lb": DerivedUsage("lb", 100.0),
+        }
+        aggregator = CostAggregator(nodes, derived, edges)
+        with pytest.warns(UserWarning, match="flat"):
+            aggregator.aggregate()
+
+    def test_mixed_metric_node_with_edge_no_dp9_warning(self):
+        """A node with both fixed and variable metrics may receive DAG edges
+        without a DP#9 conflict warning — the edges feed its variable metric."""
+        nodes = {
+            "api": {"nodeType": "routing", "resourceAddress": "api"},
+            "nat": {
+                "nodeType": "routing",
+                "resourceAddress": "aws_nat_gateway.main",
+                "usageMetrics": {
+                    "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+                    "gbProcessed": {"unit": "GB", "value": 2},
+                },
+                "pricingRates": {"gatewayHours": 0.045, "gbProcessed": 0.045},
+            },
+        }
+        edges = [{"from": "api", "to": "nat", "rate": 1.0}]
+        derived = {
+            "api": DerivedUsage("api", 100.0),
+            "nat": DerivedUsage("nat", 100.0),
+        }
+        aggregator = CostAggregator(nodes, derived, edges)
+
+        import warnings
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            aggregator.aggregate()
+
+        dp9_warnings = [w for w in record if "escape" in str(w.message).lower()]
+        assert len(dp9_warnings) == 0
+
+    def test_fixed_metric_monthly_time_basis(self):
+        """Under monthly basis, the variable part scales but the fixed part stays flat."""
+        from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+
+        model = make_valid_cost_model(frequency=100)
+        model["nodes"]["nat"] = {
+            "nodeType": "routing",
+            "resourceAddress": "aws_nat_gateway.main",
+            "usageMetrics": {
+                "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+            },
+            "pricingRates": {"gatewayHours": 0.045},
+        }
+        per_second = CostEngine(model, time_basis="perSecond").compute()
+        monthly = CostEngine(model, time_basis="monthly").compute()
+
+        # Fixed cost is a monthly total in BOTH bases (not multiplied).
+        assert per_second["nat"] == pytest.approx(730 * 0.045)
+        assert monthly["nat"] == pytest.approx(730 * 0.045)
+        # A normal node's cost IS multiplied by the month length.
+        assert monthly["get_user_fn"] == pytest.approx(
+            per_second["get_user_fn"] * SECONDS_PER_MONTH
+        )
+
+    def test_fixed_metric_uses_catalog(self):
+        """A fixed metric is priced via the catalog when available."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = PricingCache(db_path=Path(tmpdir) / "test.db")
+            cache.upsert(Price(
+                vendor="aws", service="AmazonVPC", region="us-east-1",
+                product_family="NATGateway", attributes={},
+                usage_metric="gatewayHours", unit="hours",
+                price_usd=0.045,
+                start_usage_amount=0, end_usage_amount=None,
+                source="test", effective_date="2024-01-01",
+                fetched_at="2024-01-01T00:00:00",
+            ))
+            catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
+
+            nodes = {
+                "nat": {
+                    "nodeType": "routing",
+                    "resourceAddress": "aws_nat_gateway.main",
+                    "provider": "aws",
+                    "service": "AmazonVPC",
+                    "region": "us-east-1",
+                    "usageMetrics": {
+                        "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+                    },
+                }
+            }
+            derived = {"nat": DerivedUsage("nat", 9999.0)}
+            aggregator = CostAggregator(nodes, derived, [], catalog)
+            costs = aggregator.aggregate()
+
+            assert costs["nat"] == pytest.approx(730 * 0.045)

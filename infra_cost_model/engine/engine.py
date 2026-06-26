@@ -28,6 +28,51 @@ class DerivedUsage:
     edge_types: set[str] = field(default_factory=set)  # Edge types feeding this node
 
 
+def _metric_is_fixed(metric_def, flat_override: bool) -> bool:
+    """Whether a single usage metric is a fixed (frequency-independent) total.
+
+    A metric is fixed when the containing node sets flatOverride=true (legacy,
+    all metrics fixed) or when the metric itself carries `fixed: true`
+    (per-metric flag, Issue #196). Fixed metrics use their value directly as a
+    flat monthly total instead of scaling by the derived invocation count.
+    """
+    if flat_override:
+        return True
+    return isinstance(metric_def, dict) and bool(metric_def.get("fixed", False))
+
+
+def _node_has_fixed_cost(node: dict) -> bool:
+    """Whether a node carries any always-on (fixed) cost component.
+
+    Always-on nodes (a load balancer, NAT gateway, a reserved instance) are
+    costed without a synthetic incoming edge and are not reported as
+    unreachable (Issue #196).
+    """
+    if node.get("flatOverride", False):
+        return True
+    metrics = node.get("usageMetrics", {}) or {}
+    return any(
+        isinstance(m, dict) and m.get("fixed", False) for m in metrics.values()
+    )
+
+
+def _node_is_fully_fixed(node: dict) -> bool:
+    """Whether every cost component of a node is fixed (no usage-driven metric).
+
+    Used for the DP#9 conflict warning: only a fully-fixed node that also
+    receives DAG edges is a genuine flat-vs-derived conflict. A node mixing
+    fixed and usage-driven metrics legitimately consumes its incoming edges.
+    """
+    if node.get("flatOverride", False):
+        return True
+    metrics = node.get("usageMetrics", {}) or {}
+    if not metrics:
+        return False
+    return all(
+        isinstance(m, dict) and m.get("fixed", False) for m in metrics.values()
+    )
+
+
 class DAGValidator:
     """Validates DAG structure for cost model."""
     
@@ -182,16 +227,30 @@ class WorkloadDeriver:
                 if indegree[child] == 0:
                     queue.append(child)
         
-        # Warn about nodes that are defined but unreachable from the entry node
-        unreachable = set(self.nodes.keys()) - set(self.derived_usage.keys())
+        # Nodes defined but not reached by traversal from the entry node.
+        unreached = set(self.nodes.keys()) - set(self.derived_usage.keys())
+
+        # Always-on nodes carry frequency-independent (fixed) cost, so they are
+        # costed without a synthetic incoming edge (Issue #196). Inject them
+        # with zero derived traffic and exclude them from the unreachable
+        # warning — their fixed cost is charged regardless of any flow.
+        always_on = {
+            addr for addr in unreached if _node_has_fixed_cost(self.nodes[addr])
+        }
+        for addr in always_on:
+            self.derived_usage[addr] = DerivedUsage(
+                resource_address=addr,
+                invocation_count=0.0,
+            )
+
+        unreachable = sorted(unreached - always_on)
         if unreachable:
-            sorted_unreachable = sorted(unreachable)
             warnings.warn(
                 f"{len(unreachable)} node(s) are defined but unreachable from entry node "
                 f"'{entry_address}' and will be excluded from cost: "
-                f"{', '.join(sorted_unreachable)}"
+                f"{', '.join(unreachable)}"
             )
-        
+
         return self.derived_usage
     
     def _get_entry_frequency(self) -> float:
@@ -262,71 +321,94 @@ class CostAggregator:
         self.catalog = catalog
         self.parameters = parameters or {}
         self.costs: dict[str, float] = {}
-    
+        # Per-node fixed (frequency-independent) cost, expressed as a flat
+        # monthly total. Tracked separately so the time-basis conversion scales
+        # only the usage-driven portion of each node (Issue #196).
+        self.fixed_costs: dict[str, float] = {}
+
     def aggregate(self) -> dict[str, float]:
-        """Aggregate costs. Returns node costs."""
-        # Compute costs for all nodes in derived_usage
+        """Aggregate costs. Returns combined (variable + fixed) node costs.
+
+        Variable cost is in per-second internal units; fixed cost is a flat
+        monthly total. The CostEngine scales the variable portion to the output
+        time basis using ``fixed_costs`` to keep fixed totals unscaled.
+        """
         for addr, usage in self.derived_usage.items():
             if addr in self.nodes:
-                self.costs[addr] = self._compute_node_cost(addr, usage)
-        
+                variable, fixed = self._compute_node_cost(addr, usage)
+                self.fixed_costs[addr] = fixed
+                self.costs[addr] = variable + fixed
+
         return self.costs
-    
-    def _compute_node_cost(self, address: str, usage: DerivedUsage) -> float:
-        """Compute direct cost for a single node.
-        
-        Handles multiple pricing models:
-        - flat: usageMetrics values are per-invocation multipliers × invocation_count × rate.
-          When flatOverride is true on the node, values are treated as flat monthly
-          totals (not multiplied by invocation_count), implementing the escape hatch
-          from Principle 9.
-        - tiered: Tiered pricing from catalog
-        - token_based: LLM token pricing
-        - percentage: External services (Stripe 2.9% + $0.30)
-        
-        The derived invocation_count is the primary volume driver:
-        each usageMetrics value is a per-invocation quantity multiplied by
-        invocation_count to produce the total consumption that is then
-        multiplied by the pricing rate. When flatOverride is true, invocation_count
-        is not applied and the value is used directly.
+
+    def _compute_node_cost(self, address: str, usage: DerivedUsage) -> tuple[float, float]:
+        """Compute the (variable, fixed) cost for a single node.
+
+        Returns a tuple where:
+        - variable cost is the usage-driven cost in per-second internal units
+          (scaled later to the output time basis), and
+        - fixed cost is the frequency-independent cost expressed as a flat
+          monthly total (never scaled by the time basis).
+
+        A usage metric marked ``fixed: true`` — or any metric on a node with
+        ``flatOverride: true`` — contributes to the fixed cost using its value
+        directly (the escape hatch / always-on treatment of Principle 9 and
+        Issue #196). All other metrics contribute to the variable cost, scaled
+        by the derived invocation count.
+
+        Pricing models handled: flat, tiered, token_based, percentage.
         """
         node = self.nodes.get(address, {})
         pricing_model = node.get("pricingModel", "flat")
+        flat_override = node.get("flatOverride", False)
+
+        # Warn only on the genuine flat-vs-derived conflict (DP#9): a node whose
+        # cost is ENTIRELY fixed should not also receive DAG edges, since those
+        # edges cannot influence its cost. A node mixing fixed and usage-driven
+        # metrics legitimately consumes its incoming edges and does not warn.
+        if _node_is_fully_fixed(node) and any(e.get("to") == address for e in self.edges):
+            warnings.warn(
+                f"Node '{address}' is fully fixed (flatOverride, or every usage "
+                f"metric marked fixed) but also receives incoming DAG edges. Per "
+                f"DP#9, flat overrides are an escape hatch and should not be "
+                f"combined with DAG-derived usage. The DAG-derived invocation "
+                f"count is being ignored for this node."
+            )
+
+        # Percentage and token pricing keep node-level flat/derived semantics:
+        # the whole cost is fixed when flatOverride is set, else usage-driven.
+        if pricing_model == "percentage":
+            cost = self._compute_percentage_cost(address, node, usage.invocation_count)
+            return (0.0, cost) if flat_override else (cost, 0.0)
+
+        if pricing_model == "token_based":
+            cost = self._compute_token_cost(address, node, usage)
+            return (0.0, cost) if flat_override else (cost, 0.0)
+
+        # Tiered pricing supports per-metric fixed flags like flat pricing.
+        if pricing_model == "tiered":
+            return self._compute_tiered_cost(address, node, usage.invocation_count)
+
+        return self._compute_flat_cost(address, node, usage.invocation_count)
+
+    def _compute_flat_cost(self, address: str, node: dict,
+                           invocations: float) -> tuple[float, float]:
+        """Compute (variable, fixed) cost for flat-priced metrics.
+
+        Each usageMetrics value is a per-invocation quantity multiplied by the
+        derived invocation count, then by the pricing rate. Metrics marked fixed
+        (or every metric when flatOverride is set) instead use their value
+        directly as a flat monthly total. Catalog pricing is preferred over
+        embedded pricingRates (Principle 13). Per DP#4, metric values may
+        reference symbolic parameters by name.
+        """
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
         flat_override = node.get("flatOverride", False)
-        
-        # Warn when flatOverride=true conflicts with incoming DAG edges (DP#9).
-        # The engine is the canonical computation path; this ensures the
-        # design principle is enforced at the core level, not just at CLI.
-        if flat_override and any(e.get("to") == address for e in self.edges):
-            warnings.warn(
-                f"Node '{address}' has flatOverride=true but also receives "
-                f"incoming DAG edges. Per DP#9, flat overrides are an escape "
-                f"hatch and should not be combined with DAG-derived usage. "
-                f"The DAG-derived invocation count is being ignored for this node."
-            )
-        
-        # Handle percentage-based pricing (external services like Stripe)
-        if pricing_model == "percentage":
-            return self._compute_percentage_cost(address, node, usage.invocation_count)
-        
-        # Handle tiered pricing (storage, egress, etc.)
-        if pricing_model == "tiered":
-            return self._compute_tiered_cost(address, node, usage.invocation_count)
-        
-        # Handle token-based pricing (LLM models, DP#8)
-        if pricing_model == "token_based":
-            return self._compute_token_cost(address, node, usage)
-        
-        total_cost = 0.0
-        # When flatOverride is true, treat invocation_count as 1.0 — the
-        # usageMetrics values are flat monthly totals (escape hatch per DP#9).
-        invocations = usage.invocation_count if not flat_override else 1.0
         provider = node.get("provider")
         service = node.get("service", "")
         region = node.get("region")
-        
+
         # Validate provider/region when a catalog query path is possible (DP#6).
         # The engine must not silently assume a specific provider or region.
         # Validation only fires when a catalog is available and would be queried;
@@ -345,36 +427,44 @@ class CostAggregator:
                     f"Region must be specified explicitly on each node "
                     f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
                 )
-        
-        # Apply usage metrics with pricing rates.
-        # Each metric value is a per-invocation quantity; multiply by
-        # invocation_count to get total consumption, then by pricing rate.
-        # Prefer catalog over embedded pricingRates (Principle 13).
-        # Per DP#4, metric values may reference symbolic parameters by name.
+
+        variable_cost = 0.0
+        fixed_cost = 0.0
         for metric_name, metric_def in node_metrics.items():
             if isinstance(metric_def, dict):
                 per_invocation = self._resolve_param(metric_def.get("value", 0))
             else:
                 per_invocation = self._resolve_param(metric_def)
-            
-            total_quantity = invocations * per_invocation
-            
-            # Query catalog first (preferred path per Principle 13)
+
+            metric_fixed = _metric_is_fixed(metric_def, flat_override)
+            # Fixed metrics use their value directly; variable metrics scale by
+            # the derived invocation count.
+            total_quantity = (
+                per_invocation if metric_fixed else invocations * per_invocation
+            )
+
+            # Query catalog first (preferred path per Principle 13), else fall
+            # back to embedded pricingRates (deprecated per Principle 13).
+            metric_cost = None
             if self.catalog is not None:
                 result = self.catalog.query(
                     provider, service, region, metric_name, total_quantity
                 )
                 if result is not None:
-                    total_cost += result.total_cost
-                    continue
-            
-            # Fallback: embedded pricingRates (deprecated per Principle 13)
-            if metric_name in pricing_rates:
-                total_cost += total_quantity * pricing_rates[metric_name]
-        
-        return total_cost
-    
-    def _compute_tiered_cost(self, address: str, node: dict, invocations: float) -> float:
+                    metric_cost = result.total_cost
+            if metric_cost is None and metric_name in pricing_rates:
+                metric_cost = total_quantity * pricing_rates[metric_name]
+
+            if metric_cost is None:
+                continue
+            if metric_fixed:
+                fixed_cost += metric_cost
+            else:
+                variable_cost += metric_cost
+
+        return (variable_cost, fixed_cost)
+
+    def _compute_tiered_cost(self, address: str, node: dict, invocations: float) -> tuple[float, float]:
         """Compute tiered pricing cost using the pricing catalog.
         
         Each usage metric represents a dimensional line item (e.g., storage GB,
@@ -382,11 +472,16 @@ class CostAggregator:
         is per_invocation_value × invocation_count. This quantity is used to
         query the catalog for tiered pricing, which includes free-tier handling
         (first N units at $0 before charging begins).
-        
+
+        Metrics marked fixed (or every metric when flatOverride is set) use
+        their value directly as a flat monthly total instead of scaling by the
+        invocation count, and are returned as the fixed portion (Issue #196).
+
         Falls back to flat pricingRates if the catalog is unavailable.
         """
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
+        flat_override = node.get("flatOverride", False)
         provider = node.get("provider")
         service = node.get("service", "")
         region = node.get("region")
@@ -409,32 +504,40 @@ class CostAggregator:
                     f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
                 )
         
-        total_cost = 0.0
-        catalog_used = False
-        
+        variable_cost = 0.0
+        fixed_cost = 0.0
+
         for metric_name, metric_def in node_metrics.items():
             if isinstance(metric_def, dict):
                 per_invocation = self._resolve_param(metric_def.get("value", 0))
             else:
                 per_invocation = self._resolve_param(metric_def)
-            
-            total_quantity = invocations * per_invocation
-            
+
+            metric_fixed = _metric_is_fixed(metric_def, flat_override)
+            total_quantity = (
+                per_invocation if metric_fixed else invocations * per_invocation
+            )
+
+            metric_cost = None
             if self.catalog is not None:
                 result = self.catalog.query(
                     provider, service, region, metric_name, total_quantity
                 )
                 if result is not None:
-                    total_cost += result.total_cost
-                    catalog_used = True
-                    continue
-            
+                    metric_cost = result.total_cost
             # Fallback: flat pricingRates
-            if metric_name in pricing_rates:
-                total_cost += total_quantity * pricing_rates[metric_name]
-        
-        return total_cost
-    
+            if metric_cost is None and metric_name in pricing_rates:
+                metric_cost = total_quantity * pricing_rates[metric_name]
+
+            if metric_cost is None:
+                continue
+            if metric_fixed:
+                fixed_cost += metric_cost
+            else:
+                variable_cost += metric_cost
+
+        return (variable_cost, fixed_cost)
+
     def _resolve_param(self, value) -> float:
         """Resolve a value that may be a parameter name or a numeric literal.
         
@@ -623,15 +726,15 @@ class CostEngine:
         deriver = WorkloadDeriver(self.workflow, self.nodes, self.edges,
                                    parameters=self.parameters)
         self.derived_usage = deriver.derive()
-        
+
         aggregator = CostAggregator(self.nodes, self.derived_usage, self.edges,
                                      self.catalog, parameters=self.parameters)
-        self.costs = aggregator.aggregate()
-        
-        # Apply time basis conversion (per-second internal → output period).
-        # Skip flatOverride nodes — their values are already flat monthly totals.
-        self._apply_time_basis()
-        
+        aggregator.aggregate()
+
+        # Convert per-second usage-driven costs to the output period; fixed
+        # (always-on) costs are already flat monthly totals and are not scaled.
+        self.costs = self._finalize_costs(aggregator.costs, aggregator.fixed_costs)
+
         return self.costs
     
     def _compute_multi_workflow(self) -> dict[str, float]:
@@ -643,23 +746,27 @@ class CostEngine:
         if not self.validator.validate():
             raise ValueError(f"Invalid DAG: {'; '.join(self.validator.errors)}")
         
-        all_costs: dict[str, float] = {}
+        # Usage-driven costs accumulate across workflows; fixed (always-on)
+        # costs are a property of the node and are counted exactly once.
+        all_variable: dict[str, float] = defaultdict(float)
+        all_fixed: dict[str, float] = {}
         all_derived: dict[str, DerivedUsage] = {}
-        
+
         for wf in self.workflows:
             wf_params = wf.get("parameters", {})
             deriver = WorkloadDeriver(wf, self.nodes, self.edges,
                                        parameters=wf_params)
             derived = deriver.derive()
-            
+
             aggregator = CostAggregator(self.nodes, derived, self.edges,
                                          self.catalog, parameters=wf_params)
-            costs = aggregator.aggregate()
-            
-            # Sum costs across workflows (shared nodes accumulate)
-            for addr, cost in costs.items():
-                all_costs[addr] = all_costs.get(addr, 0.0) + cost
-            
+            aggregator.aggregate()
+
+            for addr, combined in aggregator.costs.items():
+                fixed = aggregator.fixed_costs.get(addr, 0.0)
+                all_variable[addr] += combined - fixed
+                all_fixed[addr] = fixed
+
             # Merge derived usage (sum invocation counts for shared nodes)
             for addr, du in derived.items():
                 if addr in all_derived:
@@ -669,29 +776,35 @@ class CostEngine:
                     all_derived[addr].edge_types |= du.edge_types
                 else:
                     all_derived[addr] = du
-        
+
         self.derived_usage = all_derived
-        self.costs = all_costs
-        
-        # Apply time basis conversion (per-second internal → output period).
-        # Skip flatOverride nodes — their values are already flat monthly totals.
-        self._apply_time_basis()
-        
+
+        # Convert per-second usage-driven costs to the output period; fixed
+        # (always-on) costs are already flat monthly totals and are not scaled.
+        multiplier = self._time_multiplier
+        self.costs = {}
+        for addr in set(all_variable) | set(all_fixed):
+            self.costs[addr] = (
+                all_variable[addr] * multiplier + all_fixed.get(addr, 0.0)
+            )
+
         return self.costs
-    
-    def _apply_time_basis(self) -> None:
-        """Convert per-second costs to the output time basis.
-        
-        Nodes with flatOverride=true are skipped because their usageMetrics
-        values are already flat totals in the output unit (Principle 9).
+
+    def _finalize_costs(self, combined: dict[str, float],
+                        fixed: dict[str, float]) -> dict[str, float]:
+        """Combine per-second variable cost with flat monthly fixed cost.
+
+        ``combined[addr]`` is variable + fixed in per-second internal units
+        (the fixed part already a monthly total). The usage-driven portion is
+        scaled to the output time basis; the fixed portion is left unscaled as
+        a monthly total (Principle 9 / Issue #196).
         """
         multiplier = self._time_multiplier
-        if multiplier == 1.0:
-            return
-        for addr in list(self.costs.keys()):
-            node = self.nodes.get(addr, {})
-            if not node.get("flatOverride", False):
-                self.costs[addr] *= multiplier
+        final: dict[str, float] = {}
+        for addr, total in combined.items():
+            fx = fixed.get(addr, 0.0)
+            final[addr] = (total - fx) * multiplier + fx
+        return final
 
     def total_cost(self) -> float:
         """Get total system cost in the configured time basis."""

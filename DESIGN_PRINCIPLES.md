@@ -69,6 +69,15 @@ The DAG is the primary interface. Flat per-resource overrides exist for migratio
 
 > The anti-pattern is Infracost's `infracost-usage.yml`, where every usage value is a manual override with no relationships between resources.
 
+### Always-on resources and per-metric fixed flags
+
+Always-on infrastructure (a load balancer, NAT gateway, a reserved instance) has frequency-independent cost. Two mechanisms support it without abusing the flat-override escape hatch:
+
+- A node carrying any **fixed** cost is **always-on**: it is costed without a synthetic incoming edge and is not reported as unreachable. You no longer add a meaningless edge just to make a fixed resource reachable.
+- A usage metric may set **`fixed: true`** so its value is a flat monthly total that does not scale with the derived invocation count. This lets one node carry both a fixed dimension and a usage-driven dimension (NAT gateway hours + GB processed; ALB-hours + LCUs; Secrets Manager secret-month + per-call) instead of splitting into two nodes. `flatOverride: true` remains the all-or-nothing shorthand for "every metric is fixed".
+
+The flat-vs-derived conflict warning fires only for the genuine case: a **fully-fixed** node (flatOverride, or every metric marked fixed) that also receives incoming DAG edges. A node mixing fixed and usage-driven metrics legitimately consumes its edges and does not warn.
+
 ## 10. Type-safe SDK from infrastructure-as-code type generation
 
 The SDK generates types from your infrastructure definition, so you cannot reference non-existent resources or attributes:

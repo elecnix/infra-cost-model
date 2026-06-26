@@ -1,0 +1,94 @@
+# Example: Always-on / fixed infrastructure (Terraform)
+# Demonstrates Issue #196:
+#   - Per-metric `fixed` flags: one node carries BOTH a fixed monthly dimension
+#     and a usage-driven dimension (NAT gateway hours + GB processed; ALB-hours
+#     + LCUs) without splitting into two nodes.
+#   - Always-on nodes: a fixed resource (Secrets Manager secret) is costed
+#     without a synthetic incoming edge and emits no unreachable warning.
+#   - No spurious DP#9 conflict: a mixed node may receive DAG edges; the warning
+#     fires only for a fully-fixed node that also receives edges.
+#
+# Issue: https://github.com/elecnix/infra-cost-model/issues/196
+
+version: "1.0"
+
+workflow:
+  name: always-on-web-api
+  entry: aws_lb.main
+  frequency:
+    unit: perMinute
+    value: 1000
+
+nodes:
+  # Entry: Application Load Balancer. Mixed — fixed ALB-hours plus usage-driven
+  # LCUs. Being the entry node it has no incoming edge, so no DP#9 conflict.
+  aws_lb.main:
+    nodeType: routing
+    resourceAddress: aws_lb.main
+    provider: aws
+    service: ElasticLoadBalancing
+    region: us-east-1
+    usageMetrics:
+      albHours: { unit: hours, value: 730, fixed: true }   # always-on, $/month
+      lcus: { unit: LCU, value: 0.0001 }                    # scales with traffic
+    pricingRates:
+      albHours: 0.0225            # $0.0225 per ALB-hour
+      lcus: 0.008                 # $0.008 per LCU consumed per request (illustrative)
+
+  aws_lambda_function.api:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.api
+    provider: aws
+    service: AWSLambda
+    region: us-east-1
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.125 }
+    pricingRates:
+      invocations: 0.20e-6        # $0.20 per million requests
+      gb_seconds: 0.0000166667    # $0.0000166667 per GB-second
+
+  aws_dynamodb_table.data:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.data
+    provider: aws
+    service: AmazonDynamoDB
+    region: us-east-1
+    usageMetrics:
+      readRequests: { unit: requests, value: 1 }
+    pricingRates:
+      readRequests: 0.25e-6       # $0.25 per million read request units
+
+  # NAT gateway: mixed — fixed gateway-hours plus usage-driven GB processed.
+  # It DOES receive an edge (egress flows through it), and because only one of
+  # its metrics is fixed there is no DP#9 conflict.
+  aws_nat_gateway.main:
+    nodeType: routing
+    resourceAddress: aws_nat_gateway.main
+    provider: aws
+    service: AmazonVPC
+    region: us-east-1
+    usageMetrics:
+      gatewayHours: { unit: hours, value: 730, fixed: true }   # always-on, $/month
+      gbProcessed: { unit: GB, value: 0.00005 }                 # ~50KB/req, scales with traffic
+    pricingRates:
+      gatewayHours: 0.045         # $0.045 per NAT gateway-hour
+      gbProcessed: 0.045          # $0.045 per GB processed
+
+  # Secrets Manager secret: a purely fixed, always-on resource. It has NO
+  # incoming edge — it is costed anyway and emits no unreachable warning.
+  aws_secretsmanager_secret.api_key:
+    nodeType: storage
+    resourceAddress: aws_secretsmanager_secret.api_key
+    provider: aws
+    service: AWSSecretsManager
+    region: us-east-1
+    usageMetrics:
+      secretMonths: { unit: secret-month, value: 1, fixed: true }
+    pricingRates:
+      secretMonths: 0.40          # $0.40 per secret per month
+
+edges:
+  - { from: aws_lb.main, to: aws_lambda_function.api, rate: 1.0 }
+  - { from: aws_lambda_function.api, to: aws_dynamodb_table.data, rate: 1.0, type: read }
+  - { from: aws_lambda_function.api, to: aws_nat_gateway.main, rate: 1.0 }
