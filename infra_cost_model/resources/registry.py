@@ -20,6 +20,7 @@ from .sns import SNSTopic
 from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
 from .rds import RDSInstance
+from .cloudwatch import CloudWatchLogGroup
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 
@@ -174,6 +175,7 @@ ResourceRegistry.register(SNSTopic)
 ResourceRegistry.register(EventBridgeRule)
 ResourceRegistry.register(CloudFrontDistribution)
 ResourceRegistry.register(RDSInstance)
+ResourceRegistry.register(CloudWatchLogGroup)
 ResourceRegistry.register(BedrockModel)
 ResourceRegistry.register(ExternalNode)
 
