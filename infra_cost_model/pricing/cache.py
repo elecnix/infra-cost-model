@@ -88,21 +88,15 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
     count = 0
     now = datetime.now().isoformat()
     
-    # Clean up old seed entries for metrics being updated to tiered
-    # pricing. Deleting ALL seed entries (not just flat) handles
-    # SQLite's NULL-in-UNIQUE behavior where rows with purchase_option=NULL
-    # are always considered distinct, causing duplicates from different
-    # code paths (seed_prices vs aws_fallback_prices).
-    #
-    # Services with free-tier entries: the $0 first tier changes the
-    # metric from flat to tiered pricing, so old flat entries must be
-    # removed before inserting the new tiered entries (DP#13).
-    for svc in ('AWSLambda', 'AmazonSQS', 'AmazonSNS', 'AmazonEventBridge'):
-        conn.execute("""
-            DELETE FROM prices
-            WHERE vendor = 'aws' AND service = ?
-            AND source IN ('seed', 'seed-initial')
-        """, (svc,))
+    # Seed loading must be idempotent. SQLite treats NULL as distinct in the
+    # UNIQUE constraint, so seed rows (which carry purchase_option=NULL) would
+    # be re-inserted as duplicates on every load via INSERT OR IGNORE. Delete
+    # ALL existing seed-sourced rows first, then insert a fresh copy from the
+    # seed file. This also flips metrics that gained a $0 free-tier from flat to
+    # tiered pricing without leaving stale flat rows behind (DP#13).
+    conn.execute(
+        "DELETE FROM prices WHERE source IN ('seed', 'seed-initial')"
+    )
     conn.commit()
     
     try:
@@ -266,7 +260,26 @@ class PricingCache:
             )
             for row in rows
         ]
-        
+
+        # Collapse exact-duplicate rows. SQLite treats NULL as distinct in the
+        # UNIQUE constraint, so rows with purchase_option=NULL (every seed row)
+        # can be inserted repeatedly by re-seeding or upserts. Without this, a
+        # single logical price would be returned as a spurious multi-tier
+        # TieredPrice — inflating tiered costs and breaking single-Price callers.
+        seen: set = set()
+        deduped: list[Price] = []
+        for p in prices:
+            key = (
+                p.product_family, p.unit, p.price_usd,
+                p.start_usage_amount, p.end_usage_amount, p.purchase_option,
+                json.dumps(p.attributes, sort_keys=True),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(p)
+        prices = deduped
+
         if len(prices) > 1:
             return TieredPrice(tiers=prices)
         return prices[0]
