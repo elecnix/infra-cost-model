@@ -72,6 +72,33 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
+# Region prefix for AWS usagetype attribute values. Not exhaustive; extend as needed.
+_REGION_PREFIX = {
+    "us-east-1": "USE1", "us-east-2": "USE2", "us-west-1": "USW1",
+    "us-west-2": "USW2", "ca-central-1": "CAN1", "ca-west-1": "CAN2",
+    "eu-west-1": "EU", "eu-west-2": "EUW2", "eu-west-3": "EUW3",
+    "eu-central-1": "EUC1", "eu-central-2": "EUC2", "eu-north-1": "EUN1",
+    "eu-south-1": "EUS1", "eu-south-2": "EUS2",
+    "ap-southeast-1": "APS1", "ap-southeast-2": "APS2", "ap-southeast-3": "APS3",
+    "ap-south-1": "APS3", "ap-south-2": "APS5",
+    "ap-northeast-1": "APN1", "ap-northeast-2": "APN2", "ap-northeast-3": "APN3",
+    "ap-east-1": "APE1",
+    "sa-east-1": "SAE1",
+    "me-south-1": "MES1", "me-central-1": "MEC1",
+    "af-south-1": "AFS1",
+    "il-central-1": "ILC1",
+}
+
+
+def _region_usagetype_prefix(region: str) -> str:
+    """Return the AWS usagetype region prefix for *region* (e.g. ``CAN1``).
+
+    Falls back to ``REGION_PREFIX`` so a missing entry still produces a valid
+    GraphQL variable but the query will return empty.
+    """
+    return _REGION_PREFIX.get(region, "REGION_PREFIX")
+
+
 class InfracostClient:
     """GraphQL client for the Infracost Cloud Pricing API."""
 
@@ -151,7 +178,17 @@ class InfracostClient:
         if product_family:
             variables["productFamily"] = product_family
         if attribute_filters:
-            variables["attributeFilters"] = attribute_filters
+            # AWS usagetype values encode the region as a prefix
+            # (USE1- / CAN1- / EU- / APS2- / …) and break across regions
+            # otherwise. `REGION_PREFIX` is replaced here before the query.
+            region_prefix = _region_usagetype_prefix(region)
+            resolved = []
+            for f in attribute_filters:
+                val = f["value"]
+                if "REGION_PREFIX" in val:
+                    val = val.replace("REGION_PREFIX", region_prefix)
+                resolved.append({"key": f["key"], "value": val})
+            variables["attributeFilters"] = resolved
         if purchase_option:
             variables["purchaseOption"] = purchase_option
         response = requests.post(
@@ -259,19 +296,21 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "purchase_option": "on_demand", "unit": "ReadRequestUnits",
     },
     # Fargate ARM (Graviton) — price per vCPU-hour and GB-hour.
+    # The usagetype value encodes the region as a prefix (e.g. CAN1- / USE1-);
+    # REGION_PREFIX is resolved at query time from the region map.
     "ECS-Fargate-vCPU-Hour-ARM": {
         "service": "AmazonECS", "product_family": "Compute",
-        "attribute_filters": [{"key": "usagetype", "value": "USE1-Fargate-ARM-vCPU-Hours:perCPU"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Fargate-ARM-vCPU-Hours:perCPU"}],
         "unit": "hours",
     },
     "ECS-Fargate-GB-Hour-ARM": {
         "service": "AmazonECS", "product_family": "Compute",
-        "attribute_filters": [{"key": "usagetype", "value": "USE1-Fargate-ARM-GB-Hours"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Fargate-ARM-GB-Hours"}],
         "unit": "hours",
     },
     "ECS-Fargate-Ephemeral-Storage": {
         "service": "AmazonECS", "product_family": "Compute",
-        "attribute_filters": [{"key": "usagetype", "value": "USE1-Fargate-EphemeralStorage-GB-Hours"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Fargate-EphemeralStorage-GB-Hours"}],
         "unit": "GB-Hours",
     },
     # Application Load Balancer: ALB-hours (resource type ELB:Balancing) + LCU.
