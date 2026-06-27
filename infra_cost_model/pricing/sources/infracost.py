@@ -147,10 +147,13 @@ class InfracostClient:
             "vendorName": vendor,
             "service": service,
             "region": region,
-            "productFamily": product_family,
-            "attributeFilters": attribute_filters or [],
-            "purchaseOption": purchase_option,
         }
+        if product_family:
+            variables["productFamily"] = product_family
+        if attribute_filters:
+            variables["attributeFilters"] = attribute_filters
+        if purchase_option:
+            variables["purchaseOption"] = purchase_option
         response = requests.post(
             self.api_url,
             headers=headers,
@@ -254,6 +257,84 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "service": "AmazonDynamoDB", "product_family": "Amazon DynamoDB PayPerRequest Throughput",
         "attribute_filters": [{"key": "group", "value": "DDB-ReadUnits"}],
         "purchase_option": "on_demand", "unit": "ReadRequestUnits",
+    },
+    # Fargate ARM (Graviton) — price per vCPU-hour and GB-hour.
+    "ECS-Fargate-vCPU-Hour-ARM": {
+        "service": "AmazonECS", "product_family": "Compute",
+        "attribute_filters": [{"key": "usagetype", "value": "USE1-Fargate-ARM-vCPU-Hours:perCPU"}],
+        "unit": "hours",
+    },
+    "ECS-Fargate-GB-Hour-ARM": {
+        "service": "AmazonECS", "product_family": "Compute",
+        "attribute_filters": [{"key": "usagetype", "value": "USE1-Fargate-ARM-GB-Hours"}],
+        "unit": "hours",
+    },
+    "ECS-Fargate-Ephemeral-Storage": {
+        "service": "AmazonECS", "product_family": "Compute",
+        "attribute_filters": [{"key": "usagetype", "value": "USE1-Fargate-EphemeralStorage-GB-Hours"}],
+        "unit": "GB-Hours",
+    },
+    # Application Load Balancer: ALB-hours (resource type ELB:Balancing) + LCU.
+    "ALB-Hour": {
+        "service": "AWSELB", "product_family": "Load Balancer-Application",
+        "attribute_filters": [{"key": "group", "value": "ELB:Balancing"}],
+        "unit": "Hrs",
+    },
+    "ALB-LCU-ProcessedBytes": {
+        "service": "AWSELB", "product_family": "Load Balancer-Application",
+        "attribute_filters": [{"key": "group", "value": "ELB:Balancing"}],
+        "unit": "LCU-Hrs",
+    },
+    # NAT Gateway: the Infracost catalog doesn't currently expose NAT GW under a
+    # standard productFamily, so these entries are present but not yet live-validated.
+    # The infracost CLI does price this resource; the product grouping is TBD.
+    #"NAT-Gateway-Hour": { "service": "AmazonVPC" },
+    #"NAT-Gateway-DataProcessed": { "service": "AmazonVPC" },
+    # VPC Interface Endpoint (PrivateLink): ENI-hour + per-GB.
+    "VPC-Endpoint-Hour": {
+        "service": "AmazonVPC", "product_family": "VpcEndpoint",
+        "attribute_filters": [{"key": "endpointType", "value": "PrivateLink"},
+                              {"key": "groupDescription", "value": "Hourly charge for VPC Endpoints"}],
+        "unit": "Hrs",
+    },
+    "VPC-Endpoint-DataProcessed": {
+        "service": "AmazonVPC", "product_family": "VpcEndpoint",
+        "attribute_filters": [{"key": "endpointType", "value": "PrivateLink"},
+                              {"key": "groupDescription", "value": "Charge for per GB data processed by VPC Endpoints"}],
+        "unit": "GB",
+    },
+    # CloudWatch Logs: ingestion ($/GB) + storage ($/GB-month).
+    "CloudWatch-Log-Ingestion": {
+        "service": "AmazonCloudWatch",
+        "attribute_filters": [{"key": "group", "value": "Ingested Logs"}],
+        "unit": "GB",
+    },
+    "CloudWatch-Log-Storage": {
+        "service": "AmazonCloudWatch",
+        "attribute_filters": [{"key": "group", "value": "Centralized Logs"}],
+        "unit": "GB",
+    },
+    # Secrets Manager: per-secret per month.
+    "SecretsManager-Secret": {
+        "service": "AWSSecretsManager", "product_family": "Secret",
+        "unit": "Secrets",
+    },
+    # ECR: image storage per GB-month.
+    "ECR-Storage": {
+        "service": "AmazonECR", "product_family": "EC2 Container Registry",
+        "attribute_filters": [{"key": "groupDescription", "value": ""}],
+        "unit": "GB-Mo",
+    },
+    # Route53: per hosted zone per month.
+    "Route53-HostedZone": {
+        "service": "AmazonRoute53", "product_family": "DNS Domain Names",
+        "unit": "Mo",
+    },
+    # S3: PUT requests.
+    "S3-PutRequest": {
+        "service": "AmazonS3", "product_family": "API Request",
+        "attribute_filters": [{"key": "group", "value": "S3-API-PutObject"}],
+        "unit": "Requests",
     },
 }
 
