@@ -136,6 +136,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_codegen.add_argument("--resource", metavar="<type>", help="Specific resource type to generate (default: all)")
     p_codegen.set_defaults(func=cmd_codegen)
 
+    # coverage
+    p_coverage = sub.add_parser("coverage", help="Check coverage between cost model and IaC resources")
+    p_coverage.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    p_coverage.add_argument("--from", dest="source_format", metavar="FORMAT",
+                            choices=["terraform", "pulumi", "cdk"], default="terraform",
+                            help="Source format: terraform, pulumi, or cdk (default: terraform)")
+    p_coverage.add_argument("iac_file", metavar="<iac-file>", help="Path to IaC JSON export")
+    p_coverage.add_argument("--exit-on-uncosted", action="store_true",
+                            help="Exit with error code 1 if uncosted resources exist (for CI budget gates)")
+    p_coverage.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_coverage.set_defaults(func=cmd_coverage)
+
     return parser
 
 
@@ -744,6 +756,110 @@ def cmd_codegen(args: argparse.Namespace) -> int:
     except Exception as e:
         _print_stderr(f"Error: {e}")
         return 1
+
+
+def cmd_coverage(args: argparse.Namespace) -> int:
+    """Check coverage between cost model nodes and IaC resources.
+
+    Compares resource addresses extracted from IaC export against those
+    declared in the cost model YAML, reporting uncosted resources and orphaned nodes.
+
+    Args:
+        args.yaml_file: Path to cost model YAML
+        args.source_format: "terraform", "pulumi", or "cdk"
+        args.iac_file: Path to IaC JSON export
+        args.exit_on_uncosted: Exit 1 if uncosted resources exist
+        args.json: Output in JSON format
+
+    Returns:
+        0 if no uncosted resources or --exit-on-uncosted not set
+        1 if --exit-on-uncosted and uncosted resources exist
+    """
+    yaml_path = Path(args.yaml_file)
+    iac_path = Path(args.iac_file)
+
+    if not yaml_path.exists():
+        _print_stderr(f"File not found: {yaml_path}")
+        return 1
+
+    if not iac_path.exists():
+        _print_stderr(f"File not found: {iac_path}")
+        return 1
+
+    # Load and parse cost model YAML
+    from infra_cost_model.sdk import parse_yaml_dsl
+    with open(yaml_path) as f:
+        yaml_content = f.read()
+
+    try:
+        model = parse_yaml_dsl(yaml_content)
+    except ValueError as e:
+        _print_stderr(f"Error parsing cost model: {e}")
+        return 1
+
+    # Extract model node resourceAddress values
+    nodes = model.get("nodes", {})
+    model_addresses = set()
+    for node_data in nodes.values():
+        if isinstance(node_data, dict) and "resourceAddress" in node_data:
+            model_addresses.add(node_data["resourceAddress"])
+
+    # Extract resource addresses from IaC
+    try:
+        with open(iac_path) as f:
+            iac_data = json.load(f)
+    except json.JSONDecodeError as e:
+        _print_stderr(f"Invalid JSON in {iac_path}: {e}")
+        return 1
+
+    source_format = args.source_format
+
+    if source_format == "terraform":
+        from infra_cost_model.resources.registry import extract_resources_from_tf
+        extracted = extract_resources_from_tf(iac_data)
+    elif source_format == "pulumi":
+        from infra_cost_model.resources.registry import extract_resources_from_pulumi
+        extracted = extract_resources_from_pulumi(iac_data)
+    elif source_format == "cdk":
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+        extracted = extract_resources_from_cdk(iac_data)
+    else:
+        _print_stderr(f"Unknown source format: {source_format}")
+        return 1
+
+    iac_addresses = set(extracted.keys())
+
+    # Compute diff
+    matched = model_addresses & iac_addresses
+    uncosted = iac_addresses - model_addresses  # In IaC, missing from model
+    orphaned = model_addresses - iac_addresses   # In model, missing from IaC
+
+    # Output
+    if args.json:
+        output = {
+            "matched": sorted(matched),
+            "uncosted": sorted(uncosted),
+            "orphaned": sorted(orphaned),
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        if matched:
+            print(f"✓ Matched:    {len(matched)} node(s)")
+        if uncosted:
+            print(f"✗ Uncosted:   {len(uncosted)} resource(s) — in {source_format}, missing from model")
+            for addr in sorted(uncosted):
+                print(f"               {addr}")
+        if orphaned:
+            print(f"✗ Orphaned:   {len(orphaned)} node(s) — in model, not in {source_format}")
+            for addr in sorted(orphaned):
+                print(f"               {addr}")
+
+    # Exit logic: uncosted resources are dangerous for budget gates
+    # Orphaned nodes over-count cost (safe for budget gates), so don't fail
+    if args.exit_on_uncosted and uncosted:
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":

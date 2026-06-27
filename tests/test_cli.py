@@ -1342,3 +1342,307 @@ class TestCLIBudget:
         finally:
             os.unlink(temp_path)
 
+
+YAML_COVERAGE = """
+version: "1.0"
+workflow:
+  name: "coverage-test"
+  entry: "aws_apigatewayv2_api.items_api"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  aws_apigatewayv2_api.items_api:
+    nodeType: routing
+    resourceAddress: aws_apigatewayv2_api.items_api
+  aws_lambda_function.get_user:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.get_user
+edges:
+  - from: aws_apigatewayv2_api.items_api
+    to: aws_lambda_function.get_user
+    rate: 1.0
+"""
+
+
+class TestCLICoverage:
+    """Tests for the coverage CLI subcommand."""
+
+    def test_coverage_missing_yaml(self):
+        """coverage with missing YAML file returns 1."""
+        result = main(["coverage", "/nonexistent/file.yaml", "--from", "terraform", "/nonexistent/plan.json"])
+        assert result == 1
+
+    def test_coverage_missing_terraform(self):
+        """coverage with missing terraform file returns 1."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COVERAGE)
+            temp_yaml = f.name
+        try:
+            result = main(["coverage", temp_yaml, "--from", "terraform", "/nonexistent/plan.json"])
+            assert result == 1
+        finally:
+            os.unlink(temp_yaml)
+
+    def test_coverage_no_args_returns_error(self):
+        """coverage with no args returns error code 1."""
+        result = main(["coverage"])
+        assert result == 1
+
+    def test_coverage_fully_matched(self):
+        """coverage with all resources matched returns 0."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COVERAGE)
+            temp_yaml = f.name
+
+        tf_json = {
+            "resource": [
+                {
+                    "address": "aws_apigatewayv2_api.items_api",
+                    "mode": "managed",
+                    "type": "aws_apigatewayv2_api",
+                    "name": "items_api",
+                    "values": {"region": "us-east-1"},
+                },
+                {
+                    "address": "aws_lambda_function.get_user",
+                    "mode": "managed",
+                    "type": "aws_lambda_function",
+                    "name": "get_user",
+                    "values": {"region": "us-east-1", "memory_size": 128},
+                },
+            ]
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(tf_json, f)
+            temp_tf = f.name
+
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["coverage", temp_yaml, "--from", "terraform", temp_tf])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            assert result == 0
+            assert "✓ Matched:" in output
+            assert "Matched:    2" in output
+            assert "Uncosted:" not in output
+        finally:
+            os.unlink(temp_yaml)
+            os.unlink(temp_tf)
+
+    def test_coverage_uncosted_resources(self):
+        """coverage with uncosted resources returns 0 but warns (no --exit-on-uncosted)."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COVERAGE)
+            temp_yaml = f.name
+
+        # TF has an S3 bucket that is not in the model
+        tf_json = {
+            "resource": [
+                {
+                    "address": "aws_s3_bucket.logs",
+                    "mode": "managed",
+                    "type": "aws_s3_bucket",
+                    "name": "logs",
+                    "values": {"region": "us-east-1"},
+                },
+            ]
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(tf_json, f)
+            temp_tf = f.name
+
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["coverage", temp_yaml, "--from", "terraform", temp_tf])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            # Without --exit-on-uncosted, should return 0 (warning only)
+            assert result == 0
+            assert "Uncosted:" in output
+            assert "aws_s3_bucket.logs" in output
+        finally:
+            os.unlink(temp_yaml)
+            os.unlink(temp_tf)
+
+    def test_coverage_uncosted_exits_nonzero(self):
+        """coverage with --exit-on-uncosted exits 1 when uncosted resources exist."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COVERAGE)
+            temp_yaml = f.name
+
+        # TF has an S3 bucket that is not in the model
+        tf_json = {
+            "resource": [
+                {
+                    "address": "aws_s3_bucket.logs",
+                    "mode": "managed",
+                    "type": "aws_s3_bucket",
+                    "name": "logs",
+                    "values": {"region": "us-east-1"},
+                },
+            ]
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(tf_json, f)
+            temp_tf = f.name
+
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["coverage", temp_yaml, "--from", "terraform", temp_tf, "--exit-on-uncosted"])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            assert result == 1
+            assert "Uncosted:" in output
+            assert "aws_s3_bucket.logs" in output
+        finally:
+            os.unlink(temp_yaml)
+            os.unlink(temp_tf)
+
+    def test_coverage_orphaned_nodes(self):
+        """coverage shows orphaned nodes (in model but not in Terraform)."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COVERAGE)
+            temp_yaml = f.name
+
+        # TF has only one of the two model nodes, the other is orphaned
+        tf_json = {
+            "resource": [
+                {
+                    "address": "aws_apigatewayv2_api.items_api",
+                    "mode": "managed",
+                    "type": "aws_apigatewayv2_api",
+                    "name": "items_api",
+                    "values": {"region": "us-east-1"},
+                },
+            ]
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(tf_json, f)
+            temp_tf = f.name
+
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["coverage", temp_yaml, "--from", "terraform", temp_tf])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            # Orphaned nodes warn but don't fail
+            assert result == 0
+            assert "Orphaned:" in output
+            assert "aws_lambda_function.get_user" in output
+        finally:
+            os.unlink(temp_yaml)
+            os.unlink(temp_tf)
+
+    def test_coverage_json_output(self):
+        """coverage with --json produces structured JSON output."""
+        import tempfile, os, io, sys, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(YAML_COVERAGE)
+            temp_yaml = f.name
+
+        tf_json = {
+            "resource": [
+                {
+                    "address": "aws_apigatewayv2_api.items_api",
+                    "mode": "managed",
+                    "type": "aws_apigatewayv2_api",
+                    "name": "items_api",
+                    "values": {"region": "us-east-1"},
+                },
+            ]
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(tf_json, f)
+            temp_tf = f.name
+
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["coverage", temp_yaml, "--from", "terraform", temp_tf, "--json"])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            assert result == 0
+            data = json.loads(output)
+            assert "matched" in data
+            assert "uncosted" in data
+            assert "orphaned" in data
+        finally:
+            os.unlink(temp_yaml)
+            os.unlink(temp_tf)
+
+    def test_coverage_pulumi_format(self):
+        """coverage with --from pulumi works."""
+        import tempfile, os, io, sys, json
+
+        yaml_pulumi = """
+version: "1.0"
+workflow:
+  name: "coverage-test"
+  entry: "aws:apigatewayv2:Api:items_api"
+  frequency:
+    unit: perMinute
+    value: 1000
+nodes:
+  aws:apigatewayv2:Api:items_api:
+    nodeType: routing
+    resourceAddress: aws:apigatewayv2:Api:items_api
+  aws:lambda:Function:get_user:
+    nodeType: compute
+    resourceAddress: aws:lambda:Function:get_user
+edges:
+  - from: aws:apigatewayv2:Api:items_api
+    to: aws:lambda:Function:get_user
+    rate: 1.0
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(yaml_pulumi)
+            temp_yaml = f.name
+
+        pulumi_json = {
+            "deployment": {
+                "resources": [
+                    {
+                        "id": "aws:apigatewayv2:Api:items_api",
+                        "type": "aws:apigatewayv2/api:Api",
+                        "inputs": {"region": "us-east-1"},
+                    },
+                    {
+                        "id": "aws:lambda:Function:get_user",
+                        "type": "aws:lambda/function:Function",
+                        "inputs": {"region": "us-east-1", "memorySize": 128},
+                    },
+                ]
+            }
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(pulumi_json, f)
+            temp_tf = f.name
+
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            result = main(["coverage", temp_yaml, "--from", "pulumi", temp_tf])
+            output = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            assert result == 0
+            assert "✓ Matched:" in output
+        finally:
+            os.unlink(temp_yaml)
+            os.unlink(temp_tf)
+
