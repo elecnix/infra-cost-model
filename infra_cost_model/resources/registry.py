@@ -28,6 +28,7 @@ from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 from .kms import KMSKey
+from .data_transfer import DataTransferNode
 
 
 class ResourceRegistry:
@@ -80,6 +81,7 @@ class ResourceRegistry:
                 "rds": "aws",
                 "rds": "aws", "misc_services": "aws",
                 "kms": "aws",
+                "data_transfer": "aws",
                 "gcp": "gcp", "azure": "azure",
             }
             return known_providers.get(leaf)
@@ -216,6 +218,9 @@ ResourceRegistry.register(Route53Zone)
 
 # AWS KMS
 ResourceRegistry.register(KMSKey)
+
+# AWS Data Transfer (usage-derived node, no IaC resource)
+ResourceRegistry.register(DataTransferNode)
 
 
 def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
