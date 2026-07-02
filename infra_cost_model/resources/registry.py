@@ -19,7 +19,7 @@ from .sqs import SQSQueue
 from .sns import SNSTopic
 from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
-from .networking import NATGateway, VpcEndpoint
+from .networking import NATGateway, VpcEndpoint, ElasticIP
 from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup
 from .ecs import ECSFargateService
@@ -184,6 +184,7 @@ ResourceRegistry.register(EventBridgeRule)
 ResourceRegistry.register(CloudFrontDistribution)
 ResourceRegistry.register(NATGateway)
 ResourceRegistry.register(VpcEndpoint)
+ResourceRegistry.register(ElasticIP)
 ResourceRegistry.register(RDSInstance)
 ResourceRegistry.register(CloudWatchLogGroup)
 ResourceRegistry.register(ECSFargateService)

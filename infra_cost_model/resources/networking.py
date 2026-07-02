@@ -134,6 +134,64 @@ class VpcEndpoint(StorageResource):
         )
 
 
+class ElasticIP(StorageResource):
+    """Elastic IP / public IPv4 address - storage leaf node.
+
+    Since February 2024, AWS charges $0.005/hr for every public IPv4 address,
+    whether it is idle or attached to a running resource. Modeled as an
+    always-on storage leaf (no outgoing edges).
+    """
+
+    @property
+    def valid_metrics(self) -> list[str]:
+        return ["inUseHours", "idleHours"]
+
+    @classmethod
+    def from_address(cls, resource_address: str) -> Optional["ElasticIP"]:
+        if (resource_address.startswith("aws_eip.") or
+                resource_address.startswith("aws.ec2.Eip:") or
+                resource_address.startswith("aws:ec2:Eip:") or
+                "EC2::EIP" in resource_address):
+            return cls()
+        return None
+
+    @classmethod
+    def extract_tf(cls, resource: dict) -> ResourceExtract:
+        values = resource.get("values", {})
+        return ResourceExtract(
+            resource_address=resource.get("address", ""),
+            node_type="storage", provider="aws", service="AmazonVPC",
+            region=values.get("region"),
+            config={
+                "domain": values.get("domain", "vpc"),
+            },
+        )
+
+    @classmethod
+    def extract_pulumi(cls, resource: dict) -> ResourceExtract:
+        inputs = resource.get("inputs", {})
+        return ResourceExtract(
+            resource_address=resource.get("id", ""),
+            node_type="storage", provider="aws", service="AmazonVPC",
+            region=inputs.get("region"),
+            config={
+                "domain": inputs.get("domain", "vpc"),
+            },
+        )
+
+    @classmethod
+    def extract_cdk(cls, resource: dict) -> ResourceExtract:
+        properties = resource.get("Properties", {})
+        return ResourceExtract(
+            resource_address=resource.get("LogicalId", ""),
+            node_type="storage", provider="aws", service="AmazonVPC",
+            region=None,
+            config={
+                "domain": properties.get("Domain", "vpc"),
+            },
+        )
+
+
 def _nat_cost(nat_hours=730, data_processed_gb=0, *, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
     """Calculate NAT Gateway cost.
 
@@ -182,6 +240,31 @@ def _vpc_endpoint_cost(endpoint_hours=730, data_processed_gb=0, endpoint_type="I
             total += r.total_cost
     if data_processed_gb > 0:
         r = catalog.query(provider, "AmazonVPC", region, "VPC-Endpoint-DataProcessed", data_processed_gb)
+        if r and hasattr(r, "total_cost"):
+            total += r.total_cost
+    return total
+
+
+def _eip_cost(in_use_hours=730, idle_hours=0, *, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
+    """Calculate Elastic IP / public IPv4 address cost.
+
+    Since February 2024, AWS charges $0.005/hr for every public IPv4 address,
+    whether in-use (attached) or idle (unattached).
+
+    Args:
+        in_use_hours: Hours the address is attached to a running resource
+            (default 730 = 1 month always-on).
+        idle_hours: Hours the address is allocated but unattached.
+    """
+    if catalog is None:
+        catalog = PricingCatalog()
+    total = 0.0
+    if in_use_hours > 0:
+        r = catalog.query(provider, "AmazonVPC", region, "IPv4-InUse-Hours", in_use_hours)
+        if r and hasattr(r, "total_cost"):
+            total += r.total_cost
+    if idle_hours > 0:
+        r = catalog.query(provider, "AmazonVPC", region, "IPv4-Idle-Hours", idle_hours)
         if r and hasattr(r, "total_cost"):
             total += r.total_cost
     return total
