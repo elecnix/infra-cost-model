@@ -1,6 +1,8 @@
 """Tests for NAT Gateway and VPC Endpoint resource models (Issue #184)."""
 import pytest
-from infra_cost_model.resources.networking import NATGateway, VpcEndpoint, _nat_cost, _vpc_endpoint_cost
+from infra_cost_model.resources.networking import (
+    NATGateway, VpcEndpoint, ElasticIP, _nat_cost, _vpc_endpoint_cost, _eip_cost,
+)
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 
@@ -276,3 +278,125 @@ class TestNetworkingRegistry:
         assert result is not None and result["provider"] == "aws" and result["service"] == "AmazonVPC"
         assert result["nodeType"] == "storage"
         assert result["config"]["vpcEndpointType"] == "Interface"
+
+
+class TestElasticIPAddressParsing:
+    def test_from_address_terraform(self):
+        r = ElasticIP.from_address("aws_eip.nat")
+        assert r is not None and r.node_type == "storage"
+
+    def test_from_address_pulumi_dot(self):
+        r = ElasticIP.from_address("aws.ec2.Eip:web-ip")
+        assert r is not None and r.node_type == "storage"
+
+    def test_from_address_pulumi_colon(self):
+        r = ElasticIP.from_address("aws:ec2:Eip:prod-ip")
+        assert r is not None and r.node_type == "storage"
+
+    def test_from_address_cdk(self):
+        r = ElasticIP.from_address("NetworkStack/NatEip/EC2::EIP")
+        assert r is not None and r.node_type == "storage"
+
+    def test_from_address_unrelated(self):
+        assert ElasticIP.from_address("aws_lambda_function.handler") is None
+        # Ensure it does not greedily match unrelated eip-like prefixes
+        assert ElasticIP.from_address("aws_eip_association.assoc") is None
+
+
+class TestElasticIPExtraction:
+    def test_extract_tf(self):
+        resource = {
+            "address": "aws_eip.nat",
+            "type": "aws_eip",
+            "values": {"domain": "vpc", "region": "us-east-1"},
+        }
+        result = ElasticIP.extract_tf(resource)
+        assert result.node_type == "storage" and result.provider == "aws" and result.service == "AmazonVPC"
+        assert result.resource_address == "aws_eip.nat"
+        assert result.region == "us-east-1"
+        assert result.config["domain"] == "vpc"
+
+    def test_extract_tf_defaults(self):
+        resource = {"address": "aws_eip.generic", "type": "aws_eip", "values": {}}
+        result = ElasticIP.extract_tf(resource)
+        assert result.node_type == "storage"
+        assert result.config["domain"] == "vpc"
+        assert result.region is None
+
+    def test_extract_pulumi(self):
+        resource = {
+            "id": "aws:ec2:Eip:prod-ip",
+            "type": "aws:ec2:Eip",
+            "inputs": {"domain": "vpc", "region": "us-west-2"},
+        }
+        result = ElasticIP.extract_pulumi(resource)
+        assert result.provider == "aws" and result.service == "AmazonVPC"
+        assert result.region == "us-west-2"
+        assert result.config["domain"] == "vpc"
+
+    def test_extract_cdk(self):
+        resource = {
+            "Type": "AWS::EC2::EIP",
+            "LogicalId": "NatEip",
+            "Properties": {"Domain": "vpc"},
+        }
+        result = ElasticIP.extract_cdk(resource)
+        assert result.node_type == "storage" and result.service == "AmazonVPC"
+        assert result.resource_address == "NatEip"
+        assert result.config["domain"] == "vpc"
+
+
+class TestElasticIPPricing:
+    def setup_method(self):
+        self.catalog = PricingCatalog()
+
+    def test_in_use_hours(self):
+        cost = _eip_cost(in_use_hours=730, idle_hours=0, catalog=self.catalog, region="us-east-1")
+        assert cost == pytest.approx(3.65, rel=0.01)
+
+    def test_idle_hours(self):
+        cost = _eip_cost(in_use_hours=0, idle_hours=730, catalog=self.catalog, region="us-east-1")
+        assert cost == pytest.approx(3.65, rel=0.01)
+
+    def test_combined(self):
+        cost = _eip_cost(in_use_hours=730, idle_hours=730, catalog=self.catalog, region="us-east-1")
+        assert cost == pytest.approx(7.30, rel=0.01)
+
+    def test_zero_usage(self):
+        assert _eip_cost(in_use_hours=0, idle_hours=0, catalog=self.catalog, region="us-east-1") == 0.0
+
+    def test_default_is_in_use_month(self):
+        # Default: 730 in-use hours, 0 idle => one always-on public IPv4 for a month
+        cost = _eip_cost(catalog=self.catalog, region="us-east-1")
+        assert cost == pytest.approx(3.65, rel=0.01)
+
+
+class TestElasticIPNodeType:
+    def test_eip_is_storage_leaf(self):
+        result = ElasticIP.from_address("aws_eip.test")
+        assert result is not None and result.node_type == "storage"
+        from infra_cost_model.resources.registry import is_leaf_node
+        assert is_leaf_node(result.node_type) is True
+
+    def test_eip_valid_metrics(self):
+        e = ElasticIP()
+        assert "inUseHours" in e.valid_metrics
+        assert "idleHours" in e.valid_metrics
+
+
+class TestElasticIPRegistry:
+    def test_eip_in_registry(self):
+        from infra_cost_model.resources.registry import ResourceRegistry
+        assert ResourceRegistry.from_address("aws_eip.nat") == ElasticIP
+
+    def test_eip_extract_via_registry(self):
+        from infra_cost_model.resources.registry import ResourceRegistry
+        resource = {
+            "address": "aws_eip.nat",
+            "type": "aws_eip",
+            "values": {"domain": "vpc", "region": "us-east-1"},
+        }
+        result = ResourceRegistry.extract("aws_eip.nat", resource, "terraform")
+        assert result is not None and result["provider"] == "aws" and result["service"] == "AmazonVPC"
+        assert result["nodeType"] == "storage"
+        assert result["config"]["domain"] == "vpc"
