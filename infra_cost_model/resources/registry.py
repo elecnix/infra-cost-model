@@ -21,7 +21,7 @@ from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
 from .networking import NATGateway, VpcEndpoint, ElasticIP
 from .rds import RDSInstance
-from .cloudwatch import CloudWatchLogGroup
+from .cloudwatch import CloudWatchLogGroup, CloudWatchMetricAlarm
 from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
@@ -76,6 +76,7 @@ class ResourceRegistry:
                 "rds": "aws", "ecs": "aws",
                 "alb": "aws",
                 "networking": "aws",
+                "cloudwatch": "aws",
                 "rds": "aws",
                 "rds": "aws", "misc_services": "aws",
                 "kms": "aws",
@@ -189,6 +190,7 @@ ResourceRegistry.register(VpcEndpoint)
 ResourceRegistry.register(ElasticIP)
 ResourceRegistry.register(RDSInstance)
 ResourceRegistry.register(CloudWatchLogGroup)
+ResourceRegistry.register(CloudWatchMetricAlarm)
 ResourceRegistry.register(ECSFargateService)
 ResourceRegistry.register(ApplicationLoadBalancer)
 ResourceRegistry.register(BedrockModel)
