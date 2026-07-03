@@ -450,6 +450,16 @@ class CostAggregator:
                 result = self.catalog.query(
                     provider, service, region, metric_name, total_quantity
                 )
+                if result is None:
+                    # The node used a logical metric name (e.g. "natHours"); map it
+                    # to the catalog usage_metric ("NAT-Gateway-Hour") via the
+                    # owning handler and retry, so catalog pricing (live/seed) is
+                    # reached instead of falling back to embedded pricingRates.
+                    mapped = self._resolve_catalog_metric(address, node, metric_name)
+                    if mapped is not None:
+                        result = self.catalog.query(
+                            provider, service, region, mapped, total_quantity
+                        )
                 if result is not None:
                     metric_cost = result.total_cost
             if metric_cost is None and metric_name in pricing_rates:
@@ -523,6 +533,16 @@ class CostAggregator:
                 result = self.catalog.query(
                     provider, service, region, metric_name, total_quantity
                 )
+                if result is None:
+                    # The node used a logical metric name (e.g. "natHours"); map it
+                    # to the catalog usage_metric ("NAT-Gateway-Hour") via the
+                    # owning handler and retry, so catalog pricing (live/seed) is
+                    # reached instead of falling back to embedded pricingRates.
+                    mapped = self._resolve_catalog_metric(address, node, metric_name)
+                    if mapped is not None:
+                        result = self.catalog.query(
+                            provider, service, region, mapped, total_quantity
+                        )
                 if result is not None:
                     metric_cost = result.total_cost
             # Fallback: flat pricingRates
@@ -537,6 +557,21 @@ class CostAggregator:
                 variable_cost += metric_cost
 
         return (variable_cost, fixed_cost)
+
+    def _resolve_catalog_metric(self, address: str, node: dict, logical_metric: str):
+        """Translate a node's logical usageMetrics key to a catalog usage_metric
+        name via the handler that owns the node's resource address.
+
+        Returns the catalog name, or ``None`` when no handler matches the address
+        or the handler declares no mapping for that logical name (in which case
+        the caller falls back to embedded ``pricingRates``).
+        """
+        from infra_cost_model.resources.registry import ResourceRegistry
+
+        resource_address = node.get("resourceAddress") or address
+        if not resource_address:
+            return None
+        return ResourceRegistry.resolve_catalog_metric(resource_address, logical_metric)
 
     def _resolve_param(self, value) -> float:
         """Resolve a value that may be a parameter name or a numeric literal.

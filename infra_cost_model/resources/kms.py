@@ -17,6 +17,10 @@ class KMSKey(StorageResource):
     def valid_metrics(self) -> list[str]:
         return ["keysCount", "apiRequests"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"keysCount": "KMS-Key-Month", "apiRequests": "KMS-API-Request"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["KMSKey"]:
         if (resource_address.startswith("aws_kms_key.") or

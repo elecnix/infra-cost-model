@@ -20,6 +20,11 @@ class CloudWatchLogGroup(StorageResource):
     def valid_metrics(self) -> list[str]:
         return ["ingestedGb", "storedGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"ingestedGb": "CloudWatch-Log-Ingestion",
+                "storedGb": "CloudWatch-Log-Storage"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudWatchLogGroup"]:
         if (resource_address.startswith("aws_cloudwatch_log_group.") or
@@ -81,6 +86,12 @@ class CloudWatchMetricAlarm(StorageResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["alarmsCount", "customMetricsCount", "getMetricDataRequests"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"alarmsCount": "CloudWatch-Alarm-Month",
+                "customMetricsCount": "CloudWatch-Metric-Month",
+                "getMetricDataRequests": "CloudWatch-GetMetricData"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudWatchMetricAlarm"]:

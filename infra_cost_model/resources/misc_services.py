@@ -18,6 +18,11 @@ class SecretsManagerSecret(StorageResource):
     def valid_metrics(self) -> list[str]:
         return ["secretsCount", "apiCalls"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"secretsCount": "SecretsManager-Secret",
+                "apiCalls": "SecretsManager-API-Call"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["SecretsManagerSecret"]:
         if (resource_address.startswith("aws_secretsmanager_secret.") or
@@ -82,6 +87,10 @@ class ECRRepository(StorageResource):
     def valid_metrics(self) -> list[str]:
         return ["storedGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"storedGb": "ECR-Storage"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["ECRRepository"]:
         if (resource_address.startswith("aws_ecr_repository.") or
@@ -136,6 +145,10 @@ class Route53Zone(StorageResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["hostedZones", "queries"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"hostedZones": "Route53-HostedZone", "queries": "Route53-Query"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["Route53Zone"]:

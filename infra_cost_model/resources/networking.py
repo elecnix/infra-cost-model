@@ -22,6 +22,11 @@ class NATGateway(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["natHours", "dataProcessedGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"natHours": "NAT-Gateway-Hour",
+                "dataProcessedGb": "NAT-Gateway-DataProcessed"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["NATGateway"]:
         if (resource_address.startswith("aws_nat_gateway.") or
@@ -81,6 +86,11 @@ class VpcEndpoint(StorageResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["endpointHours", "dataProcessedGb"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"endpointHours": "VPC-Endpoint-Hour",
+                "dataProcessedGb": "VPC-Endpoint-DataProcessed"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["VpcEndpoint"]:
@@ -145,6 +155,10 @@ class ElasticIP(StorageResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["inUseHours", "idleHours"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"inUseHours": "IPv4-InUse-Hours", "idleHours": "IPv4-Idle-Hours"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["ElasticIP"]:
