@@ -436,3 +436,36 @@ def test_ap_region_prefixes_match_aws_codes():
     assert _REGION_PREFIX["ap-south-1"] == "APS3"      # Mumbai
     assert _REGION_PREFIX["ap-southeast-3"] == "APS4"  # Jakarta
     assert _REGION_PREFIX["ap-south-2"] == "APS5"      # Hyderabad
+
+
+# --- Multi-region live sync ----------------------------------------------------
+
+def test_sync_pricing_catalog_covers_multiple_regions(monkeypatch):
+    """sync_pricing_catalog fetches every metric for EACH requested region."""
+    _set_creds(monkeypatch)
+    calls = []
+    monkeypatch.setattr(ic.InfracostClient, "is_authenticated", lambda self: True)
+    monkeypatch.setattr(
+        ic.InfracostClient, "sync_to_cache",
+        lambda self, cache, usage_metric, region, vendor="aws":
+            calls.append((usage_metric, region)) or 1,
+    )
+    total, source = ic.sync_pricing_catalog(
+        services=["KMS-Key-Month"], regions=["us-east-1", "eu-west-1", "ap-south-1"])
+    assert source == "infracost"
+    assert total == 3
+    assert {r for _, r in calls} == {"us-east-1", "eu-west-1", "ap-south-1"}
+
+
+def test_sync_pricing_catalog_defaults_to_us_east_1(monkeypatch):
+    """No regions arg → us-east-1 only (backward compatible)."""
+    _set_creds(monkeypatch)
+    calls = []
+    monkeypatch.setattr(ic.InfracostClient, "is_authenticated", lambda self: True)
+    monkeypatch.setattr(
+        ic.InfracostClient, "sync_to_cache",
+        lambda self, cache, usage_metric, region, vendor="aws":
+            calls.append(region) or 1,
+    )
+    ic.sync_pricing_catalog(services=["KMS-Key-Month"])
+    assert calls == ["us-east-1"]

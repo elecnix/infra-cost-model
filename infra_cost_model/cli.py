@@ -74,8 +74,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_extract.add_argument("--json", action="store_true", help="Output in JSON format")
     p_extract.set_defaults(func=cmd_extract)
 
-    # seed-pricing
-    p_seed = sub.add_parser("seed-pricing", help="Seed pricing cache from seed file")
+    # sync-pricing (live, all services/regions — the normal way to populate prices)
+    p_sync = sub.add_parser(
+        "sync-pricing",
+        help="Fetch live prices from Infracost for all services and regions")
+    p_sync.add_argument("services", nargs="*", metavar="<metric>",
+                        help="Specific catalog metrics to sync (default: all)")
+    p_sync.add_argument("--region", action="append", dest="regions", metavar="REGION",
+                        help="Region to sync (repeatable). Default: all known regions")
+    p_sync.add_argument("--vendor", default="aws", metavar="VENDOR",
+                        help="Cloud vendor (default: aws)")
+    p_sync.set_defaults(func=cmd_sync_pricing)
+
+    # seed-pricing (testing/offline only — NOT a normal user step; see sync-pricing)
+    p_seed = sub.add_parser(
+        "seed-pricing",
+        help="(testing/offline) Load the bundled seed price fixtures into the cache")
     p_seed.add_argument("services", nargs="*", metavar="<service>",
                         help="Specific services to seed (default: all)")
     p_seed.add_argument("--all", action="store_true", default=True,
@@ -331,8 +345,36 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_sync_pricing(args: argparse.Namespace) -> int:
+    """Fetch live prices from Infracost across all services and regions.
+
+    This is the normal way to populate the pricing catalog. Requires an Infracost
+    credential (INFRACOST_API_KEY or `infracost auth login`); without one it falls
+    back to the bundled seed fixtures and warns.
+    """
+    from infra_cost_model.pricing.sources.infracost import (
+        sync_pricing_catalog, _REGION_PREFIX,
+    )
+
+    services = args.services if args.services else None
+    regions = args.regions if args.regions else sorted(_REGION_PREFIX)
+
+    try:
+        count, source = sync_pricing_catalog(
+            vendor=args.vendor, services=services, regions=regions)
+        print(f"✓ Synced {count} prices from {source} across {len(regions)} region(s)")
+        return 0
+    except RuntimeError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
+
+
 def cmd_seed_pricing(args: argparse.Namespace) -> int:
-    """Seed pricing catalog from seed file."""
+    """Load bundled seed price fixtures (testing/offline only).
+
+    Not a normal user step — real pricing comes from `sync-pricing`. The seed list
+    is a small us-east-1 fixture used by the test suite.
+    """
     from infra_cost_model.pricing.sources.infracost import seed_pricing_catalog
 
     services = args.services if args.services else None

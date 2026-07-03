@@ -211,6 +211,6 @@ If the TypeScript surface later needs a standalone engine, it reimplements the s
 
 Cloud prices change monthly. Hard-coded prices in source code go stale. The pricing layer exposes a query interface and the engine never knows or cares where the data comes from.
 
-The catalog must handle tiered pricing (e.g., Lambda GB-seconds has three price tiers), free tiers (first 1M requests free), and regional variation. It must work offline after an initial seed. Prices refresh on a schedule — cloud pricing changes monthly at most.
+The catalog must handle tiered pricing (e.g., Lambda GB-seconds has three price tiers), free tiers (first 1M requests free), and regional variation across all services and regions. Prices are fetched live from the pricing source and refresh on a schedule — cloud pricing changes monthly at most. The bundled seed price list is a test fixture and offline fallback, not a normal setup step.
 
 A provider plugin architecture is premature. Use a normalized multi-cloud source until it doesn't cover a needed provider.
