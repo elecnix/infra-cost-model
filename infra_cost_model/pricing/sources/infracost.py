@@ -246,9 +246,14 @@ class InfracostClient:
         if descriptor is None:
             raise KeyError(f"No Infracost descriptor for usage_metric '{usage_metric}'")
 
+        # Some services (notably AWSDataTransfer) catalogue their products
+        # globally, with region="". `query_region` lets a descriptor query that
+        # global catalogue while the price is still stored under the caller's
+        # `region` (see `region_pair_source` below).
+        query_region = descriptor.get("query_region", region)
         prices = self.query_prices(
             service=descriptor["service"],
-            region=region,
+            region=query_region,
             product_family=descriptor.get("product_family"),
             attribute_filters=descriptor.get("attribute_filters"),
             purchase_option=descriptor.get("purchase_option"),
@@ -256,6 +261,11 @@ class InfracostClient:
         )
         unit_match = descriptor.get("unit")
         now = datetime.now().isoformat()
+
+        if descriptor.get("region_pair_source"):
+            return self._upsert_region_pair_representative(
+                cache, prices, usage_metric, region, unit_match, descriptor, now)
+
         count = 0
         for p in prices:
             if unit_match and p.get("unit") != unit_match:
@@ -270,6 +280,56 @@ class InfracostClient:
             ))
             count += 1
         return count
+
+    def _upsert_region_pair_representative(self, cache, prices, usage_metric,
+                                           region, unit_match, descriptor, now) -> int:
+        """Collapse per-region-pair prices to one representative rate.
+
+        Data-transfer products are priced per source/destination region pair, with
+        the source region encoded as the usagetype prefix (e.g. ``USE1-APS4-AWS-
+        Out-Bytes``). A single catalog metric like ``DataTransfer-InterRegion-GB``
+        models a generic rate, so we:
+
+        1. keep only rows leaving THIS region (usagetype starts with the region's
+           short prefix) and matching the descriptor's usagetype suffix,
+        2. drop $0 rows (Local Zones / Wavelength / same-metro pairs),
+        3. pick the modal price — the region's standard published rate — and store
+           it once, flat, under the caller's ``region``.
+
+        Returns the number of rows upserted (0 or 1).
+        """
+        from infra_cost_model.pricing.cache import Price
+        from collections import Counter
+
+        prefix = _region_usagetype_prefix(region)
+        suffix = descriptor.get("usagetype_suffix", "-AWS-Out-Bytes")
+        candidates = []
+        for p in prices:
+            if unit_match and p.get("unit") != unit_match:
+                continue
+            usagetype = (p.get("attributes") or {}).get("usagetype", "")
+            if not usagetype.startswith(f"{prefix}-") or not usagetype.endswith(suffix):
+                continue
+            if (p.get("price_usd") or 0) <= 0:
+                continue
+            candidates.append(p)
+
+        if not candidates:
+            return 0
+
+        # Modal price = the region's standard rate; tie-break toward the lower rate.
+        counts = Counter(round(p["price_usd"], 6) for p in candidates)
+        modal = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
+        rep = next(p for p in candidates if round(p["price_usd"], 6) == modal)
+
+        cache.upsert(Price(
+            vendor=rep["vendor"], service=rep["service"], region=region,
+            product_family=rep.get("product_family"), attributes=rep.get("attributes", {}),
+            usage_metric=usage_metric, unit=rep["unit"], price_usd=rep["price_usd"],
+            start_usage_amount=None, end_usage_amount=None,
+            source="infracost", effective_date=now, fetched_at=now,
+        ))
+        return 1
 
 
 # Map each catalog usage_metric to the Infracost product query that prices it.
@@ -420,18 +480,20 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "unit": "Metrics",
     },
     # Inter-region data transfer (#211): priced under service "AWSDataTransfer",
-    # but those products are catalogued globally (empty region) with a distinct
-    # usagetype PER source/destination region pair (e.g. USE1-APS4-AWS-Out-Bytes
-    # at $0.02/GB, transferType "InterRegion Outbound"). That doesn't fit the
-    # region-scoped sync (which queries region="us-east-1"), and collapsing every
-    # region pair into a single DataTransfer-InterRegion-GB rate would be
-    # arbitrary. Left seed-only until the sync grows regionless / region-pair
-    # support; documented here so the grouping is known.
-    #"DataTransfer-InterRegion-GB": {
-    #    "service": "AWSDataTransfer",  # region="" (global); usagetype per region pair
-    #    "attribute_filters": [{"key": "transferType", "value": "InterRegion Outbound"}],
-    #    "unit": "GB",
-    #},
+    # catalogued globally (region="") with a distinct usagetype PER source/dest
+    # region pair (e.g. USE1-APS4-AWS-Out-Bytes at $0.02/GB, transferType
+    # "InterRegion Outbound"). `query_region: ""` queries the global catalogue;
+    # `region_pair_source` collapses the pairs leaving the sync region to the
+    # modal (standard) rate and stores it under that region. See
+    # _upsert_region_pair_representative.
+    "DataTransfer-InterRegion-GB": {
+        "service": "AWSDataTransfer",
+        "query_region": "",
+        "attribute_filters": [{"key": "transferType", "value": "InterRegion Outbound"}],
+        "unit": "GB",
+        "region_pair_source": True,
+        "usagetype_suffix": "-AWS-Out-Bytes",
+    },
 }
 
 
