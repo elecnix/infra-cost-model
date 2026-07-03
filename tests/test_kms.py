@@ -14,12 +14,15 @@ class TestKMSAddress:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = KMSKey.from_address("MyStack/AppKey/KMS::Key")
+        # CDK synthetic address format: "<Type>:<LogicalId>"
+        r = KMSKey.from_address("AWS::KMS::Key:AppKey")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_unrelated(self):
         assert KMSKey.from_address("aws_lambda_function.handler") is None
         assert KMSKey.from_address("aws_s3_bucket.data") is None
+        # AWS::KMS::ReplicaKey ends with "Key" but is a distinct type; must not match.
+        assert KMSKey.from_address("AWS::KMS::ReplicaKey:MyReplica") is None
 
 
 class TestKMSExtract:

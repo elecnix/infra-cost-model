@@ -16,7 +16,8 @@ class TestNATAddressParsing:
         assert r is not None and r.node_type == "routing"
 
     def test_from_address_cdk(self):
-        r = NATGateway.from_address("VpcStack/MainNat/EC2::NatGateway")
+        # CDK synthetic address format built by extract_resources_from_cdk: "<Type>:<LogicalId>"
+        r = NATGateway.from_address("AWS::EC2::NatGateway:MainNat")
         assert r is not None and r.node_type == "routing"
 
     def test_from_address_aws_format(self):
@@ -114,11 +115,18 @@ class TestVPCEndpointAddressParsing:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = VpcEndpoint.from_address("NetworkStack/S3Endpoint/EC2::VPCEndpoint")
+        r = VpcEndpoint.from_address("AWS::EC2::VPCEndpoint:S3Endpoint")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_aws_format(self):
         assert VpcEndpoint.from_address("aws:ec2:VpcEndpoint:s3-vpce") is not None
+
+    def test_from_address_does_not_match_endpoint_service(self):
+        # AWS::EC2::VPCEndpointService / VPCEndpointConnectionNotification are
+        # distinct CFN types and must not be mis-matched as a VPC Endpoint.
+        assert VpcEndpoint.from_address("AWS::EC2::VPCEndpointService:MySvc") is None
+        assert VpcEndpoint.from_address(
+            "AWS::EC2::VPCEndpointConnectionNotification:MyNotif") is None
 
     def test_from_address_unrelated(self):
         assert VpcEndpoint.from_address("aws_lambda_function.handler") is None
@@ -294,13 +302,15 @@ class TestElasticIPAddressParsing:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = ElasticIP.from_address("NetworkStack/NatEip/EC2::EIP")
+        r = ElasticIP.from_address("AWS::EC2::EIP:NatEip")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_unrelated(self):
         assert ElasticIP.from_address("aws_lambda_function.handler") is None
         # Ensure it does not greedily match unrelated eip-like prefixes
         assert ElasticIP.from_address("aws_eip_association.assoc") is None
+        # CDK: AWS::EC2::EIPAssociation is a distinct type and must not match.
+        assert ElasticIP.from_address("AWS::EC2::EIPAssociation:MyAssoc") is None
 
 
 class TestElasticIPExtraction:
