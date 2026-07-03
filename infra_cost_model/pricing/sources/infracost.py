@@ -270,12 +270,22 @@ class InfracostClient:
             return self._upsert_regionless_usagetype(
                 cache, prices, usage_metric, region, unit_match, descriptor, now)
 
+        # Some products are priced by Infracost under a different service than the
+        # handler/seed model them (e.g. NAT Gateway is priced under AmazonEC2 but
+        # modeled under AmazonVPC). `store_service` upserts them under the service
+        # the engine queries. `usagetype_exclude` drops sibling usagetypes that
+        # share the same unit (e.g. NAT Gateway's $0 "Prvd" provisioned rows).
+        store_service = descriptor.get("store_service")
+        excludes = descriptor.get("usagetype_exclude") or []
         count = 0
         for p in prices:
             if unit_match and p.get("unit") != unit_match:
                 continue
+            usagetype = (p.get("attributes") or {}).get("usagetype", "")
+            if any(x in usagetype for x in excludes):
+                continue
             cache.upsert(Price(
-                vendor=p["vendor"], service=p["service"], region=p["region"],
+                vendor=p["vendor"], service=store_service or p["service"], region=p["region"],
                 product_family=p["product_family"], attributes=p["attributes"],
                 usage_metric=usage_metric, unit=p["unit"], price_usd=p["price_usd"],
                 start_usage_amount=p["start_usage_amount"],
@@ -426,11 +436,23 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "group", "value": "ELB:Balancing"}],
         "unit": "LCU-Hrs",
     },
-    # NAT Gateway: the Infracost catalog doesn't currently expose NAT GW under a
-    # standard productFamily, so these entries are present but not yet live-validated.
-    # The infracost CLI does price this resource; the product grouping is TBD.
-    #"NAT-Gateway-Hour": { "service": "AmazonVPC" },
-    #"NAT-Gateway-DataProcessed": { "service": "AmazonVPC" },
+    # NAT Gateway: Infracost prices this under service "AmazonEC2" / productFamily
+    # "NAT Gateway" (operation=NatGateway distinguishes it from RegionalNatGateway),
+    # but the handler and seed model it under "AmazonVPC" — so store_service remaps
+    # it there. Hourly is a single Hrs row; data-processed shares its GB unit with a
+    # $0 "Prvd" (provisioned-throughput) row, excluded via usagetype_exclude.
+    "NAT-Gateway-Hour": {
+        "service": "AmazonEC2", "store_service": "AmazonVPC",
+        "product_family": "NAT Gateway",
+        "attribute_filters": [{"key": "operation", "value": "NatGateway"}],
+        "unit": "Hrs",
+    },
+    "NAT-Gateway-DataProcessed": {
+        "service": "AmazonEC2", "store_service": "AmazonVPC",
+        "product_family": "NAT Gateway",
+        "attribute_filters": [{"key": "operation", "value": "NatGateway"}],
+        "unit": "GB", "usagetype_exclude": ["Prvd"],
+    },
     # VPC Interface Endpoint (PrivateLink): ENI-hour + per-GB.
     "VPC-Endpoint-Hour": {
         "service": "AmazonVPC", "product_family": "VpcEndpoint",
