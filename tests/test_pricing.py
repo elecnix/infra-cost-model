@@ -276,3 +276,18 @@ def test_seed_prices_is_idempotent():
 
         assert count_once > 0
         assert count_twice == count_once
+
+
+def test_seed_pricelist_has_no_duplicate_rows():
+    """The bundled seed list must not carry duplicate price rows: SQLite treats
+    seed rows (purchase_option=NULL) as distinct under the UNIQUE constraint, so a
+    dup would load twice and a single logical price could return as a spurious
+    multi-tier TieredPrice."""
+    import json
+    from collections import Counter
+    from infra_cost_model.pricing.cache import SEED_PRICES_PATH
+    rows = json.loads(SEED_PRICES_PATH.read_text())
+    keys = [(r["vendor"], r["service"], r["region"], r["usage_metric"],
+             r.get("start_usage_amount")) for r in rows]
+    dupes = {k: n for k, n in Counter(keys).items() if n > 1}
+    assert not dupes, f"duplicate seed rows: {dupes}"

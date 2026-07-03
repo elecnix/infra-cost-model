@@ -79,7 +79,7 @@ _REGION_PREFIX = {
     "eu-west-1": "EU", "eu-west-2": "EUW2", "eu-west-3": "EUW3",
     "eu-central-1": "EUC1", "eu-central-2": "EUC2", "eu-north-1": "EUN1",
     "eu-south-1": "EUS1", "eu-south-2": "EUS2",
-    "ap-southeast-1": "APS1", "ap-southeast-2": "APS2", "ap-southeast-3": "APS3",
+    "ap-southeast-1": "APS1", "ap-southeast-2": "APS2", "ap-southeast-3": "APS4",
     "ap-south-1": "APS3", "ap-south-2": "APS5",
     "ap-northeast-1": "APN1", "ap-northeast-2": "APN2", "ap-northeast-3": "APN3",
     "ap-east-1": "APE1",

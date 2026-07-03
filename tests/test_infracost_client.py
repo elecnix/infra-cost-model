@@ -416,3 +416,23 @@ def test_regionless_usagetype_unknown_region_upserts_nothing(monkeypatch):
             cache, "DataTransfer-Internet-Out-GB", "moon-base-1")
     assert n == 0
     cache.upsert.assert_not_called()
+
+
+# --- Region usagetype prefix map integrity -------------------------------------
+
+def test_region_usagetype_prefixes_are_unique():
+    """Each region must map to a DISTINCT usagetype prefix — a collision makes two
+    regions' prices indistinguishable in the usagetype filters (e.g. the data-
+    transfer region-pair / regionless sync)."""
+    from collections import Counter
+    from infra_cost_model.pricing.sources.infracost import _REGION_PREFIX
+    dupes = {v: n for v, n in Counter(_REGION_PREFIX.values()).items() if n > 1}
+    assert not dupes, f"duplicate region usagetype prefixes: {dupes}"
+
+
+def test_ap_region_prefixes_match_aws_codes():
+    """AWS assigns usage-type region codes by launch order, not name."""
+    from infra_cost_model.pricing.sources.infracost import _REGION_PREFIX
+    assert _REGION_PREFIX["ap-south-1"] == "APS3"      # Mumbai
+    assert _REGION_PREFIX["ap-southeast-3"] == "APS4"  # Jakarta
+    assert _REGION_PREFIX["ap-south-2"] == "APS5"      # Hyderabad
