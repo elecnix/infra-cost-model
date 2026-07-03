@@ -194,7 +194,21 @@ class PricingCache:
         
         fetched = datetime.fromisoformat(result)
         return datetime.now() - fetched > timedelta(days=self.ttl_days)
-    
+
+    def source_info(self) -> dict[str, int]:
+        """Return a count of rows by pricing source.
+
+        Keys may include 'infracost', 'seed', 'aws-pricelist', etc.
+        An empty dict means no rows at all.
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute(
+            "SELECT source, COUNT(*) FROM prices GROUP BY source"
+        )
+        result = {row[0]: row[1] for row in cursor.fetchall()}
+        conn.close()
+        return result
+
     def upsert(self, price: Price) -> None:
         """Insert or update a price record."""
         attrs_hash = _hash_attributes(price.attributes)
@@ -239,14 +253,6 @@ class PricingCache:
         conn.close()
         
         if not rows:
-            # Load seed prices and retry once
-            if not self._seed_loaded:
-                try:
-                    seed_prices(self)
-                    self._seed_loaded = True
-                    return self.query(vendor, service, region, usage_metric, quantity)
-                except RuntimeError:
-                    pass
             return None
         
         prices = [

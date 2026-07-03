@@ -11,7 +11,14 @@ class PricingCatalog:
     
     def __init__(self, db_path: str | Path = None):
         self._cache = PricingCache(db_path)
-    
+
+    def source_info(self) -> dict[str, int]:
+        """Return a count of rows by pricing source (infracost, seed, etc.).
+
+        An empty dict means no rows are cached at all.
+        """
+        return self._cache.source_info()
+
     def query(self, vendor: str, service: str, region: str,
               usage_metric: str, usage_quantity: float | None = None) -> Optional[Union["_CostResult", TieredPrice, Price]]:
         """Query pricing for a specific metric.
