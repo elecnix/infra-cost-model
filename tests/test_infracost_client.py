@@ -309,3 +309,110 @@ def test_data_transfer_unknown_region_upserts_nothing(monkeypatch):
             cache, "DataTransfer-InterRegion-GB", "moon-base-1")
     assert n == 0
     cache.upsert.assert_not_called()
+
+
+# --- Regionless single-usagetype: internet egress (tiered) + inter-AZ ----------
+
+def _dt_tiered_product(usagetype, tiers, transfer_type="AWS Outbound", unit="GB"):
+    """tiers: list of (usd, start, end) — one price row each (preserves tiers)."""
+    return {
+        "productFamily": "",
+        "attributes": [
+            {"key": "usagetype", "value": usagetype},
+            {"key": "transferType", "value": transfer_type},
+        ],
+        "prices": [{"USD": str(u), "unit": unit,
+                    "startUsageAmount": str(s),
+                    "endUsageAmount": (None if e is None else str(e))}
+                   for (u, s, e) in tiers],
+    }
+
+
+def test_internet_egress_preserves_tiers_us_east_1(monkeypatch):
+    """us-east-1 internet egress uses the unprefixed usagetype and keeps all tiers."""
+    _set_creds(monkeypatch)
+    products = [
+        _dt_tiered_product("DataTransfer-Out-Bytes", [
+            (0.09, 0, 10240), (0.085, 10240, 51200),
+            (0.07, 51200, 153600), (0.05, 153600, None),
+        ]),
+        _dt_tiered_product("USW1-DataTransfer-Out-Bytes", [(0.09, 0, None)]),  # other region
+        _dt_product("USE1-USW2-AWS-Out-Bytes", 0.02),                          # wrong metric
+    ]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "DataTransfer-Internet-Out-GB", "us-east-1")
+    assert n == 4  # four tiers of the unprefixed us-east-1 usagetype only
+    assert all(p.region == "us-east-1" and p.usage_metric == "DataTransfer-Internet-Out-GB"
+               for p in upserted)
+    assert sorted(p.price_usd for p in upserted) == [0.05, 0.07, 0.085, 0.09]
+    first = next(p for p in upserted if p.start_usage_amount == 0)
+    assert first.price_usd == pytest.approx(0.09) and first.end_usage_amount == pytest.approx(10240)
+
+
+def test_internet_egress_prefixes_non_us_east_1(monkeypatch):
+    """A non-us-east-1 region selects the prefixed usagetype, not the bare one."""
+    _set_creds(monkeypatch)
+    products = [
+        _dt_tiered_product("DataTransfer-Out-Bytes", [(0.09, 0, None)]),         # us-east-1 bare
+        _dt_tiered_product("USW1-DataTransfer-Out-Bytes", [(0.09, 0, None)]),    # us-west-1
+    ]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "DataTransfer-Internet-Out-GB", "us-west-1")
+    assert n == 1
+    assert upserted[0].region == "us-west-1"
+    assert upserted[0].attributes["usagetype"] == "USW1-DataTransfer-Out-Bytes"
+
+
+def test_inter_az_flat_rate_us_east_1(monkeypatch):
+    """Inter-AZ is a single flat $0.01/GB row under the unprefixed usagetype."""
+    _set_creds(monkeypatch)
+    products = [
+        _dt_product("DataTransfer-Regional-Bytes", 0.01, transfer_type="IntraRegion"),
+        _dt_product("APS4-DataTransfer-Regional-Bytes", 0.01, transfer_type="IntraRegion"),
+    ]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "DataTransfer-InterAZ-GB", "us-east-1")
+    assert n == 1
+    assert upserted[0].price_usd == pytest.approx(0.01)
+    assert upserted[0].region == "us-east-1"
+
+
+def test_data_transfer_internet_and_interaz_descriptors_present():
+    d1 = ic.METRIC_DESCRIPTORS["DataTransfer-Internet-Out-GB"]
+    assert d1["query_region"] == "" and d1["regionless_usagetype"] is True
+    assert d1["usagetype_base"] == "DataTransfer-Out-Bytes"
+    d2 = ic.METRIC_DESCRIPTORS["DataTransfer-InterAZ-GB"]
+    assert d2["regionless_usagetype"] is True
+    assert d2["usagetype_base"] == "DataTransfer-Regional-Bytes"
+
+
+def test_regionless_usagetype_queries_global_region(monkeypatch):
+    """Internet-egress / inter-AZ descriptors must issue the global (region="") query."""
+    _set_creds(monkeypatch)
+    cache = MagicMock()
+    prod = _dt_tiered_product("DataTransfer-Out-Bytes", [(0.09, 0, None)])
+    with patch.object(ic.requests, "post", return_value=_graphql_response([prod])) as post:
+        ic.InfracostClient().sync_to_cache(cache, "DataTransfer-Internet-Out-GB", "us-east-1")
+    assert post.call_args.kwargs["json"]["variables"]["region"] == ""
+
+
+def test_regionless_usagetype_unknown_region_upserts_nothing(monkeypatch):
+    """An unmapped region resolves to the 'REGION_PREFIX' fallback target, which
+    matches no usagetype → nothing stored (falls back to seed)."""
+    _set_creds(monkeypatch)
+    products = [_dt_tiered_product("DataTransfer-Out-Bytes", [(0.09, 0, None)])]
+    cache = MagicMock()
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(
+            cache, "DataTransfer-Internet-Out-GB", "moon-base-1")
+    assert n == 0
+    cache.upsert.assert_not_called()
