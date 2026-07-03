@@ -357,3 +357,19 @@ class TestCdkExtraction:
         cdk_json = {"Resources": {}}
         nodes = extract_resources_from_cdk(cdk_json)
         assert nodes == {}
+
+
+def test_resolve_catalog_metric_per_handler():
+    """Issue #223: logical usageMetrics names resolve to catalog usage_metric
+    names per-handler, disambiguating shared logical names across services."""
+    from infra_cost_model.resources.registry import ResourceRegistry as R
+    assert R.resolve_catalog_metric("aws_nat_gateway.main", "natHours") == "NAT-Gateway-Hour"
+    assert R.resolve_catalog_metric("aws_kms_key.k", "keysCount") == "KMS-Key-Month"
+    assert R.resolve_catalog_metric("aws_eip.nat", "inUseHours") == "IPv4-InUse-Hours"
+    # Same logical name, different catalog metric per handler:
+    assert R.resolve_catalog_metric("aws_nat_gateway.main", "dataProcessedGb") == "NAT-Gateway-DataProcessed"
+    assert R.resolve_catalog_metric("aws_vpc_endpoint.s3", "dataProcessedGb") == "VPC-Endpoint-DataProcessed"
+    # Unknown address or unmapped logical name → None (caller uses pricingRates).
+    assert R.resolve_catalog_metric("aws_lambda_function.f", "natHours") is None
+    assert R.resolve_catalog_metric("aws_nat_gateway.main", "bogusMetric") is None
+    assert R.resolve_catalog_metric("not.a.resource", "natHours") is None

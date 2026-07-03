@@ -2696,3 +2696,62 @@ class TestFixedMetrics:
             costs = aggregator.aggregate()
 
             assert costs["nat"] == pytest.approx(730 * 0.045)
+
+
+class TestCatalogMetricMapping:
+    """Issue #223: a node authored with a handler's logical usageMetrics name is
+    priced from the catalog (live/seed), not just embedded pricingRates."""
+
+    @staticmethod
+    def _catalog(tmpdir, usage_metric, price):
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        cache = PricingCache(db_path=Path(tmpdir) / "m.db")
+        cache.upsert(Price(
+            vendor="aws", service="AmazonVPC", region="us-east-1",
+            product_family="", attributes={}, usage_metric=usage_metric,
+            unit="Hours", price_usd=price, start_usage_amount=None,
+            end_usage_amount=None, source="test", effective_date="2024-01-01",
+            fetched_at="2024-01-01T00:00:00"))
+        return PricingCatalog(db_path=Path(tmpdir) / "m.db")
+
+    def _nat_node(self, address):
+        return {"nat": {
+            "nodeType": "routing", "resourceAddress": address,
+            "provider": "aws", "service": "AmazonVPC", "region": "us-east-1",
+            "usageMetrics": {"natHours": {"unit": "hours", "value": 730, "fixed": True}},
+        }}
+
+    def test_logical_metric_prices_from_catalog(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = self._catalog(tmp, "NAT-Gateway-Hour", 0.045)  # catalog name only
+            nodes = self._nat_node("aws_nat_gateway.main")
+            derived = {"nat": DerivedUsage("nat", 1.0)}
+            costs = CostAggregator(nodes, derived, [], catalog).aggregate()
+            # 730 * $0.045, reached only if natHours -> NAT-Gateway-Hour resolved.
+            assert costs["nat"] == pytest.approx(32.85)
+
+    def test_unmapped_address_without_rates_is_zero(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = self._catalog(tmp, "NAT-Gateway-Hour", 0.045)
+            nodes = self._nat_node("not.a.known.resource")  # no handler → no mapping
+            derived = {"nat": DerivedUsage("nat", 1.0)}
+            costs = CostAggregator(nodes, derived, [], catalog).aggregate()
+            assert costs["nat"] == 0.0
+
+    def test_pricing_rates_still_win_for_unmapped_metric(self):
+        """Backward compat: an unmapped logical metric with no catalog/seed row
+        falls back to embedded pricingRates."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = self._catalog(tmp, "NAT-Gateway-Hour", 0.045)
+            nodes = self._nat_node("aws_nat_gateway.main")
+            # A logical name the handler does NOT map and the catalog/seed lack.
+            nodes["nat"]["usageMetrics"] = {"customThing": {"unit": "x", "value": 100, "fixed": True}}
+            nodes["nat"]["pricingRates"] = {"customThing": 0.02}
+            derived = {"nat": DerivedUsage("nat", 1.0)}
+            costs = CostAggregator(nodes, derived, [], catalog).aggregate()
+            assert costs["nat"] == pytest.approx(100 * 0.02)

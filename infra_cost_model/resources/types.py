@@ -39,7 +39,21 @@ class ResourceType(ABC):
     def valid_metrics(self) -> list[str]:
         """Return list of valid usage metric names for this type."""
         pass
-    
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        """Map logical usageMetrics names to pricing-catalog usage_metric names.
+
+        Empty by default. Handlers whose logical metrics correspond to catalog
+        pricing rows override this so the engine can price nodes from the catalog
+        (Principle 13) — using the live/seed pricing — instead of falling back to
+        embedded per-node ``pricingRates``. Keyed per handler (not per service),
+        because different resources of the same service can reuse a logical name
+        for a different catalog metric (e.g. ``dataProcessedGb`` on NAT Gateway
+        vs VPC Endpoint).
+        """
+        return {}
+
     @classmethod
     @abstractmethod
     def from_address(cls, resource_address: str) -> Optional["ResourceType"]:

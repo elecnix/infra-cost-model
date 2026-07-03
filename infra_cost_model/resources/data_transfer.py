@@ -36,6 +36,12 @@ class DataTransferNode(ExternalResource):
     def valid_metrics(self) -> list[str]:
         return ["interRegionGb", "internetOutGb", "interAzGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"interRegionGb": "DataTransfer-InterRegion-GB",
+                "internetOutGb": "DataTransfer-Internet-Out-GB",
+                "interAzGb": "DataTransfer-InterAZ-GB"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["DataTransferNode"]:
         if resource_address.startswith(_ADDRESS_PREFIXES):

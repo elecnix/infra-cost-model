@@ -115,6 +115,26 @@ class ResourceRegistry:
         return None
 
     @classmethod
+    def resolve_catalog_metric(cls, resource_address: str,
+                               logical_metric: str) -> Optional[str]:
+        """Map a node's logical usageMetrics key to a catalog usage_metric name.
+
+        Finds the handler that owns ``resource_address`` and looks up
+        ``logical_metric`` in its ``catalog_metrics`` map. Resolution is
+        per-handler (not per-service) so resources sharing a service can reuse a
+        logical name for different catalog metrics (e.g. ``dataProcessedGb`` maps
+        to ``NAT-Gateway-DataProcessed`` for NAT Gateway but
+        ``VPC-Endpoint-DataProcessed`` for a VPC endpoint).
+
+        Returns ``None`` when no handler matches or the handler has no mapping for
+        that logical name.
+        """
+        handler = cls.from_address(resource_address)
+        if handler is None:
+            return None
+        return handler().catalog_metrics.get(logical_metric)
+
+    @classmethod
     def known_prefixes(cls) -> set[str]:
         """Return set of handler class names registered."""
         return {handler.__name__ for handler in cls._handlers}
