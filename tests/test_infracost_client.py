@@ -151,3 +151,58 @@ def test_no_warning_when_unauthenticated(monkeypatch, tmp_path):
             warnings.simplefilter("error")
             count, source = ic.sync_pricing_catalog()
     assert source == "seed-pricelist"
+
+
+# --- Descriptors added for #208-#211 handlers (issue #217) ---------------------
+
+@pytest.mark.parametrize("metric,service,unit", [
+    ("KMS-Key-Month", "awskms", "Keys"),
+    ("KMS-API-Request", "awskms", "Requests"),
+    ("IPv4-InUse-Hours", "AmazonVPC", "Hrs"),
+    ("IPv4-Idle-Hours", "AmazonVPC", "Hrs"),
+    ("CloudWatch-Metric-Month", "AmazonCloudWatch", "Metrics"),
+    ("CloudWatch-Alarm-Month", "AmazonCloudWatch", "Alarms"),
+    ("CloudWatch-GetMetricData", "AmazonCloudWatch", "Metrics"),
+])
+def test_new_handler_descriptors_present(metric, service, unit):
+    d = ic.METRIC_DESCRIPTORS[metric]
+    assert d["service"] == service
+    assert d["unit"] == unit
+
+
+def test_ipv4_descriptor_resolves_region_prefix(monkeypatch):
+    """The EIP usagetype filter must have REGION_PREFIX resolved to the region's
+    short code (us-east-1 -> USE1) before the query is sent."""
+    _set_creds(monkeypatch)
+    d = ic.METRIC_DESCRIPTORS["IPv4-InUse-Hours"]
+    with patch.object(ic.requests, "post", return_value=_graphql_response([])) as post:
+        ic.InfracostClient().query_prices(
+            service=d["service"], region="us-east-1",
+            attribute_filters=d["attribute_filters"],
+        )
+    sent = post.call_args.kwargs["json"]["variables"]["attributeFilters"]
+    assert sent == [{"key": "usagetype", "value": "USE1-PublicIPv4:InUseAddress"}]
+
+
+def test_sync_to_cache_kms_key_month_upserts(monkeypatch):
+    """End-to-end (mocked HTTP): the KMS-Key-Month descriptor stores the fetched
+    price under the catalog usage_metric name with source=infracost."""
+    _set_creds(monkeypatch)
+    products = [{
+        "productFamily": "Encryption Key",
+        "attributes": [{"key": "usagetype", "value": "us-east-1-KMS-Keys"}],
+        "prices": [
+            {"USD": "1.0", "unit": "Keys", "startUsageAmount": "0", "endUsageAmount": None},
+            {"USD": "9.99", "unit": "WRONG-UNIT", "startUsageAmount": "0", "endUsageAmount": None},
+        ],
+    }]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "KMS-Key-Month", "us-east-1")
+    assert n == 1  # WRONG-UNIT row filtered out by the descriptor's unit
+    assert upserted[0].usage_metric == "KMS-Key-Month"
+    assert upserted[0].service == "awskms"
+    assert upserted[0].price_usd == pytest.approx(1.0)
+    assert upserted[0].source == "infracost"
