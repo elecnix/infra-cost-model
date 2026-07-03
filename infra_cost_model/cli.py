@@ -362,7 +362,13 @@ def cmd_sync_pricing(args: argparse.Namespace) -> int:
     try:
         count, source = sync_pricing_catalog(
             vendor=args.vendor, services=services, regions=regions)
-        print(f"✓ Synced {count} prices from {source} across {len(regions)} region(s)")
+        if source == "infracost":
+            print(f"✓ Synced {count} prices from {source} across {len(regions)} region(s)")
+        else:
+            # No live credential → sync_pricing_catalog fell back to the us-east-1
+            # seed fixtures; don't claim the full region fan-out happened.
+            print(f"✓ Loaded {count} prices from {source} "
+                  f"(us-east-1 fallback — set INFRACOST_API_KEY for live, all-region pricing)")
         return 0
     except RuntimeError as e:
         _print_stderr(f"Error: {e}")
