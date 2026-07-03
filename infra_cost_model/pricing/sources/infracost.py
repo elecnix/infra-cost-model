@@ -375,6 +375,63 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "group", "value": "S3-API-PutObject"}],
         "unit": "Requests",
     },
+    # KMS (#208): $1/customer-managed key-month + per-symmetric-request.
+    # Note: the Infracost service code for KMS is lowercase "awskms".
+    "KMS-Key-Month": {
+        "service": "awskms", "product_family": "Encryption Key",
+        "unit": "Keys",
+    },
+    "KMS-API-Request": {
+        "service": "awskms", "product_family": "API Request",
+        "attribute_filters": [{"key": "group", "value": "awskms-APIRequest-All"}],
+        "unit": "Requests",
+    },
+    # Public IPv4 address (#210): $0.005/hr in-use or idle. The usagetype encodes
+    # the region as a short prefix (USE1- / …); REGION_PREFIX is resolved at query
+    # time. Product family is unset on these rows, so the usagetype filter alone
+    # selects the address (and distinguishes in-use from idle).
+    "IPv4-InUse-Hours": {
+        "service": "AmazonVPC",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-PublicIPv4:InUseAddress"}],
+        "unit": "Hrs",
+    },
+    "IPv4-Idle-Hours": {
+        "service": "AmazonVPC",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-PublicIPv4:IdleAddress"}],
+        "unit": "Hrs",
+    },
+    # CloudWatch Metrics/Alarms (#209). Custom-metric pricing is tiered
+    # ($0.30 / $0.10 / $0.05 / $0.02) and comes back as multiple tiers under the
+    # one usagetype. GetMetricData is a per-metric API request (excludes the
+    # GetMetricWidgetImage rows that share the family) with a 1M free tier.
+    "CloudWatch-Metric-Month": {
+        "service": "AmazonCloudWatch", "product_family": "Metric",
+        "attribute_filters": [{"key": "usagetype", "value": "CW:MetricMonitorUsage"}],
+        "unit": "Metrics",
+    },
+    "CloudWatch-Alarm-Month": {
+        "service": "AmazonCloudWatch", "product_family": "Alarm",
+        "attribute_filters": [{"key": "usagetype", "value": "CW:AlarmMonitorUsage"}],
+        "unit": "Alarms",
+    },
+    "CloudWatch-GetMetricData": {
+        "service": "AmazonCloudWatch", "product_family": "API Request",
+        "attribute_filters": [{"key": "usagetype", "value": "CW:GMD-Metrics"}],
+        "unit": "Metrics",
+    },
+    # Inter-region data transfer (#211): priced under service "AWSDataTransfer",
+    # but those products are catalogued globally (empty region) with a distinct
+    # usagetype PER source/destination region pair (e.g. USE1-APS4-AWS-Out-Bytes
+    # at $0.02/GB, transferType "InterRegion Outbound"). That doesn't fit the
+    # region-scoped sync (which queries region="us-east-1"), and collapsing every
+    # region pair into a single DataTransfer-InterRegion-GB rate would be
+    # arbitrary. Left seed-only until the sync grows regionless / region-pair
+    # support; documented here so the grouping is known.
+    #"DataTransfer-InterRegion-GB": {
+    #    "service": "AWSDataTransfer",  # region="" (global); usagetype per region pair
+    #    "attribute_filters": [{"key": "transferType", "value": "InterRegion Outbound"}],
+    #    "unit": "GB",
+    #},
 }
 
 
