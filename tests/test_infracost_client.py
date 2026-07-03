@@ -277,3 +277,35 @@ def test_data_transfer_descriptor_present():
     assert d["query_region"] == ""
     assert d["region_pair_source"] is True
     assert d["unit"] == "GB"
+
+
+def test_data_transfer_modal_tie_breaks_to_lower_rate(monkeypatch):
+    """When two rates share the top frequency, the lower rate wins (documented
+    tie-break so the representative is deterministic)."""
+    _set_creds(monkeypatch)
+    products = [
+        _dt_product("USE1-USW2-AWS-Out-Bytes", 0.09),
+        _dt_product("USE1-EUW1-AWS-Out-Bytes", 0.09),
+        _dt_product("USE1-APS4-AWS-Out-Bytes", 0.02),
+        _dt_product("USE1-APN1-AWS-Out-Bytes", 0.02),  # 2-vs-2 tie: 0.09 and 0.02
+    ]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "DataTransfer-InterRegion-GB", "us-east-1")
+    assert n == 1
+    assert upserted[0].price_usd == pytest.approx(0.02)  # lower of the tied rates
+
+
+def test_data_transfer_unknown_region_upserts_nothing(monkeypatch):
+    """An unmapped sync region resolves REGION_PREFIX to the literal fallback,
+    which matches no usagetype prefix → nothing stored (falls back to seed)."""
+    _set_creds(monkeypatch)
+    products = [_dt_product("USE1-USW2-AWS-Out-Bytes", 0.02)]
+    cache = MagicMock()
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(
+            cache, "DataTransfer-InterRegion-GB", "moon-base-1")
+    assert n == 0
+    cache.upsert.assert_not_called()
