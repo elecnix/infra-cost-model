@@ -3,3 +3,4 @@
 __pycache__/
 infra_cost_model.egg-info/
 .pytest_cache/
+.test-home/
