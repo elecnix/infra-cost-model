@@ -566,12 +566,16 @@ def _live_auth_intended(client: "InfracostClient") -> bool:
 
 
 def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
-                         fallback: bool = False) -> tuple[int, str]:
+                         fallback: bool = False,
+                         regions: list[str] = None) -> tuple[int, str]:
     """Sync pricing into the cache, live from Infracost when authenticated.
 
-    Falls back to the bundled seed price list when there is no credential, but
-    emits a ``UserWarning`` when a credential WAS present and the live sync failed
-    — so a broken live path is never silently mistaken for success.
+    Fetches every descriptor's prices for each requested region (defaults to
+    us-east-1 for backward compatibility; the CLI ``sync-pricing`` command passes
+    the full region set so pricing covers all services and all regions). Falls
+    back to the bundled seed price list when there is no credential, but emits a
+    ``UserWarning`` when a credential WAS present and the live sync failed — so a
+    broken live path is never silently mistaken for success.
     """
     from infra_cost_model.pricing.cache import PricingCache
 
@@ -586,16 +590,18 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
         return _sync_fallback(vendor, services, cache)
 
     metrics = services if services else list(METRIC_DESCRIPTORS.keys())
-    region = "us-east-1"
+    if not regions:
+        regions = ["us-east-1"]
     total = 0
     failures: list[str] = []
-    for metric in metrics:
-        if metric not in METRIC_DESCRIPTORS:
-            continue
-        try:
-            total += client.sync_to_cache(cache, metric, region, vendor)
-        except (RuntimeError, requests.RequestException, KeyError) as exc:
-            failures.append(f"{metric}: {exc}")
+    for region in regions:
+        for metric in metrics:
+            if metric not in METRIC_DESCRIPTORS:
+                continue
+            try:
+                total += client.sync_to_cache(cache, metric, region, vendor)
+            except (RuntimeError, requests.RequestException, KeyError) as exc:
+                failures.append(f"{region}/{metric}: {exc}")
 
     if total == 0:
         warnings.warn(

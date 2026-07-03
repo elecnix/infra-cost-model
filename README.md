@@ -39,6 +39,18 @@ infra-cost-model what-if model-a.yaml --compare model-b.yaml \
 infra-cost-model graph model.yaml
 ```
 
+## Pricing data
+
+Prices are fetched live from the [Infracost Cloud Pricing API](https://www.infracost.io/docs/), covering all supported services and all regions:
+
+```bash
+# Authenticate once: set INFRACOST_API_KEY, or run `infracost auth login`
+infra-cost-model sync-pricing                              # all services, all regions
+infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
+```
+
+The bundled `data/seed/aws_pricelist_seed.json` is a small us-east-1 fixture used by the test suite only — it is **not** a setup step for users, and `seed-pricing` exists purely for offline/testing.
+
 ## References
 
 - Leitner, Cito & Stöckli. "Modelling and Managing Deployment Costs of Microservice-Based Cloud Applications." *UCC 2016*. DOI: 10.1145/2996890.2996901

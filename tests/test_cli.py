@@ -1646,3 +1646,45 @@ edges:
             os.unlink(temp_yaml)
             os.unlink(temp_tf)
 
+
+
+def test_cli_sync_pricing_defaults_to_all_regions(monkeypatch):
+    """`sync-pricing` with no --region syncs every known region."""
+    import infra_cost_model.pricing.sources.infracost as ic
+    captured = {}
+
+    def fake_sync(vendor="aws", services=None, regions=None):
+        captured["vendor"] = vendor
+        captured["services"] = services
+        captured["regions"] = regions
+        return (42, "infracost")
+
+    monkeypatch.setattr(ic, "sync_pricing_catalog", fake_sync)
+    rc = main(["sync-pricing"])
+    assert rc == 0
+    assert captured["services"] is None
+    assert set(captured["regions"]) == set(ic._REGION_PREFIX)
+
+
+def test_cli_sync_pricing_explicit_regions(monkeypatch):
+    import infra_cost_model.pricing.sources.infracost as ic
+    captured = {}
+    monkeypatch.setattr(ic, "sync_pricing_catalog",
+                        lambda vendor="aws", services=None, regions=None:
+                            captured.update(regions=regions) or (1, "infracost"))
+    rc = main(["sync-pricing", "--region", "eu-west-1", "--region", "us-west-2"])
+    assert rc == 0
+    assert captured["regions"] == ["eu-west-1", "us-west-2"]
+
+
+def test_cli_sync_pricing_fallback_message(monkeypatch, capsys):
+    """When no credential → seed fallback, the message must not claim all regions."""
+    import infra_cost_model.pricing.sources.infracost as ic
+    monkeypatch.setattr(ic, "sync_pricing_catalog",
+                        lambda vendor="aws", services=None, regions=None: (14, "seed-pricelist"))
+    rc = main(["sync-pricing"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "seed-pricelist" in out
+    assert "region(s)" not in out  # must not overstate the fan-out
+    assert "fallback" in out.lower()
