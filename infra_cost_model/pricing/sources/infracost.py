@@ -266,6 +266,10 @@ class InfracostClient:
             return self._upsert_region_pair_representative(
                 cache, prices, usage_metric, region, unit_match, descriptor, now)
 
+        if descriptor.get("regionless_usagetype"):
+            return self._upsert_regionless_usagetype(
+                cache, prices, usage_metric, region, unit_match, descriptor, now)
+
         count = 0
         for p in prices:
             if unit_match and p.get("unit") != unit_match:
@@ -330,6 +334,44 @@ class InfracostClient:
             source="infracost", effective_date=now, fetched_at=now,
         ))
         return 1
+
+    def _upsert_regionless_usagetype(self, cache, prices, usage_metric,
+                                     region, unit_match, descriptor, now) -> int:
+        """Store a globally-catalogued, single-usagetype metric under the region.
+
+        Unlike inter-region transfer, internet egress and inter-AZ transfer have
+        ONE usagetype per source region (not per region pair), but still live in
+        the global (region="") ``AWSDataTransfer`` catalogue. This keeps every row
+        for the region's usagetype — preserving tiers (internet egress is tiered
+        $0.09 / $0.085 / $0.07 / $0.05) — and stores them under the sync ``region``.
+
+        us-east-1 data-transfer usagetypes are unprefixed (an AWS legacy quirk);
+        every other region prepends its short prefix (e.g. ``USW1-``).
+
+        Returns the number of rows upserted.
+        """
+        from infra_cost_model.pricing.cache import Price
+
+        base = descriptor["usagetype_base"]
+        prefix = _region_usagetype_prefix(region)
+        target = base if region == "us-east-1" else f"{prefix}-{base}"
+
+        count = 0
+        for p in prices:
+            if unit_match and p.get("unit") != unit_match:
+                continue
+            if (p.get("attributes") or {}).get("usagetype") != target:
+                continue
+            cache.upsert(Price(
+                vendor=p["vendor"], service=p["service"], region=region,
+                product_family=p.get("product_family"), attributes=p.get("attributes", {}),
+                usage_metric=usage_metric, unit=p["unit"], price_usd=p["price_usd"],
+                start_usage_amount=p["start_usage_amount"],
+                end_usage_amount=p["end_usage_amount"],
+                source="infracost", effective_date=now, fetched_at=now,
+            ))
+            count += 1
+        return count
 
 
 # Map each catalog usage_metric to the Infracost product query that prices it.
@@ -493,6 +535,27 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "unit": "GB",
         "region_pair_source": True,
         "usagetype_suffix": "-AWS-Out-Bytes",
+    },
+    # Internet egress (#211): transferType "AWS Outbound", one usagetype per
+    # source region (us-east-1 is the unprefixed "DataTransfer-Out-Bytes"),
+    # tiered $0.09 / $0.085 / $0.07 / $0.05 across the 10/50/150 TB breakpoints.
+    "DataTransfer-Internet-Out-GB": {
+        "service": "AWSDataTransfer",
+        "query_region": "",
+        "attribute_filters": [{"key": "transferType", "value": "AWS Outbound"}],
+        "unit": "GB",
+        "regionless_usagetype": True,
+        "usagetype_base": "DataTransfer-Out-Bytes",
+    },
+    # Regional inter-AZ transfer (#211): transferType "IntraRegion", flat $0.01/GB,
+    # usagetype "<region>-DataTransfer-Regional-Bytes" (bare for us-east-1).
+    "DataTransfer-InterAZ-GB": {
+        "service": "AWSDataTransfer",
+        "query_region": "",
+        "attribute_filters": [{"key": "transferType", "value": "IntraRegion"}],
+        "unit": "GB",
+        "regionless_usagetype": True,
+        "usagetype_base": "DataTransfer-Regional-Bytes",
     },
 }
 
