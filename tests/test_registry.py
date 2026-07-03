@@ -373,3 +373,10 @@ def test_resolve_catalog_metric_per_handler():
     assert R.resolve_catalog_metric("aws_lambda_function.f", "natHours") is None
     assert R.resolve_catalog_metric("aws_nat_gateway.main", "bogusMetric") is None
     assert R.resolve_catalog_metric("not.a.resource", "natHours") is None
+
+
+def test_resolve_catalog_metric_storedgb_disambiguation():
+    """`storedGb` maps to different catalog metrics per handler (ECR vs CW logs)."""
+    from infra_cost_model.resources.registry import ResourceRegistry as R
+    assert R.resolve_catalog_metric("aws_ecr_repository.r", "storedGb") == "ECR-Storage"
+    assert R.resolve_catalog_metric("aws_cloudwatch_log_group.g", "storedGb") == "CloudWatch-Log-Storage"

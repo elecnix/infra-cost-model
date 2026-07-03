@@ -2755,3 +2755,26 @@ class TestCatalogMetricMapping:
             derived = {"nat": DerivedUsage("nat", 1.0)}
             costs = CostAggregator(nodes, derived, [], catalog).aggregate()
             assert costs["nat"] == pytest.approx(100 * 0.02)
+
+
+class TestCatalogMetricMappingTiered:
+    """Issue #223: the tiered cost path also resolves logical -> catalog metrics."""
+
+    def test_tiered_path_prices_from_catalog(self):
+        import tempfile
+        from infra_cost_model.pricing.catalog import PricingCatalog
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            # Fresh catalog; the seed (which carries the tiered CloudWatch-GetMetricData
+            # rows) auto-loads on the first query miss.
+            catalog = PricingCatalog(db_path=Path(tmp) / "t.db")
+            nodes = {"cw": {
+                "nodeType": "storage", "resourceAddress": "aws_cloudwatch_metric_alarm.x",
+                "provider": "aws", "service": "AmazonCloudWatch", "region": "us-east-1",
+                "pricingModel": "tiered",
+                "usageMetrics": {"getMetricDataRequests": {"unit": "metrics", "value": 2_000_000, "fixed": True}},
+            }}
+            derived = {"cw": DerivedUsage("cw", 1.0)}
+            costs = CostAggregator(nodes, derived, [], catalog).aggregate()
+            # 1M free + 1M x $0.00001 = $10.00, via getMetricDataRequests -> CloudWatch-GetMetricData
+            assert costs["cw"] == pytest.approx(10.0)
