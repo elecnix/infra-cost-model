@@ -261,6 +261,16 @@ class PricingCache:
             for row in rows
         ]
 
+        # Live prices supersede the bundled seed fixtures. The seed is a
+        # test/offline fallback, not a second pricing schedule: mixing a seed row
+        # (start_usage_amount=None) with a live row (start_usage_amount=0.0) for
+        # the same metric yields a spurious 2-tier TieredPrice whose open-ended
+        # tiers each charge the full quantity — double-counting the cost. When any
+        # live (Infracost) row is present for this key, drop the seed rows so the
+        # two schedules never mix.
+        if any(p.source == "infracost" for p in prices):
+            prices = [p for p in prices if p.source != "seed" and p.source != "seed-initial"]
+
         # Collapse exact-duplicate rows. SQLite treats NULL as distinct in the
         # UNIQUE constraint, so rows with purchase_option=NULL (every seed row)
         # can be inserted repeatedly by re-seeding or upserts. Without this, a
