@@ -165,7 +165,7 @@ class TestS3Pricing:
     """Tests for S3 cost calculations (4 pricing dimensions)."""
 
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     # Test 2: Separate rates for PUT vs GET requests
     def test_put_vs_get_different_rates(self):

@@ -370,3 +370,35 @@ def test_live_multi_tier_survives_when_seed_row_present():
                          "CloudWatch-GetMetricData", 2_000_000).total_cost == pytest.approx(10.0)
     finally:
         os.unlink(db)
+
+
+def test_source_info_counts_by_source():
+    """source_info() returns per-source row counts for programmatic inspection."""
+    import tempfile, os
+    from infra_cost_model.pricing.cache import PricingCache, Price
+    from infra_cost_model.pricing.catalog import PricingCatalog
+    db = tempfile.mktemp(suffix=".db")
+    try:
+        # Empty catalog.
+        catalog = PricingCatalog(db)
+        assert catalog.source_info() == {}
+
+        cache = PricingCache(db)
+        cache.upsert(Price(
+            vendor="aws", service="S3", region="us-east-1",
+            product_family="", attributes={}, usage_metric="M1",
+            unit="U", price_usd=1.0, start_usage_amount=None,
+            end_usage_amount=None, purchase_option=None,
+            source="infracost", effective_date="x", fetched_at="x"))
+        cache.upsert(Price(
+            vendor="aws", service="S3", region="us-east-1",
+            product_family="", attributes={}, usage_metric="M2",
+            unit="U", price_usd=2.0, start_usage_amount=None,
+            end_usage_amount=None, purchase_option=None,
+            source="seed", effective_date="x", fetched_at="x"))
+
+        info = cache.source_info()
+        assert info["infracost"] == 1
+        assert info["seed"] == 1
+    finally:
+        os.unlink(db)

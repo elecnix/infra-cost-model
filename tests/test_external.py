@@ -137,7 +137,7 @@ def test_stripe_international_cost():
 def test_stripe_international_catalog_fee():
     """Test that currency conversion fee is queried from catalog (DP#13)."""
     from infra_cost_model.pricing.catalog import PricingCatalog
-    catalog = PricingCatalog()
+    catalog = PricingCatalog(seed=True)
     
     cost = _stripe_cost(10_000, 500_000, international=True, catalog=catalog)
     

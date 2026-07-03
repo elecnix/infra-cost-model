@@ -37,7 +37,7 @@ class TestSNSTopicExtraction:
         assert result.config["name"] == "my-event-bus"
 
 class TestSNSPricing:
-    def setup_method(self): self.catalog = PricingCatalog()
+    def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_fan_out_basic(self):
         cost = _sns_cost(publishes=2_000_000, sqs_deliveries=2_000_000, lambda_deliveries=2_000_000, http_deliveries=2_000_000, catalog=self.catalog, region="us-east-1")
         expected = 0.50 + 0.50 + 0.60 + 1.235

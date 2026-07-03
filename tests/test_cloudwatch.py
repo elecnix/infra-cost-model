@@ -88,7 +88,7 @@ class TestCWExtraction:
 
 class TestCWPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_ingestion_only(self):
         cost = _cloudwatch_log_cost(ingested_gb=10, catalog=self.catalog)
@@ -252,7 +252,7 @@ class TestCWAlarmExtraction:
 
 class TestCWAlarmPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_custom_metrics_only(self):
         cost = _cloudwatch_metric_cost(custom_metrics_count=10, catalog=self.catalog)

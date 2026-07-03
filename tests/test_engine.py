@@ -2765,8 +2765,9 @@ class TestCatalogMetricMappingTiered:
         from infra_cost_model.pricing.catalog import PricingCatalog
         from pathlib import Path
         with tempfile.TemporaryDirectory() as tmp:
-            # Fresh catalog; the seed (which carries the tiered CloudWatch-GetMetricData
-            # rows) auto-loads on the first query miss.
+            from infra_cost_model.pricing.cache import PricingCache, seed_prices
+            cache = PricingCache(db_path=Path(tmp) / "t.db")
+            seed_prices(cache)
             catalog = PricingCatalog(db_path=Path(tmp) / "t.db")
             nodes = {"cw": {
                 "nodeType": "storage", "resourceAddress": "aws_cloudwatch_metric_alarm.x",

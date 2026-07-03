@@ -83,21 +83,21 @@ class TestSecretsManager:
         assert is_leaf_node("storage") is True
 
     def test_pricing_single_secret(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _secretsmanager_cost(
             secrets_count=1, api_calls=0, catalog=catalog, region="us-east-1"
         )
         assert cost == pytest.approx(0.40, rel=0.01)
 
     def test_pricing_multiple_secrets(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _secretsmanager_cost(
             secrets_count=5, api_calls=0, catalog=catalog, region="us-east-1"
         )
         assert cost == pytest.approx(2.00, rel=0.01)
 
     def test_pricing_api_calls(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         # Pricing is per-unit; set api_calls=1 for ~$0.05
         cost = _secretsmanager_cost(
             secrets_count=0, api_calls=1, catalog=catalog, region="us-east-1"
@@ -105,7 +105,7 @@ class TestSecretsManager:
         assert cost == pytest.approx(0.05, rel=0.01)
 
     def test_pricing_zero_usage(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _secretsmanager_cost(
             secrets_count=0, api_calls=0, catalog=catalog, region="us-east-1"
         )
@@ -203,17 +203,17 @@ class TestECR:
         assert ecr.valid_metrics == ["storedGb"]
 
     def test_pricing_default_storage(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _ecr_cost(stored_gb=1, catalog=catalog, region="us-east-1")
         assert cost == pytest.approx(0.10, rel=0.01)
 
     def test_pricing_large_storage(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _ecr_cost(stored_gb=50, catalog=catalog, region="us-east-1")
         assert cost == pytest.approx(5.00, rel=0.01)
 
     def test_pricing_zero_usage(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _ecr_cost(stored_gb=0, catalog=catalog, region="us-east-1")
         assert cost == 0.0
 
@@ -310,35 +310,35 @@ class TestRoute53:
         assert "queries" in r53.valid_metrics
 
     def test_pricing_single_zone(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _route53_cost(
             hosted_zones=1, queries=0, catalog=catalog, region="us-east-1"
         )
         assert cost == pytest.approx(0.50, rel=0.01)
 
     def test_pricing_multiple_zones(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _route53_cost(
             hosted_zones=3, queries=0, catalog=catalog, region="us-east-1"
         )
         assert cost == pytest.approx(1.50, rel=0.01)
 
     def test_pricing_queries(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _route53_cost(
             hosted_zones=0, queries=10, catalog=catalog, region="us-east-1"
         )
         assert cost == pytest.approx(4.00, rel=0.01)
 
     def test_pricing_combined(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _route53_cost(
             hosted_zones=1, queries=5, catalog=catalog, region="us-east-1"
         )
         assert cost == pytest.approx(2.50, rel=0.01)
 
     def test_pricing_zero_usage(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _route53_cost(
             hosted_zones=0, queries=0, catalog=catalog, region="us-east-1"
         )

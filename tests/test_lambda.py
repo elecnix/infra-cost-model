@@ -151,7 +151,7 @@ def test_get_lambda_free_tier_limits():
     """Test that free tier limits are queryable from the catalog (DP#4)."""
     from infra_cost_model.pricing.catalog import PricingCatalog
     
-    catalog = PricingCatalog()
+    catalog = PricingCatalog(seed=True)
     limits = get_lambda_free_tier_limits(catalog)
     
     assert limits is not None, "Free tier limits should be available from seed data"
@@ -163,7 +163,7 @@ def test_apply_free_tier_with_catalog():
     """Test that apply_free_tier uses catalog limits when available (DP#4)."""
     from infra_cost_model.pricing.catalog import PricingCatalog
     
-    catalog = PricingCatalog()
+    catalog = PricingCatalog(seed=True)
     billed = apply_free_tier(2_000_000, 500_000, catalog=catalog)
     
     assert billed[0] == 1_000_000  # 2M - 1M free (from catalog)
@@ -175,7 +175,7 @@ def test_provisioned_concurrency_cost():
     from infra_cost_model.pricing.catalog import PricingCatalog
     
     # Create catalog to ensure seed prices are available
-    catalog = PricingCatalog()
+    catalog = PricingCatalog(seed=True)
     
     cost = _provisioned_concurrency_cost(
         provisioned_concurrency=10,

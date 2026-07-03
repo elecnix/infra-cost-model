@@ -104,7 +104,7 @@ class TestALBExtraction:
 
 class TestALBPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_alb_hours_only(self):
         cost = _alb_cost(alb_hours=730, processed_gb=0, catalog=self.catalog, region="us-east-1")

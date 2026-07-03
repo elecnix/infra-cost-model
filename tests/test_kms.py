@@ -113,40 +113,40 @@ class TestKMSNodeAndMetrics:
 
 class TestKMSPricing:
     def test_pricing_single_key(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _kms_cost(keys_count=1, api_requests=0,
                          catalog=catalog, region="us-east-1")
         assert cost == pytest.approx(1.00, rel=0.01)
 
     def test_pricing_multiple_keys(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _kms_cost(keys_count=4, api_requests=0,
                          catalog=catalog, region="us-east-1")
         assert cost == pytest.approx(4.00, rel=0.01)
 
     def test_pricing_api_requests_within_free_tier(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         # 20,000 requests are free
         cost = _kms_cost(keys_count=0, api_requests=20000,
                          catalog=catalog, region="us-east-1")
         assert cost == pytest.approx(0.0, abs=1e-9)
 
     def test_pricing_api_requests_above_free_tier(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         # 30,000 requests -> 10,000 billable at $0.000003 = $0.03
         cost = _kms_cost(keys_count=0, api_requests=30000,
                          catalog=catalog, region="us-east-1")
         assert cost == pytest.approx(0.03, rel=0.01)
 
     def test_pricing_combined(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         # 2 keys ($2.00) + 30,000 requests ($0.03) = $2.03
         cost = _kms_cost(keys_count=2, api_requests=30000,
                          catalog=catalog, region="us-east-1")
         assert cost == pytest.approx(2.03, rel=0.01)
 
     def test_pricing_zero_usage(self):
-        catalog = PricingCatalog()
+        catalog = PricingCatalog(seed=True)
         cost = _kms_cost(keys_count=0, api_requests=0,
                          catalog=catalog, region="us-east-1")
         assert cost == 0.0

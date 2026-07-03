@@ -46,7 +46,7 @@ class TestSQSQueueExtraction:
         assert result.config["name"] == "my-dlq" and result.config["fifoQueue"] is False
 
 class TestSQSPricing:
-    def setup_method(self): self.catalog = PricingCatalog()
+    def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_standard_pricing(self):
         cost = _sqs_cost(messages_sent=5_000_000, fifo=False, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(1.60, rel=0.01)

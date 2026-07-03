@@ -72,7 +72,7 @@ class TestNATExtraction:
 
 class TestNATPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_hours_only(self):
         cost = _nat_cost(nat_hours=730, data_processed_gb=0, catalog=self.catalog, region="us-east-1")
@@ -204,7 +204,7 @@ class TestVPCEndpointExtraction:
 
 class TestVPCEndpointPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_gateway_is_free(self):
         cost = _vpc_endpoint_cost(endpoint_hours=730, endpoint_type="Gateway", catalog=self.catalog, region="us-east-1")
@@ -358,7 +358,7 @@ class TestElasticIPExtraction:
 
 class TestElasticIPPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_in_use_hours(self):
         cost = _eip_cost(in_use_hours=730, idle_hours=0, catalog=self.catalog, region="us-east-1")

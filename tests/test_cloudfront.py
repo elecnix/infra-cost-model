@@ -34,7 +34,7 @@ class TestCloudFrontExtraction:
         assert result.config["priceClass"] == "PriceClass_100" and len(result.config["origins"]) == 1
 
 class TestCloudFrontPricing:
-    def setup_method(self): self.catalog = PricingCatalog()
+    def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_http_request_pricing(self):
         cost = _cloudfront_cost(requests=1_000_000, https_ratio=0.0, catalog=self.catalog)
         assert cost == pytest.approx(0.75, rel=0.01)

@@ -93,7 +93,7 @@ class TestDataTransferExtraction:
 
 class TestDataTransferPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_inter_region_gb(self):
         cost = _data_transfer_cost(inter_region_gb=100, catalog=self.catalog,

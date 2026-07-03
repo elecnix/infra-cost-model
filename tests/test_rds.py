@@ -39,7 +39,7 @@ class TestRDSExtraction:
         assert result.config["engine"] == "postgres" and result.config["instanceClass"] == "db.t3.micro"
 
 class TestRDSPricing:
-    def setup_method(self): self.catalog = PricingCatalog()
+    def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_fixed_cost_t3_micro(self):
         cost = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=0, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(24.82, rel=0.01)
