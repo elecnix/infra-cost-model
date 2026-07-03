@@ -116,7 +116,7 @@ class TestECSExtraction:
 
 class TestECSPricing:
     def setup_method(self):
-        self.catalog = PricingCatalog()
+        self.catalog = PricingCatalog(seed=True)
 
     def test_vcpu_cost_x86_one_task(self):
         # 1 task * 730 hours * 0.25 vCPU = 182.5 vCPU-hours

@@ -141,11 +141,14 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
 class PricingCache:
     """SQLite cache for cloud pricing data."""
     
-    def __init__(self, db_path: str | Path = None, ttl_days: int = DEFAULT_TTL_DAYS):
+    def __init__(self, db_path: str | Path = None, ttl_days: int = DEFAULT_TTL_DAYS,
+                 seed: bool = False):
         self.db_path = Path(db_path) if db_path else DB_PATH
         self.ttl_days = ttl_days
         self._seed_loaded = False
         self._ensure_db()
+        if seed:
+            seed_prices(self)
     
     def _ensure_db(self):
         """Create the database and tables if they don't exist."""

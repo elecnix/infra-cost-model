@@ -9,8 +9,8 @@ from infra_cost_model.pricing.cache import PricingCache, TieredPrice, Price
 class PricingCatalog:
     """High-level interface for querying cloud pricing."""
     
-    def __init__(self, db_path: str | Path = None):
-        self._cache = PricingCache(db_path)
+    def __init__(self, db_path: str | Path = None, seed: bool = False):
+        self._cache = PricingCache(db_path, seed=seed)
 
     def source_info(self) -> dict[str, int]:
         """Return a count of rows by pricing source (infracost, seed, etc.).

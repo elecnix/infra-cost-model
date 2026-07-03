@@ -36,7 +36,7 @@ class TestEventBridgeExtraction:
         assert result.config["name"] == "order-processor" and result.config["eventPattern"] is not None and result.config["isEnabled"] is True
 
 class TestEventBridgePricing:
-    def setup_method(self): self.catalog = PricingCatalog()
+    def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_custom_event_pricing(self):
         cost = _eventbridge_cost(events_published=3_000_000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(2.00, rel=0.01)
