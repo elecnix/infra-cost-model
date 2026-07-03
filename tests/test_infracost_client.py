@@ -393,3 +393,26 @@ def test_data_transfer_internet_and_interaz_descriptors_present():
     d2 = ic.METRIC_DESCRIPTORS["DataTransfer-InterAZ-GB"]
     assert d2["regionless_usagetype"] is True
     assert d2["usagetype_base"] == "DataTransfer-Regional-Bytes"
+
+
+def test_regionless_usagetype_queries_global_region(monkeypatch):
+    """Internet-egress / inter-AZ descriptors must issue the global (region="") query."""
+    _set_creds(monkeypatch)
+    cache = MagicMock()
+    prod = _dt_tiered_product("DataTransfer-Out-Bytes", [(0.09, 0, None)])
+    with patch.object(ic.requests, "post", return_value=_graphql_response([prod])) as post:
+        ic.InfracostClient().sync_to_cache(cache, "DataTransfer-Internet-Out-GB", "us-east-1")
+    assert post.call_args.kwargs["json"]["variables"]["region"] == ""
+
+
+def test_regionless_usagetype_unknown_region_upserts_nothing(monkeypatch):
+    """An unmapped region resolves to the 'REGION_PREFIX' fallback target, which
+    matches no usagetype → nothing stored (falls back to seed)."""
+    _set_creds(monkeypatch)
+    products = [_dt_tiered_product("DataTransfer-Out-Bytes", [(0.09, 0, None)])]
+    cache = MagicMock()
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(
+            cache, "DataTransfer-Internet-Out-GB", "moon-base-1")
+    assert n == 0
+    cache.upsert.assert_not_called()
