@@ -31,7 +31,7 @@ class TestS3BucketAddressParsing:
         assert result.node_type == "storage"
 
     def test_from_address_cdk(self):
-        result = S3Bucket.from_address("MyStack/MyBucket/S3::Bucket")
+        result = S3Bucket.from_address("AWS::S3::Bucket:MyBucket")
         assert result is not None
         assert result.node_type == "storage"
 

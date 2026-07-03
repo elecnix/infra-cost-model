@@ -25,7 +25,7 @@ def test_lambda_from_address_pulumi():
 
 def test_lambda_from_address_cdk():
     """Test parsing CDK Lambda address."""
-    result = LambdaFunction.from_address("MyApi/GetItems/AWS::Lambda::Function")
+    result = LambdaFunction.from_address("AWS::Lambda::Function:GetItems")
     assert result is not None
     assert result.node_type == "compute"
 

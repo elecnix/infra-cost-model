@@ -11,7 +11,7 @@ class TestCloudFrontAddressParsing:
         r = CloudFrontDistribution.from_address("aws.cloudfront.Distribution:my-cdn")
         assert r is not None and r.node_type == "routing"
     def test_from_address_cdk(self):
-        r = CloudFrontDistribution.from_address("MyStack/MyCDN/CloudFront::Distribution")
+        r = CloudFrontDistribution.from_address("AWS::CloudFront::Distribution:MyCDN")
         assert r is not None and r.node_type == "routing"
     def test_from_address_unrelated(self):
         assert CloudFrontDistribution.from_address("aws_s3_bucket.static") is None

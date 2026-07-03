@@ -22,7 +22,7 @@ class BedrockModel(ComputeResource):
         """Parse resource address to determine if it's a Bedrock model."""
         if resource_address.startswith("bedrock_model.") or \
            resource_address.startswith("aws.bedrock.Model:") or \
-           "Bedrock::Model" in resource_address:
+           "Bedrock::Model:" in resource_address:
             return cls()
         return None
     

@@ -24,7 +24,7 @@ class ECSFargateService(ComputeResource):
         if (resource_address.startswith("aws_ecs_service.") or
                 resource_address.startswith("aws_ecs_task_definition.") or
                 resource_address.startswith("aws.ecs.Service:") or
-                "ECS::Service" in resource_address):
+                "ECS::Service:" in resource_address):
             return cls()
         return None
 

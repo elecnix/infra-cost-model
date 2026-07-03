@@ -13,7 +13,7 @@ class TestEventBridgeAddressParsing:
     def test_from_address_pulumi(self):
         assert EventBridgeRule.from_address("aws.cloudwatch.EventRule:cron") is not None
     def test_from_address_cdk(self):
-        assert EventBridgeRule.from_address("PipelineStack/DailyTrigger/Events::Rule") is not None
+        assert EventBridgeRule.from_address("AWS::Events::Rule:DailyTrigger") is not None
     def test_from_address_unrelated(self):
         assert EventBridgeRule.from_address("aws_lambda_function.handler") is None
 

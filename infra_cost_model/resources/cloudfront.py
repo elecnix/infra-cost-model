@@ -22,7 +22,7 @@ class CloudFrontDistribution(RoutingResource):
         if (resource_address.startswith("aws_cloudfront_distribution.") or
                 resource_address.startswith("aws.cloudfront.Distribution:") or
                 resource_address.startswith("aws:cloudfront:Distribution:") or
-                "CloudFront::Distribution" in resource_address):
+                "CloudFront::Distribution:" in resource_address):
             return cls()
         return None
 

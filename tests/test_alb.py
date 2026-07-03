@@ -18,7 +18,7 @@ class TestALBAddressParsing:
         assert r is not None and r.node_type == "routing"
 
     def test_from_address_cdk(self):
-        r = ApplicationLoadBalancer.from_address("AppStack/ALB/ElasticLoadBalancingV2::LoadBalancer")
+        r = ApplicationLoadBalancer.from_address("AWS::ElasticLoadBalancingV2::LoadBalancer:ALB")
         assert r is not None and r.node_type == "routing"
 
     def test_from_address_aws_format(self):

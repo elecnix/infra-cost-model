@@ -28,7 +28,7 @@ class S3Bucket(StorageResource):
         if (resource_address.startswith("aws_s3_bucket.") or
                 resource_address.startswith("aws.s3.Bucket:") or
                 resource_address.startswith("aws:s3:Bucket:") or
-                "S3::Bucket" in resource_address):
+                "S3::Bucket:" in resource_address):
             return cls()
         return None
 

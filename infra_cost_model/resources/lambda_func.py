@@ -19,7 +19,7 @@ class LambdaFunction(ComputeResource):
         """Parse resource address to determine if it's a Lambda function."""
         if resource_address.startswith("aws_lambda_function.") or \
            resource_address.startswith("aws:lambda:Function:") or \
-           ":Lambda::Function" in resource_address:
+           ":Lambda::Function:" in resource_address:
             return cls()
         return None
     

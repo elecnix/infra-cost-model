@@ -17,7 +17,7 @@ class TestSecretsManager:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = SecretsManagerSecret.from_address("MyStack/AppSecret/SecretsManager::Secret")
+        r = SecretsManagerSecret.from_address("AWS::SecretsManager::Secret:AppSecret")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_unrelated(self):
@@ -142,7 +142,7 @@ class TestECR:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = ECRRepository.from_address("AppStack/AppRepo/ECR::Repository")
+        r = ECRRepository.from_address("AWS::ECR::Repository:AppRepo")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_unrelated(self):
@@ -248,7 +248,7 @@ class TestRoute53:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = Route53Zone.from_address("DnsStack/MainZone/Route53::HostedZone")
+        r = Route53Zone.from_address("AWS::Route53::HostedZone:MainZone")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_unrelated(self):

@@ -22,7 +22,7 @@ class SecretsManagerSecret(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["SecretsManagerSecret"]:
         if (resource_address.startswith("aws_secretsmanager_secret.") or
                 resource_address.startswith("aws.secretsmanager.Secret:") or
-                "SecretsManager::Secret" in resource_address):
+                "SecretsManager::Secret:" in resource_address):
             return cls()
         return None
 
@@ -86,7 +86,7 @@ class ECRRepository(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["ECRRepository"]:
         if (resource_address.startswith("aws_ecr_repository.") or
                 resource_address.startswith("aws.ecr.Repository:") or
-                "ECR::Repository" in resource_address):
+                "ECR::Repository:" in resource_address):
             return cls()
         return None
 
@@ -141,7 +141,7 @@ class Route53Zone(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["Route53Zone"]:
         if (resource_address.startswith("aws_route53_zone.") or
                 resource_address.startswith("aws.route53.Zone:") or
-                "Route53::HostedZone" in resource_address):
+                "Route53::HostedZone:" in resource_address):
             return cls()
         return None
 

@@ -12,7 +12,7 @@ class TestSQSQueueAddressParsing:
         result = SQSQueue.from_address("aws.sqs.Queue:orders-queue")
         assert result is not None and result.node_type == "routing"
     def test_from_address_cdk(self):
-        result = SQSQueue.from_address("OrdersStack/OrdersQueue/SQS::Queue")
+        result = SQSQueue.from_address("AWS::SQS::Queue:OrdersQueue")
         assert result is not None and result.node_type == "routing"
     def test_from_address_aws_sqs_format(self):
         assert SQSQueue.from_address("aws:sqs:Queue:dlq-12345") is not None

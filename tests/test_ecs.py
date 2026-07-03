@@ -18,7 +18,7 @@ class TestECSAddressParsing:
         assert r is not None and r.node_type == "compute"
 
     def test_from_address_cdk(self):
-        r = ECSFargateService.from_address("AppStack/Service/ECS::Service")
+        r = ECSFargateService.from_address("AWS::ECS::Service:Service")
         assert r is not None and r.node_type == "compute"
 
     def test_from_address_unrelated(self):
