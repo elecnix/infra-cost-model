@@ -291,3 +291,82 @@ def test_seed_pricelist_has_no_duplicate_rows():
              r.get("start_usage_amount")) for r in rows]
     dupes = {k: n for k, n in Counter(keys).items() if n > 1}
     assert not dupes, f"duplicate seed rows: {dupes}"
+
+
+def test_live_prices_supersede_seed_no_double_count():
+    """A seed row (start=None) and a live row (start=0.0) for the same metric must
+    not be returned as a spurious 2-tier TieredPrice that double-counts (#230)."""
+    import tempfile, os
+    from infra_cost_model.pricing.cache import PricingCache, Price
+    from infra_cost_model.pricing.catalog import PricingCatalog
+    db = tempfile.mktemp(suffix=".db")
+    try:
+        cache = PricingCache(db)
+        cache.upsert(Price(
+            vendor="aws", service="AmazonVPC", region="us-east-1", product_family="",
+            attributes={}, usage_metric="NAT-Gateway-Hour", unit="Hours", price_usd=0.045,
+            start_usage_amount=None, end_usage_amount=None, purchase_option=None,
+            source="seed", effective_date="x", fetched_at="x"))
+        cache.upsert(Price(
+            vendor="aws", service="AmazonVPC", region="us-east-1", product_family="NAT Gateway",
+            attributes={"usagetype": "NatGateway-Hours"}, usage_metric="NAT-Gateway-Hour",
+            unit="Hrs", price_usd=0.045, start_usage_amount=0.0, end_usage_amount=None,
+            purchase_option=None, source="infracost", effective_date="x", fetched_at="x"))
+        cat = PricingCatalog(db)
+        result = cat.query("aws", "AmazonVPC", "us-east-1", "NAT-Gateway-Hour", 730)
+        assert result.total_cost == pytest.approx(32.85)  # not 65.70
+    finally:
+        os.unlink(db)
+
+
+def test_seed_only_still_prices_when_no_live():
+    """Backward compat: with no live row present, seed prices are used."""
+    import tempfile, os
+    from infra_cost_model.pricing.cache import PricingCache, Price
+    from infra_cost_model.pricing.catalog import PricingCatalog
+    db = tempfile.mktemp(suffix=".db")
+    try:
+        cache = PricingCache(db)
+        cache.upsert(Price(
+            vendor="aws", service="X", region="us-east-1", product_family="",
+            attributes={}, usage_metric="M", unit="U", price_usd=1.0,
+            start_usage_amount=None, end_usage_amount=None, purchase_option=None,
+            source="seed", effective_date="x", fetched_at="x"))
+        cat = PricingCatalog(db)
+        assert cat.query("aws", "X", "us-east-1", "M", 10).total_cost == pytest.approx(10.0)
+    finally:
+        os.unlink(db)
+
+
+def test_live_multi_tier_survives_when_seed_row_present():
+    """A genuine multi-tier live schedule must NOT be collapsed when a flat seed
+    row for the same metric is also present (#230)."""
+    import tempfile, os
+    from infra_cost_model.pricing.cache import PricingCache, Price
+    from infra_cost_model.pricing.catalog import PricingCatalog
+    db = tempfile.mktemp(suffix=".db")
+    try:
+        cache = PricingCache(db)
+        # Live tiered: free 0-1M @ $0, then $0.00001 (like CloudWatch-GetMetricData)
+        cache.upsert(Price(
+            vendor="aws", service="AmazonCloudWatch", region="us-east-1",
+            product_family="API Request", attributes={}, usage_metric="CloudWatch-GetMetricData",
+            unit="Metrics", price_usd=0.0, start_usage_amount=0.0, end_usage_amount=1_000_000,
+            purchase_option=None, source="infracost", effective_date="x", fetched_at="x"))
+        cache.upsert(Price(
+            vendor="aws", service="AmazonCloudWatch", region="us-east-1",
+            product_family="API Request", attributes={}, usage_metric="CloudWatch-GetMetricData",
+            unit="Metrics", price_usd=0.00001, start_usage_amount=1_000_000, end_usage_amount=None,
+            purchase_option=None, source="infracost", effective_date="x", fetched_at="x"))
+        # A stale flat seed row for the same metric.
+        cache.upsert(Price(
+            vendor="aws", service="AmazonCloudWatch", region="us-east-1",
+            product_family="", attributes={}, usage_metric="CloudWatch-GetMetricData",
+            unit="Metrics", price_usd=0.99, start_usage_amount=None, end_usage_amount=None,
+            purchase_option=None, source="seed", effective_date="x", fetched_at="x"))
+        cat = PricingCatalog(db)
+        # 2M metrics: 1M free + 1M * $0.00001 = $10.00 (seed's $0.99 must not leak in).
+        assert cat.query("aws", "AmazonCloudWatch", "us-east-1",
+                         "CloudWatch-GetMetricData", 2_000_000).total_cost == pytest.approx(10.0)
+    finally:
+        os.unlink(db)
