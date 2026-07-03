@@ -21,8 +21,8 @@ class APIGatewayHTTP(RoutingResource):
         if resource_address.startswith("aws_apigatewayv2_api.") or \
            resource_address.startswith("aws.apigatewayv2.Api:") or \
            resource_address.startswith("aws:apigatewayv2:Api:") or \
-           "ApiGatewayV2::Api" in resource_address or \
-           "apigatewayv2::api" in resource_address.lower():
+           "ApiGatewayV2::Api:" in resource_address or \
+           "apigatewayv2::api:" in resource_address.lower():
             return cls()
         return None
     

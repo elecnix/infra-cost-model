@@ -29,7 +29,7 @@ class SQSQueue(RoutingResource):
         if (resource_address.startswith("aws_sqs_queue.") or
                 resource_address.startswith("aws.sqs.Queue:") or
                 resource_address.startswith("aws:sqs:Queue:") or
-                "SQS::Queue" in resource_address):
+                "SQS::Queue:" in resource_address):
             return cls()
         return None
 

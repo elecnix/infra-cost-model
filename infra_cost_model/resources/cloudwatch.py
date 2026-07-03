@@ -25,7 +25,7 @@ class CloudWatchLogGroup(StorageResource):
         if (resource_address.startswith("aws_cloudwatch_log_group.") or
                 resource_address.startswith("aws.cloudwatch.LogGroup:") or
                 resource_address.startswith("aws:cloudwatch:LogGroup:") or
-                "Logs::LogGroup" in resource_address):
+                "Logs::LogGroup:" in resource_address):
             return cls()
         return None
 
@@ -87,7 +87,7 @@ class CloudWatchMetricAlarm(StorageResource):
         if (resource_address.startswith("aws_cloudwatch_metric_alarm.") or
                 resource_address.startswith("aws.cloudwatch.MetricAlarm:") or
                 resource_address.startswith("aws:cloudwatch:MetricAlarm:") or
-                "CloudWatch::Alarm" in resource_address):
+                "CloudWatch::Alarm:" in resource_address):
             return cls()
         return None
 

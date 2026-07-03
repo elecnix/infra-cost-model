@@ -22,7 +22,7 @@ class SNSTopic(RoutingResource):
         if (resource_address.startswith("aws_sns_topic.") or
                 resource_address.startswith("aws.sns.Topic:") or
                 resource_address.startswith("aws:sns:Topic:") or
-                "SNS::Topic" in resource_address):
+                "SNS::Topic:" in resource_address):
             return cls()
         return None
 

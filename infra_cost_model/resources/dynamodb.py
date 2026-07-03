@@ -18,7 +18,7 @@ class DynamoDBTable(StorageResource):
         if resource_address.startswith("aws_dynamodb_table.") or \
            resource_address.startswith("aws.dynamodb.Table:") or \
            resource_address.startswith("aws:dynamodb:Table:") or \
-           "DynamoDB::Table" in resource_address:
+           "DynamoDB::Table:" in resource_address:
             return cls()
         return None
     

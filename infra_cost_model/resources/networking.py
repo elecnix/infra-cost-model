@@ -27,7 +27,7 @@ class NATGateway(RoutingResource):
         if (resource_address.startswith("aws_nat_gateway.") or
                 resource_address.startswith("aws.nat.Gateway:") or
                 resource_address.startswith("aws:ec2:NatGateway:") or
-                "EC2::NatGateway" in resource_address):
+                "EC2::NatGateway:" in resource_address):
             return cls()
         return None
 
@@ -87,7 +87,7 @@ class VpcEndpoint(StorageResource):
         if (resource_address.startswith("aws_vpc_endpoint.") or
                 resource_address.startswith("aws.ec2.VpcEndpoint:") or
                 resource_address.startswith("aws:ec2:VpcEndpoint:") or
-                "EC2::VPCEndpoint" in resource_address):
+                "EC2::VPCEndpoint:" in resource_address):
             return cls()
         return None
 
@@ -151,7 +151,7 @@ class ElasticIP(StorageResource):
         if (resource_address.startswith("aws_eip.") or
                 resource_address.startswith("aws.ec2.Eip:") or
                 resource_address.startswith("aws:ec2:Eip:") or
-                "EC2::EIP" in resource_address):
+                "EC2::EIP:" in resource_address):
             return cls()
         return None
 

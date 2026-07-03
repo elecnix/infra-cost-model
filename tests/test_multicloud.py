@@ -74,7 +74,7 @@ class TestGCPHandlers:
         assert result is not None
 
     def test_cloud_function_cdk(self):
-        result = CloudFunction.from_address("MyStack/Func/CloudFunctions::Function")
+        result = CloudFunction.from_address("google::CloudFunctions::Function:Func")
         assert result is not None
 
     def test_cloud_storage_terraform(self):

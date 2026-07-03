@@ -21,7 +21,7 @@ class KMSKey(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["KMSKey"]:
         if (resource_address.startswith("aws_kms_key.") or
                 resource_address.startswith("aws.kms.Key:") or
-                "KMS::Key" in resource_address):
+                "KMS::Key:" in resource_address):
             return cls()
         return None
 

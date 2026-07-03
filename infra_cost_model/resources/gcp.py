@@ -22,7 +22,7 @@ class CloudFunction(ComputeResource):
     def from_address(cls, resource_address: str) -> Optional["CloudFunction"]:
         if (resource_address.startswith("google_cloudfunctions_function.") or
                 "google:cloudfunctions:Function:" in resource_address or
-                "CloudFunctions::Function" in resource_address):
+                "CloudFunctions::Function:" in resource_address):
             return cls()
         return None
 
@@ -86,7 +86,7 @@ class CloudStorage(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["CloudStorage"]:
         if (resource_address.startswith("google_storage_bucket.") or
                 "google:storage:Bucket:" in resource_address or
-                "Storage::Bucket" in resource_address):
+                "Storage::Bucket:" in resource_address):
             return cls()
         return None
 
@@ -148,7 +148,7 @@ class CloudRun(RoutingResource):
     def from_address(cls, resource_address: str) -> Optional["CloudRun"]:
         if (resource_address.startswith("google_cloud_run_service.") or
                 "google:cloudrun:Service:" in resource_address or
-                "CloudRun::Service" in resource_address):
+                "CloudRun::Service:" in resource_address):
             return cls()
         return None
 
@@ -203,7 +203,7 @@ class Firestore(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["Firestore"]:
         if (resource_address.startswith("google_firestore_database.") or
                 "google:firestore:Database:" in resource_address or
-                "Firestore::Database" in resource_address):
+                "Firestore::Database:" in resource_address):
             return cls()
         return None
 

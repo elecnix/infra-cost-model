@@ -22,7 +22,7 @@ def test_apigw_from_address_pulumi():
 
 def test_apigw_from_address_cdk():
     """Test parsing CDK API Gateway v2 address."""
-    result = APIGatewayHTTP.from_address("MyStack/HttpApi/APIGatewayV2::Api")
+    result = APIGatewayHTTP.from_address("AWS::ApiGatewayV2::Api:HttpApi")
     assert result is not None
     assert result.node_type == "routing"
 

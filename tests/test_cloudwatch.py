@@ -19,7 +19,8 @@ class TestCWAddressParsing:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = CloudWatchLogGroup.from_address("AppStack/AppLogs/Logs::LogGroup")
+        # CDK synthetic address format: "<Type>:<LogicalId>"
+        r = CloudWatchLogGroup.from_address("AWS::Logs::LogGroup:AppLogs")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_aws_format(self):
@@ -163,11 +164,14 @@ class TestCWAlarmAddressParsing:
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_cdk(self):
-        r = CloudWatchMetricAlarm.from_address("AppStack/CpuAlarm/CloudWatch::Alarm")
+        r = CloudWatchMetricAlarm.from_address("AWS::CloudWatch::Alarm:CpuAlarm")
         assert r is not None and r.node_type == "storage"
 
     def test_from_address_unrelated(self):
         assert CloudWatchMetricAlarm.from_address("aws_lambda_function.handler") is None
+        # AWS::CloudWatch::CompositeAlarm is a distinct type and must not match.
+        assert CloudWatchMetricAlarm.from_address(
+            "AWS::CloudWatch::CompositeAlarm:MyComposite") is None
 
     def test_from_address_not_log_group(self):
         # Must not swallow the Log Group address handled by CloudWatchLogGroup.

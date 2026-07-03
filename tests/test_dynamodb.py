@@ -22,7 +22,7 @@ def test_dynamodb_from_address_pulumi():
 
 def test_dynamodb_from_address_cdk():
     """Test parsing CDK DynamoDB address."""
-    result = DynamoDBTable.from_address("MyStack/UsersTable/DynamoDB::Table")
+    result = DynamoDBTable.from_address("AWS::DynamoDB::Table:UsersTable")
     assert result is not None
     assert result.node_type == "storage"
 

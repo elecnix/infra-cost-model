@@ -11,7 +11,7 @@ class TestSNSTopicAddressParsing:
         r = SNSTopic.from_address("aws.sns.Topic:my-topic")
         assert r is not None and r.node_type == "routing"
     def test_from_address_cdk(self):
-        r = SNSTopic.from_address("EventsStack/MyTopic/SNS::Topic")
+        r = SNSTopic.from_address("AWS::SNS::Topic:MyTopic")
         assert r is not None and r.node_type == "routing"
     def test_from_address_aws_sns_format(self):
         assert SNSTopic.from_address("aws:sns:Topic:notifications") is not None

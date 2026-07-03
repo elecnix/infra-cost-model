@@ -11,7 +11,7 @@ class TestRDSAddressParsing:
         r = RDSInstance.from_address("aws.rds.Instance:main-db")
         assert r is not None and r.node_type == "storage"
     def test_from_address_cdk(self):
-        r = RDSInstance.from_address("DatabaseStack/MainDB/RDS::DBInstance")
+        r = RDSInstance.from_address("AWS::RDS::DBInstance:MainDB")
         assert r is not None and r.node_type == "storage"
     def test_from_address_aws_format(self):
         assert RDSInstance.from_address("aws:rds:Instance:prod-db") is not None

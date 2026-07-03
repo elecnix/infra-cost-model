@@ -26,7 +26,7 @@ class ApplicationLoadBalancer(RoutingResource):
                 resource_address.startswith("aws_alb.") or
                 resource_address.startswith("aws.lb.LoadBalancer:") or
                 resource_address.startswith("aws:lb:LoadBalancer:") or
-                "ElasticLoadBalancingV2::LoadBalancer" in resource_address):
+                "ElasticLoadBalancingV2::LoadBalancer:" in resource_address):
             return cls()
         return None
 

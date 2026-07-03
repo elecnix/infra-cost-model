@@ -12,19 +12,24 @@ registered through the ResourceRegistry with provider-based dispatch.
 from .types import ResourceType, ComputeResource, StorageResource, RoutingResource, ExternalResource
 from .lambda_func import LambdaFunction, calculate_gb_seconds, apply_free_tier, get_lambda_free_tier_limits
 from .external import ExternalNode, ExternalServiceRegistry
+from .apigw import APIGatewayHTTP
+from .dynamodb import DynamoDBTable
+from .bedrock import BedrockModel
 from .s3 import S3Bucket
 from .sqs import SQSQueue
 from .sns import SNSTopic
 from .eventbridge import EventBridgeRule
 from .cloudfront import CloudFrontDistribution
-from .networking import NATGateway, VpcEndpoint
+from .networking import NATGateway, VpcEndpoint, ElasticIP
 from .rds import RDSInstance
-from .cloudwatch import CloudWatchLogGroup
+from .cloudwatch import CloudWatchLogGroup, CloudWatchMetricAlarm
 from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
+from .kms import KMSKey
+from .data_transfer import DataTransferNode
 
 __all__ = [
     "ResourceType",
@@ -38,6 +43,9 @@ __all__ = [
     "get_lambda_free_tier_limits",
     "ExternalNode",
     "ExternalServiceRegistry",
+    "APIGatewayHTTP",
+    "DynamoDBTable",
+    "BedrockModel",
     "S3Bucket",
     "SQSQueue",
     "SNSTopic",
@@ -45,8 +53,10 @@ __all__ = [
     "CloudFrontDistribution",
     "NATGateway",
     "VpcEndpoint",
+    "ElasticIP",
     "RDSInstance",
     "CloudWatchLogGroup",
+    "CloudWatchMetricAlarm",
     "ECSFargateService",
     "ApplicationLoadBalancer",
     "CloudFunction",
@@ -61,4 +71,6 @@ __all__ = [
     "SecretsManagerSecret",
     "ECRRepository",
     "Route53Zone",
+    "KMSKey",
+    "DataTransferNode",
 ]

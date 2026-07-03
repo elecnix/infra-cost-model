@@ -24,7 +24,7 @@ class EventBridgeRule(RoutingResource):
                 resource_address.startswith("aws.cloudwatch.EventRule:") or
                 resource_address.startswith("aws.eventbridge.Rule:") or
                 resource_address.startswith("aws:events:Rule:") or
-                "Events::Rule" in resource_address):
+                "Events::Rule:" in resource_address):
             return cls()
         return None
 

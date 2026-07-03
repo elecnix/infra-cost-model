@@ -23,7 +23,7 @@ class RDSInstance(StorageResource):
         if (resource_address.startswith("aws_db_instance.") or
                 resource_address.startswith("aws.rds.Instance:") or
                 resource_address.startswith("aws:rds:Instance:") or
-                "RDS::DBInstance" in resource_address):
+                "RDS::DBInstance:" in resource_address):
             return cls()
         return None
 
