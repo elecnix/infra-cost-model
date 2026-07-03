@@ -469,3 +469,58 @@ def test_sync_pricing_catalog_defaults_to_us_east_1(monkeypatch):
     )
     ic.sync_pricing_catalog(services=["KMS-Key-Month"])
     assert calls == ["us-east-1"]
+
+
+# --- NAT Gateway (priced under AmazonEC2, stored under AmazonVPC) ---------------
+
+def _nat_product(usagetype, usd, unit):
+    return {
+        "productFamily": "NAT Gateway",
+        "attributes": [
+            {"key": "usagetype", "value": usagetype},
+            {"key": "operation", "value": "NatGateway"},
+        ],
+        "prices": [{"USD": str(usd), "unit": unit,
+                    "startUsageAmount": "0", "endUsageAmount": None}],
+    }
+
+
+def test_nat_gateway_descriptors_present():
+    for m in ("NAT-Gateway-Hour", "NAT-Gateway-DataProcessed"):
+        d = ic.METRIC_DESCRIPTORS[m]
+        assert d["service"] == "AmazonEC2"
+        assert d["store_service"] == "AmazonVPC"
+        assert d["product_family"] == "NAT Gateway"
+
+
+def test_nat_hour_remaps_service_to_vpc(monkeypatch):
+    _set_creds(monkeypatch)
+    products = [_nat_product("NatGateway-Hours", 0.045, "Hrs")]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "NAT-Gateway-Hour", "us-east-1")
+    assert n == 1
+    # Queried under AmazonEC2 but stored under the service the handler models it as.
+    assert upserted[0].service == "AmazonVPC"
+    assert upserted[0].usage_metric == "NAT-Gateway-Hour"
+    assert upserted[0].price_usd == pytest.approx(0.045)
+
+
+def test_nat_data_processed_excludes_prvd(monkeypatch):
+    """The $0 provisioned-throughput 'Prvd' row shares the GB unit and must be
+    excluded so it doesn't dilute the data-processed rate."""
+    _set_creds(monkeypatch)
+    products = [
+        _nat_product("NatGateway-Bytes", 0.045, "GB"),
+        _nat_product("NatGateway-Prvd-Bytes", 0.0, "GB"),  # excluded
+    ]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "NAT-Gateway-DataProcessed", "us-east-1")
+    assert n == 1
+    assert upserted[0].service == "AmazonVPC"
+    assert upserted[0].price_usd == pytest.approx(0.045)
