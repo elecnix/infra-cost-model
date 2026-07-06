@@ -186,7 +186,8 @@ def test_ipv4_descriptor_resolves_region_prefix(monkeypatch):
 
 def test_sync_to_cache_kms_key_month_upserts(monkeypatch):
     """End-to-end (mocked HTTP): the KMS-Key-Month descriptor stores the fetched
-    price under the catalog usage_metric name with source=infracost."""
+    price under the catalog usage_metric name with source=infracost, and remaps
+    the service to the uppercase "AWSKMS" the handler/seed query."""
     _set_creds(monkeypatch)
     products = [{
         "productFamily": "Encryption Key",
@@ -203,7 +204,9 @@ def test_sync_to_cache_kms_key_month_upserts(monkeypatch):
         n = ic.InfracostClient().sync_to_cache(cache, "KMS-Key-Month", "us-east-1")
     assert n == 1  # WRONG-UNIT row filtered out by the descriptor's unit
     assert upserted[0].usage_metric == "KMS-Key-Month"
-    assert upserted[0].service == "awskms"
+    # store_service remaps Infracost's lowercase "awskms" to the queried "AWSKMS"
+    # (the case the handler _kms_cost and the seed rows use).
+    assert upserted[0].service == "AWSKMS"
     assert upserted[0].price_usd == pytest.approx(1.0)
     assert upserted[0].source == "infracost"
 
