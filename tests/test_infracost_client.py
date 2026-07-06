@@ -241,13 +241,14 @@ def test_waf_descriptor_resolves_region_prefix(monkeypatch, region, prefix):
 
 def test_sync_to_cache_waf_webacl_upserts(monkeypatch):
     """End-to-end (mocked HTTP): the WAF-WebACL-Month descriptor stores the
-    fetched price under the catalog usage_metric name with source=infracost."""
+    fetched price under the catalog usage_metric name with source=infracost, and
+    remaps the service to the uppercase "AWSWAF" the handler/seed query."""
     _set_creds(monkeypatch)
     products = [{
         "productFamily": "Web Application Firewall",
         "attributes": [{"key": "usagetype", "value": "USE1-WebACLV2"}],
         "prices": [
-            {"USD": "5.0", "unit": "Months", "startUsageAmount": "0", "endUsageAmount": None},
+            {"USD": "5.0", "unit": "Month", "startUsageAmount": "0", "endUsageAmount": None},
         ],
     }]
     upserted = []
@@ -257,7 +258,8 @@ def test_sync_to_cache_waf_webacl_upserts(monkeypatch):
         n = ic.InfracostClient().sync_to_cache(cache, "WAF-WebACL-Month", "us-east-1")
     assert n == 1
     assert upserted[0].usage_metric == "WAF-WebACL-Month"
-    assert upserted[0].service == "awswaf"
+    # store_service remaps Infracost's lowercase "awswaf" to the queried "AWSWAF".
+    assert upserted[0].service == "AWSWAF"
     assert upserted[0].price_usd == pytest.approx(5.0)
     assert upserted[0].source == "infracost"
 
