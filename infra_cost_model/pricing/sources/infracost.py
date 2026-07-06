@@ -510,6 +510,33 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "group", "value": "awskms-APIRequest-All"}],
         "unit": "Requests",
     },
+    # WAFv2 (#234): web ACL + per-rule monthly + per-request inspection. Infracost
+    # prices these under the lowercase service code "awswaf", product family
+    # "Web Application Firewall"; `store_service` upserts them under "AWSWAF" so
+    # the handler/seed (which use the uppercase convention) can query them — same
+    # remap the NAT Gateway descriptor does (EC2 → AmazonVPC).
+    # The usagetype encodes the region as a short prefix (USE1- / CAN1- / …),
+    # resolved at query time; the "V2" suffix distinguishes WAFv2 from classic
+    # WAF, and the exact-match value naturally excludes the "ShieldProtected-"
+    # siblings (Infracost matches these with a `(?!ShieldProtected-)` regex).
+    # RequestV2-Tier1 is the standard per-request inspection tier. No `unit`
+    # filter: each usagetype resolves to a single price row, so filtering by it
+    # would only risk a spurious miss on the (region-independent) unit string.
+    "WAF-WebACL-Month": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-WebACLV2"}],
+    },
+    "WAF-Rule-Month": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-RuleV2"}],
+    },
+    "WAF-Request": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-RequestV2-Tier1"}],
+    },
     # Public IPv4 address (#210): $0.005/hr in-use or idle. The usagetype encodes
     # the region as a short prefix (USE1- / …); REGION_PREFIX is resolved at query
     # time. Product family is unset on these rows, so the usagetype filter alone
