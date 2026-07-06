@@ -23,6 +23,29 @@ def test_cli_validate_missing_file():
     assert result == 1
 
 
+def test_cli_import_infracost_missing_file():
+    assert main(["import-infracost", "/nonexistent/breakdown.json"]) == 1
+
+
+def test_cli_import_infracost_emits_nodes(tmp_path, capsys):
+    import json
+    import yaml
+    bd = {"version": "0.2", "projects": [{"name": "p", "breakdown": {"resources": [
+        {"name": "aws_instance.web", "resourceType": "aws_instance",
+         "costComponents": [{"name": "Instance usage", "unit": "hours",
+                             "monthlyQuantity": "730", "price": "0.1",
+                             "monthlyCost": "73.00"}]},
+        {"name": "aws_iam_role.x", "resourceType": "aws_iam_role", "costComponents": []},
+    ]}}]}
+    p = tmp_path / "bd.json"
+    p.write_text(json.dumps(bd))
+    assert main(["import-infracost", str(p)]) == 0
+    out = yaml.safe_load(capsys.readouterr().out)
+    # free iam_role skipped; the instance node is priced and flat.
+    assert set(out["nodes"]) == {"aws_instance.web"}
+    assert out["nodes"]["aws_instance.web"]["flatOverride"] is True
+
+
 def test_cli_validate_valid_yaml():
     """Test validate command with valid YAML file."""
     import tempfile

@@ -51,6 +51,17 @@ infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
 
 The bundled `data/seed/aws_pricelist_seed.json` is a small us-east-1 fixture used by the test suite only — it is **not** a setup step for users, and `seed-pricing` exists purely for offline/testing.
 
+## Blanket pricing for the long tail
+
+Native handlers cover the resources whose usage the DAG derives from upstream flow. For the static, always-on tail (anything Infracost already prices), import an `infracost breakdown` instead of hand-writing a handler + descriptor:
+
+```bash
+infracost breakdown --path ./terraform --format json --out-file breakdown.json
+infra-cost-model import-infracost breakdown.json > nodes.yaml   # priced flatOverride nodes
+```
+
+Each resource becomes a `flatOverride` node whose `fixed` metrics mirror Infracost's per-component monthly costs; compose the emitted `nodes` into a model alongside the DAG-derived handlers. Prefer a native handler where one exists — the import is the escape hatch (DP#9), not the default.
+
 ## References
 
 - Leitner, Cito & Stöckli. "Modelling and Managing Deployment Costs of Microservice-Based Cloud Applications." *UCC 2016*. DOI: 10.1145/2996890.2996901
