@@ -502,11 +502,13 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     # KMS (#208): $1/customer-managed key-month + per-symmetric-request.
     # Note: the Infracost service code for KMS is lowercase "awskms".
     "KMS-Key-Month": {
-        "service": "awskms", "product_family": "Encryption Key",
+        "service": "awskms", "store_service": "AWSKMS",
+        "product_family": "Encryption Key",
         "unit": "Keys",
     },
     "KMS-API-Request": {
-        "service": "awskms", "product_family": "API Request",
+        "service": "awskms", "store_service": "AWSKMS",
+        "product_family": "API Request",
         "attribute_filters": [{"key": "group", "value": "awskms-APIRequest-All"}],
         "unit": "Requests",
     },
