@@ -162,6 +162,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_coverage.add_argument("--json", action="store_true", help="Output in JSON format")
     p_coverage.set_defaults(func=cmd_coverage)
 
+    # import-infracost (blanket long-tail pricing from an Infracost breakdown)
+    p_import = sub.add_parser(
+        "import-infracost",
+        help="Import `infracost breakdown --format json` output as priced nodes")
+    p_import.add_argument("json_file", metavar="<breakdown-json>",
+                          help="Path to `infracost breakdown --format json` output")
+    p_import.add_argument("--json", action="store_true",
+                          help="Output nodes as JSON (default: YAML)")
+    p_import.set_defaults(func=cmd_import_infracost)
+
     return parser
 
 
@@ -509,6 +519,31 @@ def cmd_extract(args: argparse.Namespace) -> int:
     except json.JSONDecodeError as e:
         _print_stderr(f"Invalid JSON in {path}: {e}")
         return 1
+
+
+def cmd_import_infracost(args: argparse.Namespace) -> int:
+    """Import an Infracost breakdown JSON as pre-priced cost-model nodes."""
+    path = Path(args.json_file)
+    if not path.exists():
+        _print_stderr(f"File not found: {path}")
+        return 1
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        _print_stderr(f"Invalid JSON in {path}: {e}")
+        return 1
+
+    from infra_cost_model.pricing.sources.infracost_breakdown import import_breakdown
+    nodes = import_breakdown(data)
+
+    if args.json:
+        print(json.dumps({"nodes": nodes}, indent=2))
+    else:
+        import yaml
+        print(yaml.safe_dump({"nodes": nodes}, sort_keys=False))
+    _print_stderr(f"Imported {len(nodes)} costed resource(s).")
+    return 0
 
 
 def cmd_whatif(args: argparse.Namespace) -> int:
