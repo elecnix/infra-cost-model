@@ -208,6 +208,60 @@ def test_sync_to_cache_kms_key_month_upserts(monkeypatch):
     assert upserted[0].source == "infracost"
 
 
+# --- WAFv2 descriptors (#234) --------------------------------------------------
+
+@pytest.mark.parametrize("metric,usagetype_base", [
+    ("WAF-WebACL-Month", "WebACLV2"),
+    ("WAF-Rule-Month", "RuleV2"),
+    ("WAF-Request", "RequestV2-Tier1"),
+])
+def test_waf_descriptors_present(metric, usagetype_base):
+    d = ic.METRIC_DESCRIPTORS[metric]
+    assert d["service"] == "awswaf"
+    assert d["product_family"] == "Web Application Firewall"
+    assert d["attribute_filters"] == [
+        {"key": "usagetype", "value": f"REGION_PREFIX-{usagetype_base}"}
+    ]
+
+
+@pytest.mark.parametrize("region,prefix", [("us-east-1", "USE1"), ("ca-central-1", "CAN1")])
+def test_waf_descriptor_resolves_region_prefix(monkeypatch, region, prefix):
+    """The web-ACL usagetype filter must have REGION_PREFIX resolved to the
+    region's short code before the query is sent (USE1-WebACLV2 / CAN1-WebACLV2)."""
+    _set_creds(monkeypatch)
+    d = ic.METRIC_DESCRIPTORS["WAF-WebACL-Month"]
+    with patch.object(ic.requests, "post", return_value=_graphql_response([])) as post:
+        ic.InfracostClient().query_prices(
+            service=d["service"], region=region,
+            attribute_filters=d["attribute_filters"],
+        )
+    sent = post.call_args.kwargs["json"]["variables"]["attributeFilters"]
+    assert sent == [{"key": "usagetype", "value": f"{prefix}-WebACLV2"}]
+
+
+def test_sync_to_cache_waf_webacl_upserts(monkeypatch):
+    """End-to-end (mocked HTTP): the WAF-WebACL-Month descriptor stores the
+    fetched price under the catalog usage_metric name with source=infracost."""
+    _set_creds(monkeypatch)
+    products = [{
+        "productFamily": "Web Application Firewall",
+        "attributes": [{"key": "usagetype", "value": "USE1-WebACLV2"}],
+        "prices": [
+            {"USD": "5.0", "unit": "Months", "startUsageAmount": "0", "endUsageAmount": None},
+        ],
+    }]
+    upserted = []
+    cache = MagicMock()
+    cache.upsert.side_effect = lambda p: upserted.append(p)
+    with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
+        n = ic.InfracostClient().sync_to_cache(cache, "WAF-WebACL-Month", "us-east-1")
+    assert n == 1
+    assert upserted[0].usage_metric == "WAF-WebACL-Month"
+    assert upserted[0].service == "awswaf"
+    assert upserted[0].price_usd == pytest.approx(5.0)
+    assert upserted[0].source == "infracost"
+
+
 # --- Regionless / region-pair data-transfer sync -------------------------------
 
 def _dt_product(usagetype, usd, transfer_type="InterRegion Outbound", unit="GB"):
