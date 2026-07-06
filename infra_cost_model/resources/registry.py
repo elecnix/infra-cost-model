@@ -28,6 +28,7 @@ from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
 from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 from .kms import KMSKey
+from .waf import WAFv2WebACL
 from .data_transfer import DataTransferNode
 
 
@@ -237,6 +238,9 @@ ResourceRegistry.register(Route53Zone)
 
 # AWS KMS
 ResourceRegistry.register(KMSKey)
+
+# AWS WAFv2
+ResourceRegistry.register(WAFv2WebACL)
 
 # AWS Data Transfer (usage-derived node, no IaC resource)
 ResourceRegistry.register(DataTransferNode)
