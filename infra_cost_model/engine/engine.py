@@ -443,10 +443,30 @@ class CostAggregator:
                 per_invocation if metric_fixed else invocations * per_invocation
             )
 
+            # SaaS pricing shapes (#241): if the metric declares a ``shape``,
+            # dispatch to the pluggable SaaS pricing-handler registry before
+            # the catalog / embedded-rates path. A shaped metric is priced by
+            # its shape handler (flat_subscription, per_unit_flat, free_tier,
+            # transactional, or a plugin-registered shape) using the metric's
+            # inline parameters — this is the first-class path for non-IaC SaaS
+            # resources that the catalog cannot reach. If the shape is unknown
+            # to the registry, fall through to the catalog / embedded path
+            # (backward-compatible).
+            metric_cost = None
+            shape = None
+            if isinstance(metric_def, dict):
+                shape = metric_def.get("shape")
+            if shape is not None:
+                from infra_cost_model.saas import SaaSPricingRegistry
+                shaped = SaaSPricingRegistry.compute(
+                    shape, total_quantity, metric_def if isinstance(metric_def, dict) else {}
+                )
+                if shaped is not None:
+                    metric_cost = shaped
+
             # Query catalog first (preferred path per Principle 13), else fall
             # back to embedded pricingRates (deprecated per Principle 13).
-            metric_cost = None
-            if self.catalog is not None:
+            if metric_cost is None and self.catalog is not None:
                 result = self.catalog.query(
                     provider, service, region, metric_name, total_quantity
                 )
@@ -529,7 +549,20 @@ class CostAggregator:
             )
 
             metric_cost = None
-            if self.catalog is not None:
+            # SaaS pricing shapes (#241): dispatch to the shape registry before
+            # the catalog path, same as _compute_flat_cost.
+            shape = None
+            if isinstance(metric_def, dict):
+                shape = metric_def.get("shape")
+            if shape is not None:
+                from infra_cost_model.saas import SaaSPricingRegistry
+                shaped = SaaSPricingRegistry.compute(
+                    shape, total_quantity, metric_def if isinstance(metric_def, dict) else {}
+                )
+                if shaped is not None:
+                    metric_cost = shaped
+
+            if metric_cost is None and self.catalog is not None:
                 result = self.catalog.query(
                     provider, service, region, metric_name, total_quantity
                 )
