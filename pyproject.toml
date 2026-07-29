@@ -13,6 +13,20 @@ dependencies = [
 [project.scripts]
 infra-cost-model = "infra_cost_model.cli:main"
 
+# SaaS pricing-shape handler discovery (#241). Third-party packages register
+# additional shapes by adding an entry-point to this group:
+#
+#   [project.entry-points."infra_cost_model.saas_handlers"]
+#   my_shape = "my_package.pricing:my_handler"
+#
+# The callable must match the SaaSCostHandler protocol
+# (quantity, params) -> monthly_cost_usd.
+[project.entry-points."infra_cost_model.saas_handlers"]
+flat_subscription = "infra_cost_model.saas.pricing_shapes:flat_subscription"
+per_unit_flat = "infra_cost_model.saas.pricing_shapes:per_unit_flat"
+free_tier = "infra_cost_model.saas.pricing_shapes:free_tier"
+transactional = "infra_cost_model.saas.pricing_shapes:transactional"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
