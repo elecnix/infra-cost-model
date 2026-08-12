@@ -151,8 +151,46 @@
           "type": "boolean",
           "default": false,
           "description": "When true, this metric is a fixed (always-on) monthly total: its value is used directly and is NOT scaled by the derived invocation count. This lets one node carry both a fixed dimension (e.g. NAT gateway hours, ALB-hours) and a usage-driven dimension (e.g. GB processed, LCUs) without splitting into two nodes (Issue #196)."
+        },
+        "shape": {
+          "type": "string",
+          "pattern": "^[a-z][a-z_]*$",
+          "description": "SaaS pricing shape name (e.g., flat_subscription, free_tier, credit_pool, transactional)"
+        },
+        "rate": {
+          "type": "number",
+          "description": "Flat rate for subscription or per-unit flat shapes"
+        },
+        "free": {
+          "type": "number",
+          "description": "Free tier allowance"
+        },
+        "overage": {
+          "type": "number",
+          "description": "Overage rate for free tier"
+        },
+        "percentage_rate": {
+          "type": "number",
+          "description": "Percentage rate for transactional shapes"
+        },
+        "per_call": {
+          "type": "number",
+          "description": "Per-call fee for transactional shapes"
+        },
+        "subscription": {
+          "type": "number",
+          "description": "Subscription cost for credit pool"
+        },
+        "includedCredits": {
+          "type": "number",
+          "description": "Credits included in subscription"
+        },
+        "creditValue": {
+          "type": "number",
+          "description": "Value per credit"
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "edge": {
