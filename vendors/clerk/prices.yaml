@@ -1,0 +1,60 @@
+- vendor: clerk
+  service: Clerk
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.0
+  start_usage_amount: 0
+  end_usage_amount: 10000
+
+- vendor: clerk
+  service: Clerk
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.02
+  start_usage_amount: 10000
+  end_usage_amount: 25000
+
+- vendor: clerk
+  service: Clerk
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.015
+  start_usage_amount: 25000
+  end_usage_amount: 50000
+
+- vendor: clerk
+  service: Clerk
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.01
+  start_usage_amount: 50000
+  end_usage_amount: 100000
+
+- vendor: clerk
+  service: Clerk
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.0075
+  start_usage_amount: 100000
+
+- vendor: clerk
+  service: Clerk
+  region: global
+  usage_metric: SSO-Connection
+  unit: connections
+  price_usd: 200.0
+  start_usage_amount: 0
+
+- vendor: clerk
+  service: Clerk
+  region: global
+  usage_metric: M2M-Tokens
+  unit: tokens
+  price_usd: 0.000001
+  start_usage_amount: 1000000
+  per: tokens

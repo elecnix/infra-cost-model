@@ -5,6 +5,25 @@ on:
     branches: [main]
 
 jobs:
+  vendor-check:
+    runs-on: arc-runners
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce vendor-only changes
+        run: |
+          new_vendors=$(git diff --name-only origin/main...HEAD | grep '^vendors/[^/]*/prices.yaml' | sed 's|/prices.yaml||' | sort -u || true)
+          if [ -n "$new_vendors" ]; then
+            bad=$(git diff --name-only origin/main...HEAD | grep -v '^vendors/' | grep -v '^\.github/' | grep -v '^sdk/ts/src/types\.generated\.ts' | head || true)
+            if [ -n "$bad" ]; then
+              echo "Vendor PR must only touch vendors/*/: $bad"
+              exit 1
+            fi
+          fi
+          echo "vendor-only check passed"
+
   test:
     runs-on: arc-runners
     strategy:

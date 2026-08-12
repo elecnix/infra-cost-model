@@ -1,0 +1,30 @@
+# GitHub Copilot Business with 25 seats and 60,000 monthly premium-request credits.
+version: "1.0"
+
+workflow:
+  name: github-copilot-business
+  entry: github_copilot.business
+  frequency:
+    unit: perMonth
+    value: 1
+  parameters:
+    seats: 25
+
+nodes:
+  github_copilot.business:
+    nodeType: external
+    resourceAddress: github_copilot.business
+    provider: github
+    service: Copilot
+    region: global
+    pricingModel: flat
+    flatOverride: true
+    usageMetrics:
+      Copilot-Seat-Month:
+        unit: seats
+        value: 25
+      Copilot-Credit:
+        unit: credits
+        value: 60000
+
+edges: []
