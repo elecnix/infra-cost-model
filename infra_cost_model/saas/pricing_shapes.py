@@ -189,17 +189,14 @@ class SaaSPricingRegistry:
         cls._handlers.clear()
 
     @classmethod
-    def compute(cls, shape: str, quantity: float, params: dict[str, Any]) -> Optional[float]:
-        """Compute cost for a shaped metric, or ``None`` if the shape is unknown.
+    def compute(cls, shape: str, quantity: float, params: dict[str, Any]) -> float:
+        """Compute cost for a shaped metric.
 
-        Returning ``None`` (rather than raising) lets the engine fall back to
-        the catalog / embedded ``pricingRates`` path when a metric has no
-        ``shape`` or an unregistered one — keeping the feature opt-in and
-        backward-compatible.
+        Raises ValueError if the shape is not registered.
         """
         handler = cls.get(shape)
         if handler is None:
-            return None
+            raise ValueError(f"Unknown pricing shape '{shape}'. Known shapes: {sorted(cls.known_shapes())}")
         return handler(quantity, params)
 
 

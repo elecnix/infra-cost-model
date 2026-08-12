@@ -1,0 +1,16 @@
+- vendor: kinde
+  service: Identity Provider
+  region: global
+  usage_metric: MAU
+  unit: mau
+  price_usd: 0.00
+  start_usage_amount: 0
+  end_usage_amount: 10500
+
+- vendor: kinde
+  service: Identity Provider
+  region: global
+  usage_metric: MAU
+  unit: mau
+  price_usd: 0.01
+  start_usage_amount: 10500

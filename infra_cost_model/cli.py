@@ -51,8 +51,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_compute.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     p_compute.add_argument("--no-catalog", action="store_true",
                            help="Disable pricing catalog (use embedded pricing rates)")
+    p_compute.add_argument("--time-basis", choices=["perSecond", "monthly", "yearly"], default="perSecond",
+                           help="Time basis for cost reporting (default: perSecond)")
     p_compute.add_argument("--monthly", action="store_true",
-                           help="Compute on a monthly time basis instead of per-second")
+                           help="Compute on a monthly time basis (deprecated: use --time-basis monthly)")
     p_compute.add_argument("--budget", type=float, metavar="<usd>",
                            help="Exit with code 1 if total cost exceeds this USD threshold")
     p_compute.set_defaults(func=cmd_compute)
@@ -266,7 +268,12 @@ def cmd_compute(args: argparse.Namespace) -> int:
         return 1
 
     catalog = PricingCatalog() if use_catalog else None
-    time_basis = "monthly" if args.monthly else "perSecond"
+    
+    # Resolve time basis: --monthly flag (deprecated) or --time-basis
+    time_basis = args.time_basis
+    if args.monthly:
+        time_basis = "monthly"
+
     engine = CostEngine(model, catalog=catalog, time_basis=time_basis)
 
     try:
@@ -284,7 +291,15 @@ def cmd_compute(args: argparse.Namespace) -> int:
         for node, cost in sorted(costs.items()):
             print(f"  {node}: ${cost:.6f}")
         print("-" * 40)
-        label = "Total Monthly Cost" if time_basis == "monthly" else "Total"
+        
+        # Fixed labels for test compatibility
+        if time_basis == "monthly":
+            label = "Total Monthly Cost"
+        elif time_basis == "yearly":
+            label = "Total Yearly Cost"
+        else:
+            label = "Total"
+            
         print(f"{label}: ${total:.6f}")
         return 0
     except ValueError as e:

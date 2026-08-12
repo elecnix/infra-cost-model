@@ -785,6 +785,8 @@ class CostEngine:
         """Multiplier to convert per-second costs to the output time basis."""
         if self.time_basis == "monthly":
             return SECONDS_PER_MONTH
+        if self.time_basis == "yearly":
+            return SECONDS_PER_MONTH * 12
         return 1.0  # perSecond
     
     def compute(self) -> dict[str, float]:
@@ -884,19 +886,20 @@ class CostEngine:
         return self.costs
 
     def _finalize_costs(self, combined: dict[str, float],
-                        fixed: dict[str, float]) -> dict[str, float]:
+                            fixed: dict[str, float]) -> dict[str, float]:
         """Combine per-second variable cost with flat monthly fixed cost.
 
         ``combined[addr]`` is variable + fixed in per-second internal units
         (the fixed part already a monthly total). The usage-driven portion is
-        scaled to the output time basis; the fixed portion is left unscaled as
-        a monthly total (Principle 9 / Issue #196).
+        scaled to the output time basis; the fixed portion is also scaled if
+        yearly is requested (Principle 9 / Issue #196).
         """
         multiplier = self._time_multiplier
+        fixed_multiplier = 12.0 if self.time_basis == "yearly" else 1.0
         final: dict[str, float] = {}
         for addr, total in combined.items():
             fx = fixed.get(addr, 0.0)
-            final[addr] = (total - fx) * multiplier + fx
+            final[addr] = (total - fx) * multiplier + (fx * fixed_multiplier)
         return final
 
     def total_cost(self) -> float:
