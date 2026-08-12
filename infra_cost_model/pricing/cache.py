@@ -151,6 +151,9 @@ class PricingCache:
         self._ensure_db()
         if seed:
             seed_prices(self)
+            # Load vendor prices after seed, if vendors/ exists
+            from .vendors import load_vendor_prices
+            load_vendor_prices(self)
 
     def _ensure_db(self):
         """Create the database and tables (migrating in any missing columns).
@@ -228,14 +231,14 @@ class PricingCache:
                 vendor, service, region, product_family, attributes,
                 attributes_hash, usage_metric, unit, price_usd,
                 start_usage_amount, end_usage_amount, purchase_option,
-                effective_date, source, fetched_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                effective_date, source, fetched_at, per
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             price.vendor, price.service, price.region, price.product_family,
             json.dumps(price.attributes), attrs_hash, price.usage_metric, price.unit,
             price.price_usd, price.start_usage_amount, price.end_usage_amount,
             price.purchase_option, price.effective_date, price.source,
-            price.fetched_at
+            price.fetched_at, price.per
         ))
         conn.commit()
         conn.close()
