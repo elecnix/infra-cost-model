@@ -27,10 +27,10 @@ def test_bedrock_cost_calculation():
     # Using seed prices: input $0.003/1K, output $0.015/1K
     # 2.16B input + 4.32B output
     cost = _bedrock_cost(2_160_000_000, 4_320_000_000, "claude-3-5-sonnet", region="us-east-1")
-    
+
     expected = 2_160_000_000 * 0.003 / 1000 + 4_320_000_000 * 0.015 / 1000
     # = 6480 + 64800 = $71,280
-    
+
     assert cost > 0
     assert cost == pytest.approx(expected, rel=0.01)
 
@@ -39,10 +39,10 @@ def test_bedrock_model_switching():
     """Test cost changes when switching models (all use same seed prices)."""
     input_tokens = 1_000_000_000
     output_tokens = 2_000_000_000
-    
+
     sonnet_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet", region="us-east-1")
     haiku_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-haiku", region="us-east-1")
-    
+
     # All models currently use the same seed prices, so costs are equal
     # In a real implementation, models would have different pricing
     assert sonnet_cost == haiku_cost
@@ -53,11 +53,11 @@ def test_bedrock_asymmetric_pricing():
     # For Claude Sonnet: output is 5x input
     input_tokens = 1_000_000
     output_tokens = 1_000_000
-    
+
     cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet", region="us-east-1")
     input_cost = input_tokens * 0.003 / 1000
     output_cost = output_tokens * 0.015 / 1000
-    
+
     assert output_cost == 5 * input_cost
     assert cost == input_cost + output_cost
 
@@ -65,11 +65,11 @@ def test_bedrock_asymmetric_pricing():
 def test_model_cost_comparison():
     """Test comparing costs across models."""
     results = _model_cost_comparison(1_000_000, 2_000_000)
-    
+
     assert "claude-3-5-sonnet" in results
     assert "claude-3-5-haiku" in results
     assert "claude-3-opus" in results
-    
+
     # All models currently use the same seed prices
     assert results["claude-3-5-haiku"] == results["claude-3-5-sonnet"]
 

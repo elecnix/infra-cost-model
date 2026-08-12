@@ -39,9 +39,9 @@ def test_dynamodb_extract_tf():
             "region": "us-east-1"
         }
     }
-    
+
     result = DynamoDBTable.extract_tf(resource)
-    
+
     assert result.resource_address == "aws_dynamodb_table.users"
     assert result.node_type == "storage"
     assert result.provider == "aws"
@@ -62,9 +62,9 @@ def test_dynamodb_extract_cdk():
             ]
         }
     }
-    
+
     result = DynamoDBTable.extract_cdk(resource)
-    
+
     assert result.resource_address == "UsersTable"
     assert result.node_type == "storage"
     assert result.config["billingMode"] == "PAY_PER_REQUEST"
@@ -74,10 +74,10 @@ def test_dynamodb_extract_cdk():
 def test_dynamodb_on_demand_cost():
     """Test on-demand cost calculation."""
     cost = _on_demand_cost(1_000_000, 1_000_000, 10.0, catalog=None, region="us-east-1")
-    
+
     # 1M reads = $1.25, 1M writes = $6.25, 10GB = $2.50
     expected = 1.25 + 6.25 + 2.50  # $10.00
-    
+
     assert cost == pytest.approx(expected, rel=0.01)
 
 
@@ -90,7 +90,7 @@ def test_dynamodb_zero_cost():
 def test_dynamodb_storage_only():
     """Test storage-only cost."""
     cost = _on_demand_cost(0, 0, 100.0, catalog=None, region="us-east-1")
-    
+
     # 100GB * $0.25 = $25
     assert cost == pytest.approx(25.0, rel=0.01)
 
@@ -105,19 +105,19 @@ def test_dynamodb_leaf_node_validation():
 def test_dynamodb_provisioned_cost():
     """Test provisioned cost from RCU/WCU hours."""
     cost = _provisioned_dynamodb_cost(1000, 500, 10.0, catalog=None, region="us-east-1")
-    
+
     # 1000 RCU-hours * $0.00013, 500 WCU-hours * $0.00065, 10GB * $0.25
     expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
-    
+
     assert cost == pytest.approx(expected, rel=0.01)
 
 
 def test_dynamodb_dynamodb_cost_provisioned():
     """Test _dynamodb_cost with PROVISIONED billing mode."""
     cost = _dynamodb_cost(1000, 500, 10.0, billing_mode="PROVISIONED", catalog=None, region="us-east-1")
-    
+
     expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
-    
+
     assert cost == pytest.approx(expected, rel=0.01)
 
 def test_dynamodb_gsi_on_demand_cost():

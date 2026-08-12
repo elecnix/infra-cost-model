@@ -213,7 +213,7 @@ class TestStripePercentagePricing:
 
     def test_stripe_cost_formula(self, engine):
         """Manual validation: volume × 2.9% + transactions/sec × $0.30 × seconds/month.
-        
+
         The engine's percentage pricing treats transactionVolume as a flat total
         (not per-invocation), and fixedPerTransaction is multiplied by the
         per-second invocation count.

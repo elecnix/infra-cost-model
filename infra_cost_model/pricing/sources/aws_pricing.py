@@ -54,16 +54,16 @@ def fetch_aws_price_list(service_code: str) -> list[dict]:
 
 def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", seed_only: bool = False) -> int:
     """Seed pricing cache from AWS Price List API, filling gaps with seed file prices.
-    
+
     Args:
         services: List of AWS service names to sync
         cache: PricingCache instance
         region: AWS region (default: us-east-1)
         seed_only: If True, only use seed file (don't query API)
-        
+
     Returns:
         Number of prices synced to cache
-        
+
     Raises:
         RuntimeError: If no pricing data could be fetched and seed file unavailable
     """
@@ -101,7 +101,7 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
                     continue
                 if item.get("region") != region:
                     continue
-                    
+
                 key = (item["service"], item["usage_metric"], item["unit"], item["price_usd"])
                 if key in seen:
                     continue
@@ -125,7 +125,7 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
                 count += 1
         except (json.JSONDecodeError, KeyError):
             pass  # Fall through to API or error
-    
+
     # If we loaded from seed, return count
     if seed_only or count > 0:
         return count
