@@ -39,7 +39,7 @@ class TieredPrice:
 
     def total_cost(self, quantity: float, per_multiplier: float = 1.0) -> float:
         """Calculate total cost for a quantity with tiered pricing.
-        
+
         If per_multiplier is provided, scale tier boundaries accordingly.
         """
         sorted_tiers = sorted(

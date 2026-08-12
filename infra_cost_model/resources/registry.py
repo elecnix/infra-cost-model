@@ -248,13 +248,13 @@ ResourceRegistry.register(DataTransferNode)
 
 def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
     """Extract all resources from Terraform show -json output.
-    
+
     Args:
         tf_json: Terraform JSON output with 'resource' section
-        
+
     Returns:
         Dict mapping resource addresses to extracted configs.
-        
+
     Emits UserWarning if any resources could not be extracted because
     no handler was registered for their resource type.
     """
@@ -262,7 +262,7 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
     unsupported: list[str] = []
     # Terraform show -json structure
     resources = tf_json.get("resource", []) or tf_json.get("values", {}).get("root_module", {}).get("resources", [])
-    
+
     for resource in resources:
         if isinstance(resource, dict):
             addr = resource.get("address", "")
@@ -272,7 +272,7 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
                     results[addr] = extracted
                 else:
                     unsupported.append(addr)
-    
+
     if unsupported:
         warnings.warn(
             f"{len(unsupported)} resource(s) could not be extracted because no handler "
@@ -281,26 +281,26 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
             f"Supported handlers: {sorted(h.__name__ for h in ResourceRegistry._handlers)}. "
             f"To add support, register a new ResourceType handler for the unsupported resource(s)."
         )
-    
+
     return results
 
 
 def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
     """Extract all resources from Pulumi stack export --json output.
-    
+
     Args:
         pulumi_json: Pulumi stack export JSON
-        
+
     Returns:
         Dict mapping resource addresses to extracted configs.
-        
+
     Emits UserWarning if any resources could not be extracted because
     no handler was registered for their resource type.
     """
     results = {}
     unsupported: list[str] = []
     resources = pulumi_json.get("deployment", {}).get("resources", [])
-    
+
     for resource in resources:
         if isinstance(resource, dict):
             addr = resource.get("id", "") or resource.get("name", "")
@@ -310,7 +310,7 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
                     results[addr] = extracted
                 else:
                     unsupported.append(addr)
-    
+
     if unsupported:
         warnings.warn(
             f"{len(unsupported)} resource(s) could not be extracted because no handler "
@@ -318,29 +318,29 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
             f"{', '.join(sorted(unsupported))}. "
             f"Supported handlers: {sorted(h.__name__ for h in ResourceRegistry._handlers)}."
         )
-    
+
     return results
 
 
 def extract_resources_from_cdk(cdk_json: dict) -> dict[str, dict]:
     """Extract all resources from CDK synth --json output.
-    
+
     CDK synthesizes to CloudFormation templates. The JSON output
     contains a 'Resources' key with CloudFormation logical IDs.
-    
+
     Args:
         cdk_json: CDK synth JSON output (CloudFormation template)
-        
+
     Returns:
         Dict mapping resource addresses to extracted configs.
-        
+
     Emits UserWarning if any resources could not be extracted because
     no handler was registered for their resource type.
     """
     results = {}
     unsupported: list[str] = []
     resources = cdk_json.get("Resources", {})
-    
+
     for logical_id, resource in resources.items():
         if isinstance(resource, dict):
             # CDK uses CloudFormation format: logical ID + Type + Properties
@@ -352,7 +352,7 @@ def extract_resources_from_cdk(cdk_json: dict) -> dict[str, dict]:
                 results[addr] = extracted
             else:
                 unsupported.append(addr)
-    
+
     if unsupported:
         warnings.warn(
             f"{len(unsupported)} resource(s) could not be extracted because no handler "
@@ -360,7 +360,7 @@ def extract_resources_from_cdk(cdk_json: dict) -> dict[str, dict]:
             f"{', '.join(sorted(unsupported))}. "
             f"Supported handlers: {sorted(h.__name__ for h in ResourceRegistry._handlers)}."
         )
-    
+
     return results
 
 

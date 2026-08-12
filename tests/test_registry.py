@@ -52,13 +52,13 @@ def test_registry_extract_terraform():
             "region": "us-east-1",
         }
     }
-    
+
     result = ResourceRegistry.extract(
         "aws_lambda_function.get_items",
         resource,
         "terraform"
     )
-    
+
     assert result is not None
     assert result["nodeType"] == "compute"
     assert result["resourceAddress"] == "aws_lambda_function.get_items"
@@ -70,7 +70,7 @@ def test_registry_extract_external():
         "address": "stripe",
         "type": "external",
     }
-    
+
     result = ResourceRegistry.extract("external.stripe", resource, "terraform")
     # External nodes can't be extracted - they have no IaC resource
     # But we can create them in the cost model directly
@@ -110,9 +110,9 @@ def test_extract_resources_from_tf():
             }
         ]
     }
-    
+
     results = extract_resources_from_tf(tf_json)
-    
+
     assert "aws_lambda_function.get_items" in results
     assert "aws_dynamodb_table.items" in results
 
@@ -120,7 +120,7 @@ def test_extract_resources_from_tf():
 def test_extract_resources_from_tf_unsupported_warns():
     """Test that unsupported resources emit a warning during TF extraction."""
     import warnings
-    
+
     tf_json = {
         "resource": [
             {
@@ -140,10 +140,10 @@ def test_extract_resources_from_tf_unsupported_warns():
             }
         ]
     }
-    
+
     with pytest.warns(UserWarning, match="could not be extracted"):
         results = extract_resources_from_tf(tf_json)
-    
+
     # Lambda should be extracted, EKS and RDS are unsupported
     assert "aws_lambda_function.get_items" in results
     assert "aws_eks_cluster.main" not in results
@@ -153,7 +153,7 @@ def test_extract_resources_from_tf_unsupported_warns():
 def test_extract_resources_from_tf_all_supported_no_warning():
     """Test that no warning is emitted when all resources are supported."""
     import warnings
-    
+
     tf_json = {
         "resource": [
             {
@@ -168,11 +168,11 @@ def test_extract_resources_from_tf_all_supported_no_warning():
             }
         ]
     }
-    
+
     with warnings.catch_warnings(record=True) as record:
         warnings.simplefilter("always")
         results = extract_resources_from_tf(tf_json)
-    
+
     unsupported_warnings = [w for w in record if "could not be extracted" in str(w.message)]
     assert len(unsupported_warnings) == 0
     assert len(results) == 2
@@ -194,10 +194,10 @@ def test_extract_resources_from_tf_unsupported_lists_addresses():
             }
         ]
     }
-    
+
     with pytest.warns(UserWarning) as w:
         extract_resources_from_tf(tf_json)
-    
+
     warning_msg = str(w[0].message)
     assert "aws_eks_cluster.main" in warning_msg
     assert "aws_rds_cluster.main" in warning_msg
@@ -221,10 +221,10 @@ def test_extract_resources_from_pulumi_unsupported_warns():
             ]
         }
     }
-    
+
     with pytest.warns(UserWarning, match="could not be extracted"):
         results = extract_resources_from_pulumi(pulumi_json)
-    
+
     # Lambda should be extracted, EKS is unsupported
     assert "aws:lambda:Function:get-items" in results
     assert "aws:eks:Cluster:main" not in results
@@ -256,9 +256,9 @@ def test_extract_resources_from_pulumi():
             ]
         }
     }
-    
+
     results = extract_resources_from_pulumi(pulumi_json)
-    
+
     assert len(results) >= 1
 
 class TestCdkExtraction:

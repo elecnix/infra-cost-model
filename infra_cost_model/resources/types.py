@@ -18,7 +18,7 @@ class ResourceExtract:
     config: dict
 
 
-@dataclass 
+@dataclass
 class UsageParams:
     """Usage parameters for a specific resource."""
     resource_address: str
@@ -27,13 +27,13 @@ class UsageParams:
 
 class ResourceType(ABC):
     """Base class for resource type definitions."""
-    
+
     @property
     @abstractmethod
     def node_type(self) -> str:
         """Return the node type (compute, storage, routing)."""
         pass
-    
+
     @property
     @abstractmethod
     def valid_metrics(self) -> list[str]:
@@ -59,19 +59,19 @@ class ResourceType(ABC):
     def from_address(cls, resource_address: str) -> Optional["ResourceType"]:
         """Create resource type from Terraform/Pulumi/CDK address."""
         pass
-    
+
     @classmethod
-    @abstractmethod  
+    @abstractmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         """Extract from Terraform configuration."""
         pass
-    
+
     @classmethod
     @abstractmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         """Extract from Pulumi stack export."""
         pass
-    
+
     @classmethod
     @abstractmethod
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
@@ -81,7 +81,7 @@ class ResourceType(ABC):
 
 class ComputeResource(ResourceType):
     """Compute node type - can invoke other nodes (has outgoing edges)."""
-    
+
     @property
     def node_type(self) -> str:
         return "compute"
@@ -89,7 +89,7 @@ class ComputeResource(ResourceType):
 
 class StorageResource(ResourceType):
     """Storage node type - leaf node, cannot invoke other nodes."""
-    
+
     @property
     def node_type(self) -> str:
         return "storage"
@@ -97,7 +97,7 @@ class StorageResource(ResourceType):
 
 class RoutingResource(ResourceType):
     """Routing node type - can invoke compute/storage nodes."""
-    
+
     @property
     def node_type(self) -> str:
         return "routing"
@@ -105,15 +105,15 @@ class RoutingResource(ResourceType):
 
 class ExternalResource(ResourceType):
     """External node type - leaf node for third-party services.
-    
+
     Third-party services like Stripe, Twilio, SendGrid have no infrastructure
     to extract. They are leaf nodes with percentage-based or fixed pricing.
     """
-    
+
     @property
     def node_type(self) -> str:
         return "external"
-    
+
     @property
     def valid_metrics(self) -> list[str]:
         return ["apiCalls", "transactionVolume", "tokensInput", "tokensOutput"]
