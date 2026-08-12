@@ -27,7 +27,7 @@ _PROVIDER_PREFIX = {"aws": "aws", "google": "gcp", "azurerm": "azure", "azuread"
 def _provider_for(resource_type: str) -> str:
     """Infer the cost-model provider from a Terraform resource type."""
     prefix = (resource_type or "").split("_", 1)[0]
-    return _PROVIDER_PREFIX.get(prefix, "unknown")
+    return _PROVIDER_PREFIX.get(prefix, "external")
 
 
 def _to_float(value) -> float | None:
