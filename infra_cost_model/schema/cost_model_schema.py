@@ -17,7 +17,7 @@ SCHEMA_PATH = Path(__file__).parent / "cost-model.schema.json"
 _PROVIDER_ID_RE = __import__("re").compile(r"^[a-z][a-z0-9_-]*$")
 
 # Builtin cloud/SaaS providers encoded in the pricing layer.
-_BASE_PROVIDERS = {"aws", "azure", "gcp", "bedrock", "openai"}
+_BASE_PROVIDERS = {"aws", "azure", "gcp", "bedrock", "openai", "external"}
 
 
 def _load_known_providers() -> set[str]:
@@ -33,12 +33,28 @@ def _load_known_providers() -> set[str]:
             data = _yaml_safe_load(vf.read_text()) or {}
         except (_YAMLError, ValueError):
             continue  # malformed vendor manifest does not block schema validation
+        
+        # Register from vendor.yaml (prefer id, then provider, then dir name)
         if isinstance(data, dict):
-            pid = data.get("provider") or vf.parent.name
+            pid = data.get("id") or data.get("provider") or vf.parent.name
         else:
             pid = vf.parent.name
         if isinstance(pid, str) and _PROVIDER_ID_RE.match(pid):
             known.add(pid)
+
+        # Also register from prices.yaml in the same directory
+        prices_file = vf.parent / "prices.yaml"
+        if prices_file.exists():
+            try:
+                prices_data = _yaml_safe_load(prices_file.read_text())
+                if isinstance(prices_data, list):
+                    for row in prices_data:
+                        if isinstance(row, dict):
+                            v = row.get("vendor")
+                            if isinstance(v, str) and _PROVIDER_ID_RE.match(v):
+                                known.add(v)
+            except (_YAMLError, ValueError):
+                pass
     return known
 
 

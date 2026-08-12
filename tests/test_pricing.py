@@ -379,9 +379,10 @@ def test_source_info_counts_by_source():
     from infra_cost_model.pricing.catalog import PricingCatalog
     db = tempfile.mktemp(suffix=".db")
     try:
-        # Empty catalog.
+        # New catalogs now load vendor prices by default.
         catalog = PricingCatalog(db)
-        assert catalog.source_info() == {}
+        info = catalog.source_info()
+        assert "vendor" in info and info["vendor"] > 0
 
         cache = PricingCache(db)
         cache.upsert(Price(

@@ -1,16 +1,16 @@
 - vendor: kinde
-  service: Identity Provider
+  service: Kinde
   region: global
   usage_metric: MAU
-  unit: mau
-  price_usd: 0.00
+  unit: users
+  price_usd: 0.0
   start_usage_amount: 0
   end_usage_amount: 10500
 
 - vendor: kinde
-  service: Identity Provider
+  service: Kinde
   region: global
-  usage_metric: MAU
-  unit: mau
-  price_usd: 0.01
-  start_usage_amount: 10500
+  usage_metric: SSO-Connection
+  unit: connections
+  price_usd: 25.0
+  start_usage_amount: 5
