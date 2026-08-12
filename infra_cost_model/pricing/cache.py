@@ -29,65 +29,66 @@ class Price:
     effective_date: str = ""
     source: str = ""
     fetched_at: str = ""
+    per: str | None = None
 
 
 @dataclass
 class TieredPrice:
     """Tiered pricing structure for a usage metric."""
     tiers: list[Price]
-    
+
     def total_cost(self, quantity: float) -> float:
         """Calculate total cost for a quantity with tiered pricing."""
         sorted_tiers = sorted(
             [t for t in self.tiers if t.start_usage_amount is not None],
             key=lambda t: t.start_usage_amount or 0
         )
-        
+
         total = 0.0
-        
+
         # If no tiers have start_usage_amount (flat price), just multiply
         if not sorted_tiers:
             tier = self.tiers[0] if self.tiers else None
             if tier:
                 return tier.price_usd * quantity
             return 0.0
-        
+
         for tier in sorted_tiers:
             tier_start = tier.start_usage_amount or 0
             tier_end = tier.end_usage_amount
-            
+
             if tier_end is None:
                 if quantity > tier_start:
                     total += (quantity - tier_start) * tier.price_usd
             elif quantity > tier_start:
                 charged = min(quantity, tier_end) - tier_start
                 total += charged * tier.price_usd
-        
+
         return total
 
 
 def seed_prices(cache: Optional["PricingCache"] = None) -> int:
     """Load seed prices into cache. Returns count of prices loaded.
-    
+
     Args:
         cache: PricingCache instance (creates default if None)
-        
+
     Returns:
         Number of prices loaded
-        
+
     Raises:
         RuntimeError: If seed file not found.
     """
     if cache is None:
         cache = PricingCache()
-    
+
     if not SEED_PRICES_PATH.exists():
         raise RuntimeError(f"Seed prices file not found at {SEED_PRICES_PATH}")
-    
+
     conn = sqlite3.connect(cache.db_path)
     count = 0
     now = datetime.now().isoformat()
-    
+
     # Seed loading must be idempotent. SQLite treats NULL as distinct in the
     # UNIQUE constraint, so seed rows (which carry purchase_option=NULL) would
     # be re-inserted as duplicates on every load via INSERT OR IGNORE. Delete
@@ -98,7 +99,7 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
         "DELETE FROM prices WHERE source IN ('seed', 'seed-initial')"
     )
     conn.commit()
-    
+
     try:
         seed_data = json.loads(SEED_PRICES_PATH.read_text())
         for item in seed_data:
@@ -108,8 +109,8 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
                     vendor, service, region, product_family, attributes,
                     attributes_hash, usage_metric, unit, price_usd,
                     start_usage_amount, end_usage_amount, purchase_option,
-                    effective_date, source, fetched_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    effective_date, source, fetched_at, per
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 item.get("vendor"),
                 item.get("service"),
@@ -126,6 +127,7 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
                 now,
                 "seed",
                 now,
+                item.get("per"),
             ))
             count += 1
         conn.commit()
@@ -133,14 +135,14 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
         raise RuntimeError(f"Invalid seed prices JSON: {e}") from e
     finally:
         conn.close()
-    
+
     cache._seed_loaded = True
     return count
 
 
 class PricingCache:
     """SQLite cache for cloud pricing data."""
-    
+
     def __init__(self, db_path: str | Path = None, ttl_days: int = DEFAULT_TTL_DAYS,
                  seed: bool = False):
         self.db_path = Path(db_path) if db_path else DB_PATH
@@ -149,39 +151,43 @@ class PricingCache:
         self._ensure_db()
         if seed:
             seed_prices(self)
-    
+
     def _ensure_db(self):
-        """Create the database and tables if they don't exist."""
+        """Create the database and tables (migrating in any missing columns).
+
+        Existing on-disk databases -- e.g. ``~/.infra-cost-model/pricing.db`` -- may
+        predate the ``per`` column. Fresh databases declare it inline below; for
+        legacy files we backfill with a guarded ``ALTER TABLE`` so cached pricing
+        rows are never dropped across upgrades.
+        """
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         conn = sqlite3.connect(self.db_path)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS prices (
                 id INTEGER PRIMARY KEY,
-                vendor TEXT NOT NULL,
-                service TEXT NOT NULL,
-                region TEXT NOT NULL,
-                product_family TEXT,
-                attributes TEXT,
-                attributes_hash TEXT,
-                usage_metric TEXT NOT NULL,
-                unit TEXT NOT NULL,
-                price_usd REAL NOT NULL,
-                start_usage_amount REAL,
-                end_usage_amount REAL,
-                purchase_option TEXT,
-                effective_date TEXT,
-                source TEXT NOT NULL,
-                fetched_at TEXT NOT NULL,
+                vendor TEXT NOT NULL, service TEXT NOT NULL, region TEXT NOT NULL,
+                product_family TEXT, attributes TEXT, attributes_hash TEXT,
+                usage_metric TEXT NOT NULL, unit TEXT NOT NULL, price_usd REAL NOT NULL,
+                start_usage_amount REAL, end_usage_amount REAL, purchase_option TEXT,
+                effective_date TEXT, source TEXT NOT NULL, fetched_at TEXT NOT NULL, per TEXT,
                 UNIQUE(vendor, service, region, product_family, attributes_hash, usage_metric, start_usage_amount, purchase_option)
             );
-            
+
             CREATE INDEX IF NOT EXISTS idx_lookup ON prices(vendor, service, region, usage_metric);
             CREATE INDEX IF NOT EXISTS idx_fetched ON prices(fetched_at);
         """)
+        # Backfill `per` on any pre-existing table that lacks it. The schema above is a no-op once the
+        # column exists; this line is harmless ("duplicate column name" -> caught) for fresh tables and
+        # necessary for legacy files so cached Infracost rows survive an upgrade unchanged.
+        try:
+            conn.execute("ALTER TABLE prices ADD COLUMN per TEXT")
+        except sqlite3.OperationalError as exc:  # duplicate column name -> already present
+            if "duplicate column name" not in str(exc):
+                raise
         conn.commit()
         conn.close()
-    
+
     def is_stale(self, vendor: str, service: str) -> bool:
         """Check if cached prices are older than TTL."""
         conn = sqlite3.connect(self.db_path)
@@ -191,10 +197,10 @@ class PricingCache:
         )
         result = cursor.fetchone()[0]
         conn.close()
-        
+
         if not result:
             return True
-        
+
         fetched = datetime.fromisoformat(result)
         return datetime.now() - fetched > timedelta(days=self.ttl_days)
 
@@ -215,7 +221,7 @@ class PricingCache:
     def upsert(self, price: Price) -> None:
         """Insert or update a price record."""
         attrs_hash = _hash_attributes(price.attributes)
-        
+
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
             INSERT OR REPLACE INTO prices (
@@ -233,11 +239,11 @@ class PricingCache:
         ))
         conn.commit()
         conn.close()
-    
-    def query(self, vendor: str, service: str, region: str, 
+
+    def query(self, vendor: str, service: str, region: str,
               usage_metric: str, quantity: float | None = None) -> TieredPrice | Price | None:
         """Query prices for a specific vendor/service/region/usage metric.
-        
+
         Returns a TieredPrice if multiple tiers exist, or a single Price.
         If no prices are found, loads seed prices and retries once.
         """
@@ -246,18 +252,18 @@ class PricingCache:
             SELECT vendor, service, region, product_family, attributes,
                    usage_metric, unit, price_usd, start_usage_amount,
                    end_usage_amount, purchase_option, effective_date,
-                   source, fetched_at
+                   source, fetched_at, per
             FROM prices
             WHERE vendor = ? AND service = ? AND region = ? AND usage_metric = ?
             ORDER BY start_usage_amount
         """, (vendor, service, region, usage_metric))
-        
+
         rows = cursor.fetchall()
         conn.close()
-        
+
         if not rows:
             return None
-        
+
         prices = [
             Price(
                 vendor=row[0], service=row[1], region=row[2],
@@ -265,7 +271,8 @@ class PricingCache:
                 usage_metric=row[5], unit=row[6], price_usd=row[7],
                 start_usage_amount=row[8], end_usage_amount=row[9],
                 purchase_option=row[10], effective_date=row[11],
-                source=row[12], fetched_at=row[13]
+                source=row[12], fetched_at=row[13],
+                per=row[14]   # column 15 added with the `per` schema/migration
             )
             for row in rows
         ]
@@ -274,7 +281,7 @@ class PricingCache:
         # aws-pricelist). Those fixtures are not a second pricing schedule: mixing
         # a fallback row (start_usage_amount=None) with a live row
         # (start_usage_amount=0.0) for the same metric yields a spurious 2-tier
-        # TieredPrice whose open-ended tiers each charge the full quantity —
+        # TieredPrice whose open-ended tiers each charge the full quantity --
         # double-counting the cost. When any live (Infracost) row is present for
         # this key, keep only the live rows so the two schedules never mix. This
         # preserves a genuine multi-tier live schedule (all rows are 'infracost').
@@ -285,7 +292,7 @@ class PricingCache:
         # UNIQUE constraint, so rows with purchase_option=NULL (every seed row)
         # can be inserted repeatedly by re-seeding or upserts. Without this, a
         # single logical price would be returned as a spurious multi-tier
-        # TieredPrice — inflating tiered costs and breaking single-Price callers.
+        # TieredPrice -- inflating tiered costs and breaking single-Price callers.
         seen: set = set()
         deduped: list[Price] = []
         for p in prices:
