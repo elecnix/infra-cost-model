@@ -468,7 +468,8 @@ class CostAggregator:
             # back to embedded pricingRates (deprecated per Principle 13).
             if metric_cost is None and self.catalog is not None:
                 result = self.catalog.query(
-                    provider, service, region, metric_name, total_quantity
+                    provider, service, region, metric_name, total_quantity,
+                    parameters=self.parameters
                 )
                 if result is None:
                     # The node used a logical metric name (e.g. "natHours"); map it
@@ -478,7 +479,8 @@ class CostAggregator:
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
                         result = self.catalog.query(
-                            provider, service, region, mapped, total_quantity
+                            provider, service, region, mapped, total_quantity,
+                            parameters=self.parameters
                         )
                 if result is not None:
                     metric_cost = result.total_cost
@@ -564,7 +566,8 @@ class CostAggregator:
 
             if metric_cost is None and self.catalog is not None:
                 result = self.catalog.query(
-                    provider, service, region, metric_name, total_quantity
+                    provider, service, region, metric_name, total_quantity,
+                    parameters=self.parameters
                 )
                 if result is None:
                     # The node used a logical metric name (e.g. "natHours"); map it
@@ -574,7 +577,8 @@ class CostAggregator:
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
                         result = self.catalog.query(
-                            provider, service, region, mapped, total_quantity
+                            provider, service, region, mapped, total_quantity,
+                            parameters=self.parameters
                         )
                 if result is not None:
                     metric_cost = result.total_cost
@@ -875,12 +879,14 @@ class CostEngine:
         self.derived_usage = all_derived
 
         # Convert per-second usage-driven costs to the output period; fixed
-        # (always-on) costs are already flat monthly totals and are not scaled.
+        # (always-on) costs are flat monthly totals and scale by 12 for yearly output.
         multiplier = self._time_multiplier
+        fixed_multiplier = 12.0 if self.time_basis == "yearly" else 1.0
         self.costs = {}
         for addr in set(all_variable) | set(all_fixed):
             self.costs[addr] = (
-                all_variable[addr] * multiplier + all_fixed.get(addr, 0.0)
+                all_variable[addr] * multiplier
+                + all_fixed.get(addr, 0.0) * fixed_multiplier
             )
 
         return self.costs

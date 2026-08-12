@@ -13,7 +13,8 @@
   unit: credits
   price_usd: 0.00
   start_usage_amount: 0
-  end_usage_amount: 47500
+  end_usage_amount: 1900
+  per: seats
 
 - vendor: github
   service: Copilot
@@ -21,4 +22,5 @@
   usage_metric: Copilot-Credit
   unit: credits
   price_usd: 0.01
-  start_usage_amount: 47500
+  start_usage_amount: 1900
+  per: seats
