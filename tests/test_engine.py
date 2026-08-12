@@ -66,38 +66,38 @@ def make_valid_cost_model(entry="api_gateway", frequency=100):
 
 class TestDAGValidator:
     """Tests for DAG validation."""
-    
+
     def test_valid_dag(self):
         """Test that a valid DAG passes validation."""
         model = make_valid_cost_model()
         validator = DAGValidator(model["nodes"], model["edges"])
         assert validator.validate() is True
         assert validator.errors == []
-    
+
     def test_missing_from_node(self):
         """Test error when edge source doesn't exist."""
         model = make_valid_cost_model()
         model["edges"].append({"from": "nonexistent", "to": "get_user_fn", "rate": 1.0})
-        
+
         validator = DAGValidator(model["nodes"], model["edges"])
         assert validator.validate() is False
         assert any("not found" in e for e in validator.errors)
-    
+
     def test_missing_to_node(self):
         """Test error when edge target doesn't exist."""
         model = make_valid_cost_model()
         model["edges"].append({"from": "api_gateway", "to": "nonexistent", "rate": 1.0})
-        
+
         validator = DAGValidator(model["nodes"], model["edges"])
         assert validator.validate() is False
         assert any("not found" in e for e in validator.errors)
-    
+
     def test_cycle_detection(self):
         """Test that cycles are detected."""
         model = make_valid_cost_model()
         # Create a cycle: users_table -> api_gateway
         model["edges"].append({"from": "users_table", "to": "api_gateway", "rate": 1.0})
-        
+
         validator = DAGValidator(model["nodes"], model["edges"])
         assert validator.validate() is False
         assert any("Cycle detected" in e for e in validator.errors)
@@ -105,34 +105,34 @@ class TestDAGValidator:
 
 class TestWorkloadDeriver:
     """Tests for workload derivation."""
-    
+
     def test_entry_frequency_conversion(self):
         """Test frequency conversion to per-second."""
         model = make_valid_cost_model(frequency=60)  # 60 per minute
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         deriver.derive()
-        
+
         # Entry should have 1 per second (60/min / 60 = 1/sec)
         entry_usage = deriver.derived_usage["api_gateway"]
         assert entry_usage.invocation_count == pytest.approx(1.0)
-    
+
     def test_invocation_derivation(self):
         """Test invocation derivation through edges."""
         model = make_valid_cost_model(frequency=100)  # 100 per minute = 100/60 per second
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         derived = deriver.derive()
-        
+
         # api_gateway gets base frequency
         assert derived["api_gateway"].invocation_count == pytest.approx(100 / 60, rel=0.01)
-        
+
         # get_user_fn gets 0.8 * api_gateway rate
         expected_fn = (100 / 60) * 0.8
         assert derived["get_user_fn"].invocation_count == pytest.approx(expected_fn, rel=0.01)
-        
+
         # users_table gets: 0.8 (api->fn->table) + 1.0 (api->table directly)
         expected_table = (100 / 60) * (0.8 * 1.0 + 1.0)
         assert derived["users_table"].invocation_count == pytest.approx(expected_table, rel=0.01)
-    
+
     def test_data_size_derivation(self):
         """Test that edge dataSize is derived to child's data_in."""
         workflow = {
@@ -147,14 +147,14 @@ class TestWorkloadDeriver:
             {"from": "A", "to": "B", "rate": 1.0, "type": "invoke",
              "dataSize": {"unit": "kB", "average": 50}},
         ]
-        
+
         deriver = WorkloadDeriver(workflow, nodes, edges)
         derived = deriver.derive()
-        
+
         # B gets 10 invocations/sec, each with 50 kB = 500 kB total
         assert derived["B"].invocation_count == 10.0
         assert derived["B"].data_in == 10.0 * 50.0  # 500 kB
-    
+
     def test_data_size_accumulates_from_multiple_parents(self):
         """Test that data_in accumulates from multiple parent edges."""
         workflow = {
@@ -171,10 +171,10 @@ class TestWorkloadDeriver:
             {"from": "A", "to": "C", "rate": 0.6, "dataSize": {"unit": "kB", "average": 10}},
             {"from": "B", "to": "C", "rate": 1.0, "dataSize": {"unit": "kB", "average": 25}},
         ]
-        
+
         deriver = WorkloadDeriver(workflow, nodes, edges)
         derived = deriver.derive()
-        
+
         # C gets A→C data: 10 * 0.6 * 10 = 60 + B→C data: (10*0.5) * 1.0 * 25 = 125
         # B = 10 * 0.5 = 5 invocations/sec
         expected = 10 * 0.6 * 10 + 5 * 1.0 * 25  # 60 + 125 = 185
@@ -193,12 +193,12 @@ class TestWorkloadDeriver:
         edges = [
             {"from": "A", "to": "B", "rate": 0.5, "type": "read"},
         ]
-        
+
         deriver = WorkloadDeriver(workflow, nodes, edges)
         derived = deriver.derive()
-        
+
         assert "read" in derived["B"].edge_types
-    
+
     def test_no_data_size_when_not_specified(self):
         """Test that data_in is 0 when no dataSize on edges."""
         workflow = {
@@ -212,15 +212,15 @@ class TestWorkloadDeriver:
         edges = [
             {"from": "A", "to": "B", "rate": 1.0},
         ]
-        
+
         deriver = WorkloadDeriver(workflow, nodes, edges)
         derived = deriver.derive()
-        
+
         assert derived["B"].data_in == 0.0
-    
+
     def test_multi_path_dag_topological_order(self):
         """Test multi-path DAG: A→B, A→C, C→B, B→D.
-        
+
         With BFS order, B may be dequeued and propagate to D before C's
         contribution to B arrives. Topological sort fixes this by only
         propagating B downstream after all incoming edges processed.
@@ -241,10 +241,10 @@ class TestWorkloadDeriver:
             {"from": "C", "to": "B", "rate": 1.0, "type": "invoke"},
             {"from": "B", "to": "D", "rate": 1.0, "type": "invoke"},
         ]
-        
+
         deriver = WorkloadDeriver(workflow, nodes, edges)
         derived = deriver.derive()
-        
+
         # A gets entry frequency = 10
         assert derived["A"].invocation_count == 10.0
         # C gets A * 1.0 = 10
@@ -255,86 +255,86 @@ class TestWorkloadDeriver:
         # D gets B * 1.0 = 20 (not 10!)
         assert derived["D"].invocation_count == 20.0, \
             f"Expected 20.0 (from B=20), got {derived['D'].invocation_count}"
-    
+
     def test_per_second_frequency(self):
         """Test perSecond frequency conversion."""
         model = make_valid_cost_model()
         model["workflow"]["frequency"] = {"unit": "perSecond", "value": 10}
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         derived = deriver.derive()
-        
+
         assert derived["api_gateway"].invocation_count == 10.0
-    
+
     def test_per_week_frequency(self):
         """Test perWeek frequency conversion."""
         model = make_valid_cost_model()
         model["workflow"]["frequency"] = {"unit": "perWeek", "value": 7}  # 7 per week = 1 per day
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         derived = deriver.derive()
-        
+
         # 7 per week = 7 / 604800 = ~1.157e-05 per second
         assert derived["api_gateway"].invocation_count == pytest.approx(7.0 / 604800.0)
-    
+
     def test_per_month_frequency(self):
         """Test perMonth frequency conversion."""
         model = make_valid_cost_model()
         model["workflow"]["frequency"] = {"unit": "perMonth", "value": 2629800}  # 1 request/sec worth per month
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         derived = deriver.derive()
-        
+
         # 2629800 per month = 2629800 / 2629800 = 1.0 per second
         assert derived["api_gateway"].invocation_count == pytest.approx(1.0)
-    
+
     def test_per_month_frequency_practical(self):
         """Test perMonth with practical value (3M requests/month)."""
         model = make_valid_cost_model()
         model["workflow"]["frequency"] = {"unit": "perMonth", "value": 3_000_000}
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         derived = deriver.derive()
-        
+
         expected_per_second = 3_000_000.0 / 2629800.0
         assert derived["api_gateway"].invocation_count == pytest.approx(expected_per_second)
-    
+
     def test_invalid_entry_node_raises(self):
         """Test that invalid entry node raises ValueError."""
         model = make_valid_cost_model(entry="nonexistent_service")
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
-        
+
         with pytest.raises(ValueError, match="Entry node 'nonexistent_service' not found in nodes"):
             deriver.derive()
-    
+
     def test_invalid_entry_node_lists_available_nodes(self):
         """Test that error message includes available node names."""
         model = make_valid_cost_model(entry="typo_api_gateway")
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
-        
+
         with pytest.raises(ValueError, match="Available nodes"):
             deriver.derive()
-    
+
     def test_unknown_frequency_unit_raises(self):
         """Test that unknown frequency unit raises ValueError."""
         model = make_valid_cost_model()
         model["workflow"]["frequency"] = {"unit": "perYear", "value": 1}
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
-        
+
         with pytest.raises(ValueError, match="Unknown frequency unit 'perYear'"):
             deriver.derive()
-    
+
     def test_unknown_frequency_unit_lists_valid_units(self):
         """Test that error message lists valid units."""
         model = make_valid_cost_model()
         model["workflow"]["frequency"] = {"unit": "perDecade", "value": 1}
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
-        
+
         with pytest.raises(ValueError, match="Valid units"):
             deriver.derive()
-    
+
     def test_known_frequency_units_work(self):
         """Test that all known frequency units work without error."""
         for unit in ["perSecond", "perMinute", "perHour", "perDay", "perWeek", "perMonth"]:
@@ -343,7 +343,7 @@ class TestWorkloadDeriver:
             deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
             derived = deriver.derive()
             assert "api_gateway" in derived
-    
+
     def test_unreachable_nodes_warning(self):
         """Test that unreachable nodes emit a warning."""
         model = make_valid_cost_model()
@@ -354,12 +354,12 @@ class TestWorkloadDeriver:
             "provider": "aws",
             "service": "AmazonElastiCache",
         }
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
-        
+
         with pytest.warns(UserWarning, match="orphaned_cache"):
             deriver.derive()
-    
+
     def test_unreachable_nodes_not_in_derived_usage(self):
         """Test that unreachable nodes are not included in derived usage."""
         model = make_valid_cost_model()
@@ -369,27 +369,27 @@ class TestWorkloadDeriver:
             "provider": "aws",
             "service": "AmazonElastiCache",
         }
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
         derived = deriver.derive()
-        
+
         assert "orphaned_cache" not in derived
         assert "api_gateway" in derived  # reachable nodes still derived
-    
+
     def test_no_warning_when_all_nodes_reachable(self):
         """Test that no warning is emitted when all nodes are reachable."""
         model = make_valid_cost_model()
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
-        
+
         import warnings
         with warnings.catch_warnings(record=True) as record:
             warnings.simplefilter("always")
             deriver.derive()
-        
+
         # Filter out any unrelated warnings
         unreachable_warnings = [w for w in record if "unreachable" in str(w.message).lower()]
         assert len(unreachable_warnings) == 0
-    
+
     def test_multiple_unreachable_nodes(self):
         """Test warning lists all unreachable node names."""
         model = make_valid_cost_model()
@@ -405,12 +405,12 @@ class TestWorkloadDeriver:
             "provider": "aws",
             "service": "AmazonS3",
         }
-        
+
         deriver = WorkloadDeriver(model["workflow"], model["nodes"], model["edges"])
-        
+
         with pytest.warns(UserWarning, match="orphaned_a") as w:
             deriver.derive()
-        
+
         # Warning should mention both orphaned nodes
         warning_msg = str(w[0].message)
         assert "orphaned_a" in warning_msg
@@ -419,7 +419,7 @@ class TestWorkloadDeriver:
 
 class TestCostAggregator:
     """Tests for cost aggregation."""
-    
+
     def test_aggregate_basic_cost(self):
         """Test basic cost aggregation."""
         model = make_valid_cost_model()
@@ -428,14 +428,14 @@ class TestCostAggregator:
             "get_user_fn": DerivedUsage("get_user_fn", 4800.0),
             "users_table": DerivedUsage("users_table", 10800.0),
         }
-        
+
         aggregator = CostAggregator(model["nodes"], derived, model["edges"])
         costs = aggregator.aggregate()
-        
+
         assert "api_gateway" in costs
         assert "get_user_fn" in costs
         assert "users_table" in costs
-    
+
     def test_cost_uses_pricing_rates(self):
         """Test that costs multiply invocation_count × per-invocation value × rate."""
         nodes = {
@@ -455,25 +455,25 @@ class TestCostAggregator:
             }
         }
         derived = {"test_fn": DerivedUsage("test_fn", 1000.0)}
-        
+
         aggregator = CostAggregator(nodes, derived, [])
         costs = aggregator.aggregate()
-        
+
         # invocations: 1000 invocations × 1 × $0.20e-6 = $0.0002
         # gb_seconds: 1000 invocations × 0.5 GB-sec × $0.0000166667 = $0.00833...
         expected = 1000 * 1 * 0.20e-6 + 1000 * 0.5 * 0.0000166667
         assert costs["test_fn"] == pytest.approx(expected)
-    
+
     def test_flat_pricing_prefers_catalog(self):
         """Test flat pricing uses catalog when available (Principle 13)."""
         from infra_cost_model.pricing.cache import PricingCache, Price
         from infra_cost_model.pricing.catalog import PricingCatalog
         from pathlib import Path
         import tempfile
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = PricingCache(db_path=Path(tmpdir) / "test.db")
-            
+
             # Catalog has price $0.15/million (different from embedded $0.20)
             cache.upsert(Price(
                 vendor="aws", service="AWSLambda", region="us-east-1",
@@ -484,9 +484,9 @@ class TestCostAggregator:
                 source="test", effective_date="2024-01-01",
                 fetched_at="2024-01-01T00:00:00"
             ))
-            
+
             catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
-            
+
             nodes = {
                 "test_fn": {
                     "nodeType": "compute",
@@ -503,14 +503,14 @@ class TestCostAggregator:
                 }
             }
             derived = {"test_fn": DerivedUsage("test_fn", 1000.0)}
-            
+
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
-            
+
             # 1000 invocations × 1000 per-invocation × $0.15e-6 = $0.15
             # Should use catalog price $0.15, not embedded $0.20
             assert costs["test_fn"] == pytest.approx(1000 * 1000 * 0.15e-6)
-    
+
 
     def test_flat_override_uses_direct_values(self):
         """Test that flatOverride=true uses values as flat monthly totals."""
@@ -527,12 +527,12 @@ class TestCostAggregator:
                 }
             }
         }
-        
+
         # Even with 1000 invocations, flatOverride uses direct value
         derived = {"test_fn": DerivedUsage("test_fn", 1000.0)}
         aggregator = CostAggregator(nodes, derived, [])
         costs = aggregator.aggregate()
-        
+
         # 1,000,000 requests × $0.20e-6 = $0.20 (flat, NOT 1000 × 1M × rate)
         expected = 1000000 * 0.20e-6
         assert costs["test_fn"] == pytest.approx(expected)
@@ -551,12 +551,12 @@ class TestCostAggregator:
                 }
             }
         }
-        
+
         # 1000 invocations × 1 request each × rate
         derived = {"test_fn": DerivedUsage("test_fn", 1000.0)}
         aggregator = CostAggregator(nodes, derived, [])
         costs = aggregator.aggregate()
-        
+
         expected = 1000 * 1 * 0.20e-6
         assert costs["test_fn"] == pytest.approx(expected)
 
@@ -576,27 +576,27 @@ class TestCostAggregator:
                 }
             }
         }
-        
+
         # 100 transactions, $10000 volume
         derived = {"stripe": DerivedUsage("stripe", 100.0)}
-        
+
         aggregator = CostAggregator(nodes, derived, [])
         costs = aggregator.aggregate()
-        
+
         # Expected: $10000 * 0.029 + 100 * 0.30 = $290 + $30 = $320
         assert costs["stripe"] == pytest.approx(320.0)
-    
+
     def test_tiered_pricing_with_catalog(self):
         """Test tiered pricing uses catalog when available."""
         from infra_cost_model.pricing.cache import PricingCache, Price, TieredPrice
         from infra_cost_model.pricing.catalog import PricingCatalog
         from pathlib import Path
         import tempfile
-        
+
         # Create a catalog with tiered S3 storage pricing
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = PricingCache(db_path=Path(tmpdir) / "test.db")
-            
+
             # Tier 1: first 50 TB at $0.023/GB
             cache.upsert(Price(
                 vendor="aws", service="AmazonS3", region="us-east-1",
@@ -627,9 +627,9 @@ class TestCostAggregator:
                 source="test", effective_date="2024-01-01",
                 fetched_at="2024-01-01T00:00:00"
             ))
-            
+
             catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
-            
+
             nodes = {
                 "s3_bucket": {
                     "nodeType": "storage",
@@ -643,25 +643,25 @@ class TestCostAggregator:
                     },
                 }
             }
-            
+
             # 1000 GB storage, 1 invocation
             derived = {"s3_bucket": DerivedUsage("s3_bucket", 1.0)}
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
-            
+
             # 1000 GB should all be in first tier: 1000 * $0.023 = $23.00
             assert costs["s3_bucket"] == pytest.approx(1000 * 0.023)
-    
+
     def test_tiered_pricing_crosses_tiers(self):
         """Test tiered pricing correctly handles crossing tier boundaries."""
         from infra_cost_model.pricing.cache import PricingCache, Price
         from infra_cost_model.pricing.catalog import PricingCatalog
         from pathlib import Path
         import tempfile
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = PricingCache(db_path=Path(tmpdir) / "test.db")
-            
+
             # Tier 1: first 10 units at $1.00
             cache.upsert(Price(
                 vendor="aws", service="TestSvc", region="us-east-1",
@@ -692,9 +692,9 @@ class TestCostAggregator:
                 source="test", effective_date="2024-01-01",
                 fetched_at="2024-01-01T00:00:00"
             ))
-            
+
             catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
-            
+
             nodes = {
                 "svc": {
                     "nodeType": "compute",
@@ -708,14 +708,14 @@ class TestCostAggregator:
                     },
                 }
             }
-            
+
             # 25 units: 10 * $1.00 + 15 * $0.50 = $10 + $7.50 = $17.50
             derived = {"svc": DerivedUsage("svc", 1.0)}
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
-            
+
             assert costs["svc"] == pytest.approx(17.50)
-    
+
     def test_tiered_pricing_fallback_to_flat(self):
         """Test tiered pricing falls back to flat pricingRates when no catalog."""
         nodes = {
@@ -733,24 +733,24 @@ class TestCostAggregator:
                 }
             }
         }
-        
+
         derived = {"s3_bucket": DerivedUsage("s3_bucket", 1.0)}
         aggregator = CostAggregator(nodes, derived, [], catalog=None)
         costs = aggregator.aggregate()
-        
+
         # Falls back to flat: 1000 * $0.023 = $23.00
         assert costs["s3_bucket"] == pytest.approx(23.0)
-    
+
     def test_tiered_pricing_with_free_tier(self):
         """Test free-tier pricing (first N units at $0)."""
         from infra_cost_model.pricing.cache import PricingCache, Price
         from infra_cost_model.pricing.catalog import PricingCatalog
         from pathlib import Path
         import tempfile
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = PricingCache(db_path=Path(tmpdir) / "test.db")
-            
+
             # Free tier: first 5 units at $0
             cache.upsert(Price(
                 vendor="aws", service="TestSvc", region="us-east-1",
@@ -771,9 +771,9 @@ class TestCostAggregator:
                 source="test", effective_date="2024-01-01",
                 fetched_at="2024-01-01T00:00:00"
             ))
-            
+
             catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
-            
+
             nodes = {
                 "svc": {
                     "nodeType": "compute",
@@ -787,32 +787,32 @@ class TestCostAggregator:
                     },
                 }
             }
-            
+
             # 3 requests, all in free tier: $0
             derived = {"svc": DerivedUsage("svc", 1.0)}
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
-            
+
             assert costs["svc"] == 0.0
-            
+
             # Now with 8 requests: 5 free + 3 * $0.10 = $0.30
             nodes["svc"]["usageMetrics"]["requests"]["value"] = 8
             derived2 = {"svc": DerivedUsage("svc", 1.0)}
             aggregator2 = CostAggregator(nodes, derived2, [], catalog)
             costs2 = aggregator2.aggregate()
-            
+
             assert costs2["svc"] == pytest.approx(0.30)
-    
+
     def test_tiered_pricing_multiple_metrics(self):
         """Test tiered pricing with multiple metrics per node."""
         from infra_cost_model.pricing.cache import PricingCache, Price
         from infra_cost_model.pricing.catalog import PricingCatalog
         from pathlib import Path
         import tempfile
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = PricingCache(db_path=Path(tmpdir) / "test.db")
-            
+
             # Storage metric
             cache.upsert(Price(
                 vendor="aws", service="TestSvc", region="us-east-1",
@@ -833,9 +833,9 @@ class TestCostAggregator:
                 source="test", effective_date="2024-01-01",
                 fetched_at="2024-01-01T00:00:00"
             ))
-            
+
             catalog = PricingCatalog(db_path=Path(tmpdir) / "test.db")
-            
+
             nodes = {
                 "svc": {
                     "nodeType": "compute",
@@ -850,73 +850,73 @@ class TestCostAggregator:
                     },
                 }
             }
-            
+
             # 100 GB storage * $0.023 + 1000 requests * $0.005 = $2.30 + $5.00
             derived = {"svc": DerivedUsage("svc", 1.0)}
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
-            
+
             assert costs["svc"] == pytest.approx(2.30 + 5.00)
 
 
 class TestCostEngine:
     """Tests for full cost engine."""
-    
+
     def test_compute_returns_costs(self):
         """Test that compute returns node costs."""
         model = make_valid_cost_model(frequency=100)
         engine = CostEngine(model)
-        
+
         costs = engine.compute()
-        
+
         assert isinstance(costs, dict)
         assert len(costs) > 0
-    
+
     def test_total_cost(self):
         """Test total cost calculation."""
         model = make_valid_cost_model(frequency=100)
         engine = CostEngine(model)
-        
+
         total = engine.total_cost()
-        
+
         assert total >= 0
-    
+
     def test_invalid_dag_raises(self):
         """Test that invalid DAG raises ValueError."""
         model = make_valid_cost_model()
         model["edges"].append({"from": "nonexistent", "to": "get_user_fn", "rate": 1.0})
-        
+
         engine = CostEngine(model)
-        
+
         with pytest.raises(ValueError, match="Invalid DAG"):
             engine.compute()
-    
+
     def test_monthly_time_basis(self):
         """Test that monthly time_basis converts per-second costs to monthly."""
         from infra_cost_model.engine.engine import SECONDS_PER_MONTH
-        
+
         model = make_valid_cost_model(frequency=100)
-        
+
         # Per-second engine
         per_second = CostEngine(model, time_basis="perSecond")
         ps_costs = per_second.compute()
         ps_total = per_second.total_cost()
-        
+
         # Monthly engine
         monthly = CostEngine(model, time_basis="monthly")
         mo_costs = monthly.compute()
         mo_total = monthly.total_cost()
-        
+
         # Monthly should be SECONDS_PER_MONTH × per-second
         assert mo_total == pytest.approx(ps_total * SECONDS_PER_MONTH)
         for addr in ps_costs:
             assert mo_costs[addr] == pytest.approx(ps_costs[addr] * SECONDS_PER_MONTH)
-    
+
     def test_invalid_entry_node_through_engine(self):
         """Test that invalid entry node raises ValueError through full engine."""
         model = make_valid_cost_model(entry="mistyped_entry")
         engine = CostEngine(model)
-        
+
         with pytest.raises(ValueError, match="Entry node 'mistyped_entry' not found"):
             engine.compute()
 
@@ -1802,30 +1802,30 @@ class TestTokenDistribution:
 
 class TestParametricSensitivityAnalyzer:
     """Tests for ParametricSensitivityAnalyzer — efficient parametric analysis."""
-    
+
     def test_partial_derivative_frequency(self):
         """Partial derivative w.r.t. frequency should be positive."""
         model = make_valid_cost_model(frequency=100)
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         deriv = analyzer.partial_derivative("frequency")
         # With frequency=100/min, cost should be positive and derivative positive
         assert deriv > 0, f"Expected positive derivative, got {deriv}"
-    
+
     def test_partial_derivative_frequency_linear(self):
         """For flat pricing models, cost is linear in frequency.
-        
+
         Doubling the frequency should (approximately) double the cost.
         """
         model = make_valid_cost_model(frequency=100)
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         cost_100 = analyzer.multi_parameter_what_if({"frequency": 100})
         cost_200 = analyzer.multi_parameter_what_if({"frequency": 200})
-        
+
         # Cost should roughly double
         assert cost_200 == pytest.approx(cost_100 * 2, rel=0.01)
-    
+
     def test_partial_derivative_symbolic_parameter(self):
         """Partial derivative w.r.t. a symbolic parameter."""
         model = {
@@ -1850,11 +1850,11 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": "cache_hit_rate"}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         deriv = analyzer.partial_derivative("cache_hit_rate")
         # Cost = 10 * rate * 0.001 = 0.01 * rate; deriv should be ~0.01
         assert deriv == pytest.approx(0.01, rel=0.001)
-    
+
     def test_partial_derivative_edge_rate(self):
         """Partial derivative w.r.t. an edge-specific rate."""
         model = {
@@ -1878,11 +1878,11 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": 0.8}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         deriv = analyzer.partial_derivative("edge:A->B")
         # Cost = 10 * 0.8 * 0.001 = 0.008; ∂cost/∂rate = 10 * 0.001 = 0.01
         assert deriv == pytest.approx(0.01, rel=0.001)
-    
+
     def test_most_impactful_ranking(self):
         """Most impactful parameters are ranked by absolute derivative."""
         model = {
@@ -1907,9 +1907,9 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": "miss_rate"}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         results = analyzer.most_impactful(["hit_rate", "miss_rate"])
-        
+
         assert len(results) == 2
         # Both should have positive derivatives
         assert results[0]["derivative"] > 0
@@ -1922,7 +1922,7 @@ class TestParametricSensitivityAnalyzer:
         # Both derivatives should be 0.002? Let's just verify ranking works
         assert results[0]["parameter"] in ["hit_rate", "miss_rate"]
         assert results[1]["parameter"] in ["hit_rate", "miss_rate"]
-    
+
     def test_most_impactful_includes_elasticity(self):
         """Results include elasticity metric."""
         model = {
@@ -1947,16 +1947,16 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": "rate"}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         results = analyzer.most_impactful(["rate"])
-        
+
         assert len(results) == 1
         assert "elasticity" in results[0]
         # Cost = 10 * 0.5 * 0.001 = 0.005
         # ∂cost/∂rate = 10 * 0.001 = 0.01
         # elasticity = 0.01 * 0.5 / 0.005 = 1.0
         assert results[0]["elasticity"] == pytest.approx(1.0, rel=0.01)
-    
+
     def test_most_impactful_top_n(self):
         """top_n limits returned results."""
         model = {
@@ -1981,10 +1981,10 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": 0.8}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         results = analyzer.most_impactful(["p1", "p2", "p3"], top_n=2)
         assert len(results) == 2
-    
+
     def test_multi_parameter_what_if(self):
         """Multi-parameter what-if applies all changes in one engine run."""
         model = {
@@ -2009,7 +2009,7 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": "rate"}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         # Apply frequency and rate changes together
         cost = analyzer.multi_parameter_what_if({
             "frequency": 20.0,
@@ -2017,7 +2017,7 @@ class TestParametricSensitivityAnalyzer:
         })
         # B gets 20 * 1.0 = 20 invocations * $0.001 = $0.02
         assert cost == pytest.approx(20 * 1.0 * 0.001)
-    
+
     def test_multi_parameter_what_if_partial(self):
         """Multi-parameter what-if with only some parameters changed."""
         model = {
@@ -2042,12 +2042,12 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": "rate"}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         # Only change rate, leave frequency at baseline
         cost = analyzer.multi_parameter_what_if({"rate": 1.0})
         # B gets 10 * 1.0 = 10 invocations * $0.001 = $0.01
         assert cost == pytest.approx(10 * 1.0 * 0.001)
-    
+
     def test_parameter_sensitivity_surface(self):
         """2D sensitivity surface for interaction detection."""
         model = {
@@ -2071,11 +2071,11 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": 0.8}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         results = analyzer.parameter_sensitivity_surface(
             "frequency", "edge:A->B", steps=3
         )
-        
+
         # 3×3 grid = 9 points
         assert len(results) == 9
         # Each result should have the expected keys
@@ -2084,7 +2084,7 @@ class TestParametricSensitivityAnalyzer:
             assert "param2_value" in r
             assert "total_cost" in r
             assert r["total_cost"] > 0
-    
+
     def test_what_if_convenience(self):
         """what_if convenience method works."""
         model = {
@@ -2108,26 +2108,26 @@ class TestParametricSensitivityAnalyzer:
             "edges": [{"from": "A", "to": "B", "rate": 0.8}],
         }
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         cost = analyzer.what_if("frequency", 20.0)
         assert cost == pytest.approx(20 * 0.8 * 0.001)
-    
+
     def test_baseline_cost_caching(self):
         """baseline_cost is computed once and cached."""
         model = make_valid_cost_model(frequency=100)
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         cost1 = analyzer.baseline_cost
         cost2 = analyzer.baseline_cost
-        
+
         assert cost1 == cost2
         assert cost1 > 0
-    
+
     def test_unknown_parameter_raises(self):
         """Unknown parameter raises ValueError."""
         model = make_valid_cost_model(frequency=100)
         analyzer = ParametricSensitivityAnalyzer(model)
-        
+
         with pytest.raises(ValueError, match="Unknown parameter"):
             analyzer.partial_derivative("nonexistent_param")
 

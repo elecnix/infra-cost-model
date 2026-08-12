@@ -187,7 +187,7 @@ def test_seed_file_loading():
 
         assert count > 0
         assert source == "aws-pricelist"
-        
+
         # Verify prices were loaded
         result = cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request")
         assert result is not None

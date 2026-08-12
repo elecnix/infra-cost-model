@@ -8,15 +8,15 @@ from .types import ComputeResource, ResourceExtract
 
 class BedrockModel(ComputeResource):
     """Bedrock LLM model - compute node with token-based costing.
-    
+
     LLM nodes are leaf nodes where input tokens flow in and output tokens flow out,
     both billable at different rates.
     """
-    
+
     @property
     def valid_metrics(self) -> list[str]:
         return ["invocations", "inputTokens", "outputTokens"]
-    
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["BedrockModel"]:
         """Parse resource address to determine if it's a Bedrock model."""
@@ -25,12 +25,12 @@ class BedrockModel(ComputeResource):
            "Bedrock::Model:" in resource_address:
             return cls()
         return None
-    
+
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         """Extract from Terraform bedrock_model resource (logical - no direct resource)."""
         values = resource.get("values", {})
-        
+
         return ResourceExtract(
             resource_address=resource.get("address", ""),
             node_type="compute",
@@ -41,12 +41,12 @@ class BedrockModel(ComputeResource):
                 "modelId": values.get("model_id"),
             }
         )
-    
+
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         """Extract from Pulumi bedrock model resource (logical)."""
         inputs = resource.get("inputs", {})
-        
+
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="compute",
@@ -57,12 +57,12 @@ class BedrockModel(ComputeResource):
                 "modelId": inputs.get("modelId"),
             }
         )
-    
+
     @classmethod
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
         """Extract from CDK Bedrock model (logical)."""
         properties = resource.get("Properties", {})
-        
+
         return ResourceExtract(
             resource_address=resource.get("LogicalId", ""),
             node_type="compute",
@@ -78,14 +78,14 @@ class BedrockModel(ComputeResource):
 def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet", *,
                   catalog=None, provider: str = "aws", region: str) -> float:
     """Calculate Bedrock/LLM model cost using catalog prices.
-    
+
     Args:
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
         model: Model identifier (affects pricing rates)
         catalog: Optional PricingCatalog (uses default if None, auto-loads seed)
         region: AWS region for pricing lookup
-        
+
     Returns:
         Total cost in USD.
     """
@@ -100,10 +100,10 @@ def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
     """Calculate Bedrock cost with cached prompt input discounted at 50%."""
     if catalog is None:
         catalog = PricingCatalog()
-    
+
     cached_input_tokens = min(max(cached_input_tokens, 0), input_tokens)
     uncached_input_tokens = input_tokens - cached_input_tokens
-    
+
     # Get cached input token price (50% discount)
     cached_cost = 0.0
     if cached_input_tokens > 0:
@@ -111,12 +111,12 @@ def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
                                       "Bedrock-Cached-Input-Token", cached_input_tokens)
         if cached_result and hasattr(cached_result, 'total_cost'):
             cached_cost = cached_result.total_cost
-    
+
     uncached_result = catalog.query(provider, "AmazonBedrock", region,
                                     "Bedrock-Input-Token", uncached_input_tokens)
     output_result = catalog.query(provider, "AmazonBedrock", region,
                                   "Bedrock-Output-Token", output_tokens)
-    
+
     total = cached_cost
     for result in [uncached_result, output_result]:
         if result and hasattr(result, 'total_cost'):
@@ -137,7 +137,7 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
     """Internal: calculate Bedrock token cost using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
-    
+
     input_cost = 0.0
     cached_cost = 0.0
     output_cost = 0.0
@@ -162,15 +162,15 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
 
 def _model_cost_comparison(input_tokens: float, output_tokens: float, provider: str = "aws", region: str = "us-east-1") -> dict:
     """Compare costs across LLM models.
-    
+
     Note: Uses seed prices for comparison. Region defaults to us-east-1
     since this is a cross-model comparison utility, not a per-region cost helper.
     """
     from infra_cost_model.pricing.catalog import PricingCatalog
-    
+
     catalog = PricingCatalog()
     results = {}
-    
+
     # Compare using catalog prices for different model pricing
     for model_name, metric_suffix in [
         ("claude-3-5-sonnet", ""),
@@ -181,21 +181,21 @@ def _model_cost_comparison(input_tokens: float, output_tokens: float, provider: 
                                       "Bedrock-Input-Token", input_tokens)
         output_result = catalog.query(provider, "AmazonBedrock", region,
                                       "Bedrock-Output-Token", output_tokens)
-        
+
         total = 0.0
         if input_result and hasattr(input_result, 'total_cost'):
             total += input_result.total_cost
         if output_result and hasattr(output_result, 'total_cost'):
             total += output_result.total_cost
-        
+
         results[model_name] = total
-    
+
     return results
 
 
 def is_economic_sink(node_type: str, provider: str) -> bool:
     """Check if a node is a leaf node (LLM node).
-    
+
     LLM nodes accept input tokens and produce output tokens - both billable.
     """
     return provider in ("bedrock", "openai") and node_type == "compute"

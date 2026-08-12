@@ -57,9 +57,9 @@ def test_workflow_creation():
     workflow = Workflow("my-api")
     workflow.entry = "aws_api_gateway_rest_api.my_api"
     workflow.frequency = per_minute(1000)
-    
+
     model = workflow.to_cost_model()
-    
+
     assert model["version"] == "1.0"
     assert model["workflow"]["name"] == "my-api"
     assert model["workflow"]["entry"] == "aws_api_gateway_rest_api.my_api"
@@ -70,7 +70,7 @@ def test_workflow_creation():
 def test_from_tf_creation():
     """Test workflow created from Terraform state JSON file."""
     import tempfile
-    
+
     # Create a mock terraform state JSON
     tf_state = {
         "values": {
@@ -88,12 +88,12 @@ def test_from_tf_creation():
             }
         }
     }
-    
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         import json
         json.dump(tf_state, f)
         temp_path = f.name
-    
+
     try:
         workflow = Workflow.from_tf(
             "my-api",
@@ -102,7 +102,7 @@ def test_from_tf_creation():
             frequency=per_minute(1000),
             use_state_file=temp_path,
         )
-        
+
         assert workflow.name == "my-api"
         assert workflow.entry == "aws_api_gateway_rest_api.my_api"
         assert workflow.frequency.value == 1000
@@ -122,14 +122,14 @@ def test_calls_definition():
     workflow = Workflow("test")
     workflow.entry = "api_gateway"
     workflow.frequency = per_minute(1000)
-    
+
     workflow.calls("api_gateway", [
         Call(to="aws_lambda_function.get_user", rate=0.8),
         Call(to="aws_lambda_function.create_user", rate=0.2),
     ])
-    
+
     model = workflow.to_cost_model()
-    
+
     assert len(model["edges"]) == 2
     assert model["edges"][0]["from"] == "api_gateway"
     assert model["edges"][0]["to"] == "aws_lambda_function.get_user"
@@ -141,14 +141,14 @@ def test_calls_with_types():
     workflow = Workflow("test")
     workflow.entry = "handler"
     workflow.frequency = per_minute(100)
-    
+
     workflow.calls("handler", [
         Call(to="users_table", rate=1, type="read"),
         Call(to="events_table", rate=1, type="write"),
     ])
-    
+
     model = workflow.to_cost_model()
-    
+
     assert model["edges"][0]["type"] == "read"
     assert model["edges"][1]["type"] == "write"
 
@@ -158,13 +158,13 @@ def test_usage_metrics():
     workflow = Workflow("test")
     workflow.entry = "handler"
     workflow.frequency = per_minute(100)
-    
+
     workflow.usage("handler", NodeUsage().with_metric(
         "avgDurationMs", value=200, unit="ms"
     ).with_metric("memoryMb", value=256, unit="MB"))
-    
+
     model = workflow.to_cost_model()
-    
+
     assert "usageMetrics" in model["nodes"]["handler"]
     assert model["nodes"]["handler"]["usageMetrics"]["avgDurationMs"]["value"] == 200
 
@@ -188,14 +188,14 @@ edges:
     to: lambda_fn
     rate: 1.0
 """
-    
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
         f.write(yaml_content)
         temp_path = f.name
-    
+
     try:
         workflow = Workflow.from_yaml(temp_path)
-        
+
         assert workflow.name == "api-workflow"
         assert workflow.entry == "api_gateway"
         assert workflow.frequency.value == 1000
@@ -240,14 +240,14 @@ nodes:
     nodeType: storage
     resourceAddress: aws_dynamodb_table.users
 """
-    
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
         f.write(yaml_content)
         temp_path = f.name
-    
+
     try:
         workflow = Workflow.from_yaml(temp_path)
-        
+
         assert workflow.entry == "aws_api_gateway_rest_api.my_api"
         assert len(workflow._edges) == 3
         assert workflow._edges[0]["from"] == "aws_api_gateway_rest_api.my_api"
@@ -298,14 +298,14 @@ nodes:
     nodeType: storage
     resourceAddress: aws_dynamodb_table.users
 """
-    
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
         f.write(yaml_content)
         temp_path = f.name
-    
+
     try:
         workflow = Workflow.from_yaml(temp_path)
-        
+
         assert workflow.entry == "aws_api_gateway_rest_api.my_api"
         assert len(workflow._edges) == 3
         assert workflow._edges[0]["from"] == "aws_api_gateway_rest_api.my_api"
@@ -331,9 +331,9 @@ calls:
   api_gateway:
     → lambda_fn: 1
 """
-    
+
     model = parse_yaml_dsl(yaml_content)
-    
+
     assert model["workflow"]["frequency"]["unit"] == "perMinute"
     assert model["workflow"]["frequency"]["value"] == 1000
     assert len(model["edges"]) == 1
@@ -390,9 +390,9 @@ calls:
         rate: 1
         type: read
 """
-    
+
     model = parse_yaml_dsl(yaml_content)
-    
+
     assert len(model["edges"]) == 1
     assert model["edges"][0]["type"] == "read"
     assert model["edges"][0]["rate"] == 1
@@ -414,9 +414,9 @@ calls:
         rate: 1
         type: read
 """
-    
+
     model = parse_yaml_dsl(yaml_content)
-    
+
     assert len(model["edges"]) == 1
     assert model["edges"][0]["type"] == "read"
     assert model["edges"][0]["rate"] == 1
@@ -439,9 +439,9 @@ calls:
     → lambda_fn: 0.8
     -> dynamo_db: 0.2
 """
-    
+
     model = parse_yaml_dsl(yaml_content)
-    
+
     assert len(model["edges"]) == 2
     assert model["edges"][0]["to"] == "lambda_fn"
     assert model["edges"][0]["rate"] == 0.8
@@ -454,7 +454,7 @@ def test_validate_valid_workflow():
     workflow = Workflow("test")
     workflow.entry = "api_gateway"
     workflow.frequency = per_minute(1000)
-    
+
     errors = workflow.validate()
     assert errors == []
 
@@ -464,7 +464,7 @@ def test_validate_invalid_missing_entry():
     workflow = Workflow("test")
     workflow.entry = "api_gateway"
     workflow.frequency = per_minute(1000)
-    
+
     # Schema validates structure, not semantic correctness
     # Entry node existence checking is done by engine, not schema
     errors = workflow.validate()
@@ -476,13 +476,13 @@ def test_call_with_data_size():
     workflow = Workflow("test")
     workflow.entry = "api_gateway"
     workflow.frequency = per_minute(100)
-    
+
     workflow.calls("api_gateway", [
         Call(to="lambda_fn", rate=1, data_size={"unit": "kB", "average": 50}),
     ])
-    
+
     model = workflow.to_cost_model()
-    
+
     assert "dataSize" in model["edges"][0]
     assert model["edges"][0]["dataSize"]["average"] == 50
 
@@ -492,7 +492,7 @@ def test_percentage_pricing_node():
     workflow = Workflow("test")
     workflow.entry = "api_gateway"
     workflow.frequency = per_minute(100)
-    
+
     workflow._nodes["stripe"] = {
         "nodeType": "external",
         "resourceAddress": "external.stripe_payments",
@@ -506,9 +506,9 @@ def test_percentage_pricing_node():
             "invocations": {"value": 1, "unit": "requests"},
         },
     }
-    
+
     model = workflow.to_cost_model()
-    
+
     assert model["nodes"]["stripe"]["pricingModel"] == "percentage"
 
 
@@ -516,7 +516,7 @@ def test_nodes_auto_extracted_from_tf_state():
     """Test that nodes are automatically extracted from Terraform state JSON."""
     import tempfile
     import json
-    
+
     tf_state = {
         "values": {
             "root_module": {
@@ -533,11 +533,11 @@ def test_nodes_auto_extracted_from_tf_state():
             }
         }
     }
-    
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(tf_state, f)
         temp_path = f.name
-    
+
     try:
         workflow = Workflow.from_tf(
             "my-api",
@@ -546,12 +546,12 @@ def test_nodes_auto_extracted_from_tf_state():
             frequency=per_minute(1000),
             use_state_file=temp_path,
         )
-        
+
         # Resources stored in _resources (resource representation), per Principle 5
         assert "aws_lambda_function.handler" in workflow._resources
         assert workflow._resources["aws_lambda_function.handler"]["nodeType"] == "compute"
         assert workflow._resources["aws_lambda_function.handler"]["provider"] == "aws"
-        
+
         assert "aws_dynamodb_table.users" in workflow._resources
         assert workflow._resources["aws_dynamodb_table.users"]["nodeType"] == "storage"
     finally:
@@ -747,7 +747,7 @@ class TestIaCExtraction:
 
 class TestResourceCostModelSeparation:
     """Tests for Principle 5: separate resource and cost model representations."""
-    
+
     def test_assemble_joins_resources_and_annotations(self):
         """assemble() merges resource configs with cost model annotations."""
         workflow = Workflow("test")
@@ -764,13 +764,13 @@ class TestResourceCostModelSeparation:
         workflow._nodes["aws_lambda.handler"] = {
             "usageMetrics": {"invocations": {"value": 1, "unit": "requests"}},
         }
-        
+
         assembled = workflow.assemble()
-        
+
         assert assembled["aws_lambda.handler"]["nodeType"] == "compute"
         assert assembled["aws_lambda.handler"]["provider"] == "aws"
         assert "usageMetrics" in assembled["aws_lambda.handler"]
-    
+
     def test_assemble_includes_cost_model_only_nodes(self):
         """Nodes only in cost model (no IaC resource) are included."""
         workflow = Workflow("test")
@@ -782,28 +782,28 @@ class TestResourceCostModelSeparation:
             "resourceAddress": "stripe.payments",
             "pricingModel": "percentage",
         }
-        
+
         assembled = workflow.assemble()
-        
+
         assert "stripe.payments" in assembled
         assert assembled["stripe.payments"]["pricingModel"] == "percentage"
-    
+
     def test_resource_representation_property(self):
         """resource_representation returns the IaC resource dict."""
         workflow = Workflow("test")
         workflow._resources["lambda"] = {"nodeType": "compute"}
-        
+
         rep = workflow.resource_representation
         assert "lambda" in rep
-    
+
     def test_cost_model_annotations_property(self):
         """cost_model_annotations returns the annotation dict."""
         workflow = Workflow("test")
         workflow._nodes["lambda"] = {"usageMetrics": {}}
-        
+
         annotations = workflow.cost_model_annotations
         assert "lambda" in annotations
-    
+
     def test_with_resources_swaps_infrastructure(self):
         """with_resources() creates a copy with different infrastructure."""
         workflow = Workflow("test")
@@ -818,7 +818,7 @@ class TestResourceCostModelSeparation:
             "usageMetrics": {"invocations": {"value": 1, "unit": "requests"}},
         }
         workflow._edges = [{"from": "api_gw", "to": "lambda", "rate": 1.0}]
-        
+
         # Swap to staging resources
         staging_resources = {
             "lambda": {
@@ -829,7 +829,7 @@ class TestResourceCostModelSeparation:
             }
         }
         staging = workflow.with_resources(staging_resources)
-        
+
         # Same cost model
         assert staging.entry == workflow.entry
         assert staging.frequency.value == workflow.frequency.value
@@ -839,11 +839,11 @@ class TestResourceCostModelSeparation:
         assert staging._resources["lambda"]["region"] == "us-west-2"
         # Original unchanged
         assert "region" not in workflow._resources["lambda"]
-    
+
     def test_with_resources_produces_different_costs(self):
         """Same cost model × different resources = different costs."""
         from infra_cost_model.engine.engine import CostEngine
-        
+
         workflow = Workflow("test")
         workflow.entry = "api_gw"
         workflow.frequency = per_minute(100)
@@ -862,14 +862,14 @@ class TestResourceCostModelSeparation:
             "pricingRates": {"invocations": 0.001},
         }
         workflow._edges = [{"from": "api_gw", "to": "lambda", "rate": 1.0}]
-        
+
         cost1 = CostEngine(workflow.to_cost_model()).total_cost()
-        
+
         # Same resources, same cost
         staging = workflow.with_resources(workflow._resources)
         cost2 = CostEngine(staging.to_cost_model()).total_cost()
         assert cost2 == pytest.approx(cost1)
-    
+
     def test_to_cost_model_calls_assemble(self):
         """to_cost_model() uses assemble() to join representations."""
         workflow = Workflow("test")
@@ -883,8 +883,8 @@ class TestResourceCostModelSeparation:
         workflow._nodes["lambda"] = {
             "usageMetrics": {"invocations": {"value": 1, "unit": "requests"}},
         }
-        
+
         model = workflow.to_cost_model()
-        
+
         assert model["nodes"]["lambda"]["nodeType"] == "compute"
         assert "usageMetrics" in model["nodes"]["lambda"]
