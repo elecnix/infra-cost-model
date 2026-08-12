@@ -157,9 +157,10 @@ class TestSaaSPricingRegistry:
         """get() returns None for an unregistered shape."""
         assert SaaSPricingRegistry.get("nonexistent_shape") is None
 
-    def test_compute_unknown_shape_returns_none(self):
-        """compute() returns None for an unknown shape — enables fallback."""
-        assert SaaSPricingRegistry.compute("nonexistent", 100, {}) is None
+    def test_compute_unknown_shape_raises(self):
+        """compute() raises ValueError for an unknown shape — hard error."""
+        with pytest.raises(ValueError, match="Unknown pricing shape 'nonexistent'"):
+            SaaSPricingRegistry.compute("nonexistent", 100, {})
 
     def test_register_custom_shape(self):
         """A third-party shape can be registered and computed."""
@@ -357,8 +358,8 @@ class TestEngineShapeIntegration:
         # Total: $364
         assert costs["workos"] == pytest.approx(364.0)
 
-    def test_unknown_shape_falls_back_to_pricing_rates(self):
-        """An unregistered shape falls back to embedded pricingRates."""
+    def test_unknown_shape_raises_error(self):
+        """An unregistered shape raises ValueError — no silent fallback."""
         nodes = {
             "entry": {
                 "nodeType": "routing",
@@ -384,14 +385,13 @@ class TestEngineShapeIntegration:
                     },
                 },
                 "pricingRates": {
-                    "Hosts": 46.0,  # falls back to this
+                    "Hosts": 46.0,
                 },
             },
         }
         engine = self._make_engine(nodes)
-        costs = engine.compute()
-        # Unknown shape → None → falls back to pricingRates → 4 × $46 = $184
-        assert costs["saas_node"] == pytest.approx(184.0)
+        with pytest.raises(ValueError, match="Unknown pricing shape 'nonexistent_shape'"):
+            engine.compute()
 
     def test_no_shape_uses_existing_path(self):
         """A metric without a shape uses the existing catalog/pricingRates path."""
