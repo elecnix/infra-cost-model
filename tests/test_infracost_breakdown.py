@@ -62,7 +62,7 @@ class TestProviderInference:
         ("aws_instance", "aws"),
         ("google_compute_instance", "gcp"),
         ("azurerm_linux_virtual_machine", "azure"),
-        ("digitalocean_droplet", "unknown"),
+        ("digitalocean_droplet", "external"),
     ])
     def test_provider_for(self, rtype, provider):
         assert _provider_for(rtype) == provider

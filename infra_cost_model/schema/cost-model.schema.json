@@ -95,8 +95,8 @@
         },
         "provider": {
           "type": "string",
-          "enum": ["aws", "azure", "gcp", "bedrock", "openai"],
-          "description": "Cloud provider"
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "description": "Cloud or SaaS provider (e.g., aws, gcp, github)"
         },
         "service": {
           "type": "string",
