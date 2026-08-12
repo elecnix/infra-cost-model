@@ -1,0 +1,10 @@
+# Template price rows
+# Copy this directory and edit two files.
+# Each entry matches the Price dataclass fields (snake_case).
+# - vendor: <vendor-id>
+#   service: <service-name>
+#   region: global
+#   usage_metric: <metric-name>
+#   unit: <unit>
+#   price_usd: 0.00
+#   per: <optional>
