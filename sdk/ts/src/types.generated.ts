@@ -68,9 +68,9 @@ export interface Node {
    */
   resourceAddress: string;
   /**
-   * Cloud provider
+   * Cloud or SaaS provider (e.g., aws, gcp, github)
    */
-  provider?: "aws" | "azure" | "gcp" | "bedrock" | "openai";
+  provider?: string;
   /**
    * Service name (e.g., AWSLambda, DynamoDB)
    */
