@@ -28,7 +28,7 @@ export type CostNode = Node;
 // ── Inline types extracted from schema (not standalone in generated output) ──
 
 /** Supported cloud providers. */
-export type Provider = "aws" | "azure" | "gcp" | "bedrock" | "openai";
+export type Provider = string;
 
 /** Pricing model types. */
 export type PricingModel = "tiered" | "flat" | "token_based" | "percentage";
