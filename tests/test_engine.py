@@ -2659,6 +2659,23 @@ class TestFixedMetrics:
             per_second["get_user_fn"] * SECONDS_PER_MONTH
         )
 
+    def test_fixed_metric_yearly_time_basis(self):
+        model = make_valid_cost_model(frequency=100)
+        model["nodes"]["nat"] = {
+            "nodeType": "routing",
+            "resourceAddress": "aws_nat_gateway.main",
+            "usageMetrics": {
+                "gatewayHours": {"unit": "hours", "value": 730, "fixed": True},
+            },
+            "pricingRates": {"gatewayHours": 0.045},
+        }
+
+        monthly = CostEngine(model, time_basis="monthly").compute()
+        yearly = CostEngine(model, time_basis="yearly").compute()
+
+        assert yearly["nat"] == pytest.approx(monthly["nat"] * 12)
+        assert yearly["get_user_fn"] == pytest.approx(monthly["get_user_fn"] * 12)
+
     def test_fixed_metric_uses_catalog(self):
         """A fixed metric is priced via the catalog when available."""
         from infra_cost_model.pricing.cache import PricingCache, Price

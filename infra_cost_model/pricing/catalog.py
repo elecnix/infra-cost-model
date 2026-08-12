@@ -20,7 +20,8 @@ class PricingCatalog:
         return self._cache.source_info()
 
     def query(self, vendor: str, service: str, region: str,
-              usage_metric: str, usage_quantity: float | None = None) -> Optional[Union["_CostResult", TieredPrice, Price]]:
+              usage_metric: str, usage_quantity: float | None = None,
+              parameters: dict[str, float] = None) -> Optional[Union["_CostResult", TieredPrice, Price]]:
         """Query pricing for a specific metric.
         
         Args:
@@ -29,6 +30,7 @@ class PricingCatalog:
             region: Region (e.g., us-east-1)
             usage_metric: Metric name (e.g., Lambda-GB-Second, APIGateway-HTTP-Request)
             usage_quantity: Optional quantity for cost calculation
+            parameters: Optional parameters for resolving 'per' multipliers
             
         Returns:
             _CostResult if quantity provided, TieredPrice if multiple tiers, Price if single, None if not found
@@ -40,7 +42,7 @@ class PricingCatalog:
         
         # Wrap in _CostResult if quantity provided
         if usage_quantity is not None:
-            return _CostResult(result, usage_quantity)
+            return _CostResult(result, usage_quantity, parameters)
         
         return result
 
@@ -48,9 +50,12 @@ class PricingCatalog:
 class _CostResult:
     """Result with tiered cost calculation."""
     
-    def __init__(self, price_data: Union[TieredPrice, Price], quantity: float):
+    def __init__(self, price_data: Union[TieredPrice, Price], quantity: float,
+                 parameters: dict[str, float] = None):
+        self.price_data = price_data
         self.tiers = price_data.tiers if isinstance(price_data, TieredPrice) else [price_data]
         self.quantity = quantity
+        self.parameters = parameters or {}
         self.total_cost = self._calculate_cost()
     
     def _calculate_cost(self) -> float:
@@ -67,8 +72,14 @@ class _CostResult:
             return quantity * avg_price
         
         for tier in sorted(self.tiers, key=lambda t: t.start_usage_amount or 0):
-            tier_start = tier.start_usage_amount or 0
-            tier_end = tier.end_usage_amount
+            # Resolve 'per' multiplier for boundaries only
+            multiplier = 1.0
+            if tier.per and tier.per in self.parameters:
+                multiplier = self.parameters[tier.per]
+            
+            tier_start = (tier.start_usage_amount or 0) * multiplier
+            tier_end = (tier.end_usage_amount * multiplier) if tier.end_usage_amount is not None else None
+            price = tier.price_usd
             
             # Determine if this tier applies
             if quantity <= tier_start:
@@ -76,10 +87,10 @@ class _CostResult:
                 
             if tier_end is None:
                 # Last tier: charge for all quantity above start
-                total += max(0, quantity - tier_start) * tier.price_usd
+                total += max(0, quantity - tier_start) * price
             else:
                 # Tier with upper bound
                 charged = min(quantity, tier_end) - tier_start
-                total += max(0, charged) * tier.price_usd
+                total += max(0, charged) * price
         
         return max(0, total)

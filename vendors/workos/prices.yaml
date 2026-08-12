@@ -1,0 +1,23 @@
+- vendor: workos
+  service: WorkOS
+  region: global
+  usage_metric: SSO-Connection
+  unit: connections
+  price_usd: 225.0
+  start_usage_amount: 0
+
+- vendor: workos
+  service: WorkOS
+  region: global
+  usage_metric: SCIM-Connection
+  unit: connections
+  price_usd: 125.0
+  start_usage_amount: 0
+
+- vendor: workos
+  service: WorkOS
+  region: global
+  usage_metric: MFA-MAU
+  unit: users
+  price_usd: 0.02
+  start_usage_amount: 1000000
