@@ -1,0 +1,24 @@
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Seat-Month
+  unit: seats
+  price_usd: 19.00
+  per: seats
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Credit
+  unit: credits
+  price_usd: 0.00
+  start_usage_amount: 0
+  end_usage_amount: 47500
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Credit
+  unit: credits
+  price_usd: 0.01
+  start_usage_amount: 47500
