@@ -2,6 +2,8 @@
 
 DAG-based infrastructure cost modeling: deriving resource consumption from higher-level parameters through dependency graphs.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/elecnix/infra-cost-model)
+
 ## Why
 
 Existing infrastructure-as-code cost tools (Infracost, terracost, OpenInfraQuote) treat usage as static overrides — you manually specify "1000 requests/month" for each resource. This breaks down when resource consumption is *derived* from traffic flowing through a dependency graph of services.
