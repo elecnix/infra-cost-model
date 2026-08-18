@@ -1,4 +1,4 @@
-"""Pluggable SaaS pricing shapes — flat subscription, per-unit, free-tier, transactional.
+"""Pluggable SaaS pricing shapes — flat subscription, per-unit, free-tier, transactional, credit pool.
 
 Closes #241: ``ExternalServiceRegistry`` only registered an address *prefix* and
 the cost model for external nodes was hardcoded transactional (percentage of
@@ -23,6 +23,12 @@ transactional formula. A node declares which shape each metric uses::
 
 so free-tier boundaries and per-unit rates live in the model, not in Python.
 
+``credit_pool`` (added for GitHub Copilot) prices usage-based AI plans whose
+allowance is a dollar-denominated credit pool: subscription + overage above
+the included credits at a fixed per-credit rate. See
+:mod:`infra_cost_model.pricing.github_copilot` for the authoritative plan and
+model-rate data.
+
 Third-party packages can register additional shapes via the
 ``infra_cost_model.saas_handlers`` entry-point group, mirroring how
 ``ResourceRegistry.register`` works for IaC handlers but installable.
@@ -32,6 +38,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Protocol
+
+from infra_cost_model.pricing.github_copilot import CREDIT_VALUE_USD
 
 
 class SaaSCostHandler(Protocol):
@@ -142,6 +150,32 @@ def transactional(quantity: float, params: dict[str, Any]) -> float:
     return volume * percentage_rate + quantity * fixed_per_transaction + quantity * per_call
 
 
+def credit_pool(quantity: float, params: dict[str, Any]) -> float:
+    """Subscription + overage on a monthly credit allowance (GitHub Copilot).
+
+    The quantity is the total credits consumed in the month. The plan's
+    subscription price and included allowance come from ``params``; credits
+    above the allowance are billed at ``params['credit_value']`` (default
+    $0.01, GitHub's fixed AI-credit rate). This is the shape for usage-based
+    AI plans whose allowance is a dollar-denominated credit pool rather than
+    a per-unit free tier.
+
+    Example (Copilot Business, 25 seats, 60,000 credits consumed):
+
+        shape: credit_pool
+        subscription: 475.0        # 25 seats × $19
+        includedCredits: 47500     # 25 seats × 1,900
+        creditValue: 0.01
+
+    → $475 + (60,000 − 47,500) × $0.01 = $600.
+    """
+    subscription = float(params.get("subscription", 0.0))
+    included = float(params.get("includedCredits", 0.0))
+    credit_value = float(params.get("creditValue", CREDIT_VALUE_USD))
+    overage = max(0.0, quantity - included)
+    return subscription + overage * credit_value
+
+
 # ── Registry ─────────────────────────────────────────────────────────────
 
 
@@ -246,5 +280,6 @@ SaaSPricingRegistry.register("flat_subscription", flat_subscription)
 SaaSPricingRegistry.register("per_unit_flat", per_unit_flat)
 SaaSPricingRegistry.register("free_tier", free_tier)
 SaaSPricingRegistry.register("transactional", transactional)
+SaaSPricingRegistry.register("credit_pool", credit_pool)
 
 discover_entry_point_handlers()
