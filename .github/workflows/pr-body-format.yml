@@ -15,4 +15,13 @@ jobs:
   pr-body-format:
     runs-on: arc-runners
     steps:
+      # The action's checkers read the PR body via the `gh` CLI, which is not
+      # preinstalled on arc-runners. Install a static binary on PATH instead of
+      # using apt so no root access is required.
+      - name: Install gh CLI
+        run: |
+          GH_VERSION=2.98.0
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" | tar xz
+          echo "$PWD/gh_${GH_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
+
       - uses: elecnix/gh-pr-body-action@v1
