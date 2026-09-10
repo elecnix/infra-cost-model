@@ -1,4 +1,4 @@
-"""SaaS pricing-shape handlers — flat subscription, per-unit, free-tier, transactional.
+"""SaaS pricing-shape handlers — flat subscription, per-unit, free-tier, transactional, credit pool.
 
 See :mod:`infra_cost_model.saas.pricing_shapes` for the full module. This
 package re-exports the registry and built-in handlers for convenience.
@@ -11,6 +11,7 @@ from infra_cost_model.saas.pricing_shapes import (
     free_tier,
     per_unit_flat,
     transactional,
+    credit_pool,
     discover_entry_point_handlers,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "free_tier",
     "per_unit_flat",
     "transactional",
+    "credit_pool",
     "discover_entry_point_handlers",
 ]

@@ -95,7 +95,7 @@
         },
         "provider": {
           "type": "string",
-          "enum": ["aws", "azure", "gcp", "bedrock", "openai"],
+          "enum": ["aws", "azure", "gcp", "bedrock", "openai", "github"],
           "description": "Cloud provider"
         },
         "service": {
@@ -144,8 +144,8 @@
           "type": "string"
         },
         "value": {
-          "type": "number",
-          "description": "Per-invocation multiplier. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead."
+          "type": ["number", "string"],
+          "description": "Per-invocation multiplier. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead. May reference a symbolic workflow parameter by name (DP#4)."
         },
         "fixed": {
           "type": "boolean",

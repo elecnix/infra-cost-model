@@ -14,6 +14,7 @@ from infra_cost_model.saas import (
     free_tier,
     per_unit_flat,
     transactional,
+    credit_pool,
 )
 from infra_cost_model.saas.pricing_shapes import discover_entry_point_handlers
 from infra_cost_model.engine import CostEngine
@@ -139,12 +140,13 @@ class TestSaaSPricingRegistry:
     """The pluggable shape registry."""
 
     def test_builtin_shapes_registered(self):
-        """All four built-in shapes are registered at module load."""
+        """All five built-in shapes are registered at module load."""
         shapes = SaaSPricingRegistry.known_shapes()
         assert "flat_subscription" in shapes
         assert "per_unit_flat" in shapes
         assert "free_tier" in shapes
         assert "transactional" in shapes
+        assert "credit_pool" in shapes
 
     def test_get_returns_handler(self):
         """get() returns the callable for a known shape."""
@@ -177,6 +179,7 @@ class TestSaaSPricingRegistry:
             SaaSPricingRegistry.register("per_unit_flat", per_unit_flat)
             SaaSPricingRegistry.register("free_tier", free_tier)
             SaaSPricingRegistry.register("transactional", transactional)
+            SaaSPricingRegistry.register("credit_pool", credit_pool)
 
     def test_reset_clears_handlers(self):
         """reset() clears all handlers (for testing)."""
@@ -187,6 +190,7 @@ class TestSaaSPricingRegistry:
         SaaSPricingRegistry.register("per_unit_flat", per_unit_flat)
         SaaSPricingRegistry.register("free_tier", free_tier)
         SaaSPricingRegistry.register("transactional", transactional)
+        SaaSPricingRegistry.register("credit_pool", credit_pool)
 
 
 # ── Engine integration ───────────────────────────────────────────────────

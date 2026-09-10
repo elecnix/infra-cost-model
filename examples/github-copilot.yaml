@@ -1,0 +1,49 @@
+# Example: GitHub Copilot (usage-based billing, June 2026)
+# Demonstrates: credit-pool SaaS pricing (subscription + overage above an
+# included AI-credit allowance), per-seat org plans, symbolic parameter for
+# what-if analysis of credit consumption.
+#
+# GitHub moved all Copilot plans to usage-based billing on June 1, 2026:
+# model interactions consume tokens priced per model, converted to AI credits
+# at 1 credit = $0.01. Each plan includes a monthly allowance; overage is
+# billed at the per-credit rate. Code completions are NOT billed in credits.
+#
+# This model prices a 25-seat Copilot Business org. The subscription and the
+# included allowance scale per seat (1,900 credits/user/mo, pooled org-wide);
+# the credits metric is a flat monthly total referencing the symbolic
+# parameter `creditsUsed` so `what-if` can sweep consumption.
+#
+# Authoritative plan and per-model token rates:
+#   infra_cost_model/pricing/github_copilot.py
+#   docs/github-copilot-pricing.md
+
+version: "1.0"
+
+workflow:
+  name: github-copilot-business
+  entry: github_copilot.business
+  frequency:
+    unit: perMonth
+    value: 1
+  parameters:
+    creditsUsed: 60000        # org-wide AI credits consumed per month
+
+nodes:
+  github_copilot.business:
+    nodeType: external
+    resourceAddress: github_copilot.business
+    provider: github
+    service: Copilot
+    region: global
+    pricingModel: flat
+    flatOverride: true
+    usageMetrics:
+      credits:
+        unit: credits
+        value: creditsUsed
+        shape: credit_pool
+        subscription: 475.0       # 25 seats × $19/user/mo
+        includedCredits: 47500    # 25 seats × 1,900 credits/user/mo
+        creditValue: 0.01         # 1 AI credit = $0.01
+
+edges: []
