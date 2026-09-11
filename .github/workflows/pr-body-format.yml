@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   pr-body-format:
-    runs-on: arc-runners
+    runs-on: ubuntu-latest
     steps:
       # The action's checkers read the PR body via the `gh` CLI, which is not
       # preinstalled on arc-runners. Install a static binary on PATH instead of
