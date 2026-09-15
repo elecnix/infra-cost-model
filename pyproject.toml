@@ -26,6 +26,7 @@ flat_subscription = "infra_cost_model.saas.pricing_shapes:flat_subscription"
 per_unit_flat = "infra_cost_model.saas.pricing_shapes:per_unit_flat"
 free_tier = "infra_cost_model.saas.pricing_shapes:free_tier"
 transactional = "infra_cost_model.saas.pricing_shapes:transactional"
+credit_pool = "infra_cost_model.saas.pricing_shapes:credit_pool"
 
 [project.optional-dependencies]
 dev = [
