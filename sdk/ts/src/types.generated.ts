@@ -15,6 +15,10 @@ export type InfrastructureCostModelRepresentation = {
    * Schema version
    */
   version: "1.0";
+  /**
+   * PEP 440 version specifier naming the engine version this model needs (e.g. ">=0.2.0"). The engine refuses to price the model when the running version does not satisfy the specifier, instead of silently dropping fields it does not understand or pricing them at $0. Absent means no requirement.
+   */
+  requiresEngine?: string;
   workflow?: Workflow;
   /**
    * Multiple independent workflows sharing the same infrastructure nodes. Each workflow has its own entry point, frequency, and optional parameters. Costs are aggregated across all workflows.
