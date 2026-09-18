@@ -11,6 +11,7 @@ from typing import Optional, Union
 import yaml
 
 from infra_cost_model.schema.cost_model_schema import validate_cost_model
+from infra_cost_model.version_requirement import ENGINE_REQUIREMENT_KEY
 
 
 @dataclass
@@ -128,12 +129,22 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
                         edge["dataSize"] = value.get("dataSize", value.get("data_size"))
                     edges.append(edge)
 
-    return {
+    model = {
         "version": "1.0",
         "workflow": workflow,
         "nodes": nodes,
         "edges": edges,
     }
+
+    # Carry the model's engine requirement across. This function rebuilds the
+    # model from the fields it knows, so a key it does not copy is dropped
+    # before anything can check it — which is how an engine too old for the
+    # model would escape the pin without a word.
+    requirement = data.get(ENGINE_REQUIREMENT_KEY)
+    if requirement is not None:
+        model[ENGINE_REQUIREMENT_KEY] = requirement
+
+    return model
 
 
 class Workflow:

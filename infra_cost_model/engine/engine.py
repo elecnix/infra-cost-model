@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from infra_cost_model.pricing.catalog import PricingCatalog
+from infra_cost_model.version_requirement import require_engine
 
 
 @dataclass
@@ -800,9 +801,15 @@ class CostEngine:
             Dict mapping resource address to total cost.
 
         Raises:
+            EngineRequirementError: If the model's `requiresEngine` does not
+                hold for this engine. Refusing here covers every caller — the
+                CLI, the SDK, and any script that builds an engine — so a
+                model this engine cannot interpret never reports a total.
             ValueError: If DAG validation fails or if neither workflow
                         nor workflows is provided.
         """
+        require_engine(self.cost_model)
+
         if self.workflows:
             return self._compute_multi_workflow()
 

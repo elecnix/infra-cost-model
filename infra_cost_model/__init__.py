@@ -9,7 +9,13 @@ This package provides:
 - SDK: Python API for declaring cost models
 """
 
-__version__ = "0.1.0"
+# Version of the cost engine. A model may name the version it needs
+# with `requiresEngine`, and this is the value that pin is checked
+# against. pyproject.toml reads it from here, so bump it in one place.
+#
+# Bump the minor version when a model written for this engine would
+# price differently, or not at all, on the previous one.
+__version__ = "0.2.0"
 
 # Core exports
 from infra_cost_model.schema import validate_cost_model
