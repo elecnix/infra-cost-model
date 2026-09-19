@@ -1,0 +1,42 @@
+- vendor: azure
+  service: Entra External ID
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.0
+  start_usage_amount: 0
+  end_usage_amount: 50000
+
+- vendor: azure
+  service: Entra External ID
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.03
+  start_usage_amount: 50000
+  end_usage_amount: 300000
+
+- vendor: azure
+  service: Entra External ID
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.02
+  start_usage_amount: 300000
+  end_usage_amount: 1000000
+
+- vendor: azure
+  service: Entra External ID
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.012
+  start_usage_amount: 1000000
+
+- vendor: azure
+  service: Entra External ID
+  region: global
+  usage_metric: MFA-Verification
+  unit: verifications
+  price_usd: 0.03
+  start_usage_amount: 50000

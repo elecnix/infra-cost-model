@@ -37,8 +37,11 @@ class TieredPrice:
     """Tiered pricing structure for a usage metric."""
     tiers: list[Price]
 
-    def total_cost(self, quantity: float) -> float:
-        """Calculate total cost for a quantity with tiered pricing."""
+    def total_cost(self, quantity: float, per_multiplier: float = 1.0) -> float:
+        """Calculate total cost for a quantity with tiered pricing.
+        
+        If per_multiplier is provided, scale tier boundaries accordingly.
+        """
         sorted_tiers = sorted(
             [t for t in self.tiers if t.start_usage_amount is not None],
             key=lambda t: t.start_usage_amount or 0
@@ -54,15 +57,18 @@ class TieredPrice:
             return 0.0
 
         for tier in sorted_tiers:
-            tier_start = tier.start_usage_amount or 0
-            tier_end = tier.end_usage_amount
+            # Scale boundaries if 'per' is specified
+            multiplier = per_multiplier if tier.per else 1.0
+            tier_start = (tier.start_usage_amount or 0) * multiplier
+            tier_end = (tier.end_usage_amount * multiplier) if tier.end_usage_amount is not None else None
+            price = tier.price_usd
 
             if tier_end is None:
                 if quantity > tier_start:
-                    total += (quantity - tier_start) * tier.price_usd
+                    total += (quantity - tier_start) * price
             elif quantity > tier_start:
                 charged = min(quantity, tier_end) - tier_start
-                total += charged * tier.price_usd
+                total += charged * price
 
         return total
 
@@ -151,9 +157,9 @@ class PricingCache:
         self._ensure_db()
         if seed:
             seed_prices(self)
-            # Load vendor prices after seed, if vendors/ exists
-            from .vendors import load_vendor_prices
-            load_vendor_prices(self)
+        # Load vendor prices unconditionally
+        from .vendors import load_vendor_prices
+        load_vendor_prices(self)
 
     def _ensure_db(self):
         """Create the database and tables (migrating in any missing columns).
