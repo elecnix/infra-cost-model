@@ -1,0 +1,6 @@
+# Template vendor metadata
+# Copy this directory and edit two files.
+id: example-vendor
+display_name: Example Vendor
+homepage: https://example.com
+pricing_page: https://example.com/pricing
