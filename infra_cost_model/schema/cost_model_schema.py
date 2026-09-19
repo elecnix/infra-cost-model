@@ -32,6 +32,7 @@ def _load_known_providers() -> set[str]:
     except (ModuleNotFoundError, TypeError):
         return known
     for vendor_dir in sorted(vendors_dir.iterdir(), key=lambda item: item.name):
+        # Underscore-prefixed directories are repository scaffolding, not providers.
         if not vendor_dir.is_dir() or vendor_dir.name.startswith("_"):
             continue
         manifest = vendor_dir.joinpath("vendor.yaml")
@@ -101,7 +102,21 @@ def _shape_errors(model: dict) -> list[str]:
     if not isinstance(nodes, dict):
         return errors
 
-    shapes = SaaSPricingRegistry.known_shapes()
+    # Importing built-ins on every validation makes this check robust when a
+    # caller or test resets the mutable plugin registry.
+    from infra_cost_model.saas.pricing_shapes import (
+        flat_subscription,
+        free_tier,
+        per_unit_flat,
+        transactional,
+    )
+
+    shapes = SaaSPricingRegistry.known_shapes() | {
+        "flat_subscription",
+        "free_tier",
+        "per_unit_flat",
+        "transactional",
+    }
     for name, node in nodes.items():
         if not isinstance(node, dict):
             continue

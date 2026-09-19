@@ -7,14 +7,14 @@ from .types import RoutingResource, ResourceExtract
 
 class APIGatewayHTTP(RoutingResource):
     """API Gateway HTTP API v2 - routing node (can have outgoing edges).
-    
+
     HTTP API v2 pricing: $1.00/1M requests.
     """
-    
+
     @property
     def valid_metrics(self) -> list[str]:
         return ["requests", "dataOutGb"]
-    
+
     @classmethod
     def from_address(cls, resource_address: str) -> ResourceExtract | None:
         """Parse resource address to determine if it's HTTP API v2."""
@@ -25,12 +25,12 @@ class APIGatewayHTTP(RoutingResource):
            "apigatewayv2::api:" in resource_address.lower():
             return cls()
         return None
-    
+
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         """Extract from Terraform aws_apigatewayv2_api resource."""
         values = resource.get("values", {})
-        
+
         return ResourceExtract(
             resource_address=resource.get("address", ""),
             node_type="routing",
@@ -43,12 +43,12 @@ class APIGatewayHTTP(RoutingResource):
                 "endpointType": values.get("endpoint_type"),
             }
         )
-    
+
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         """Extract from Pulumi aws.apigatewayv2.Api resource."""
         inputs = resource.get("inputs", {})
-        
+
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="routing",
@@ -61,13 +61,13 @@ class APIGatewayHTTP(RoutingResource):
                 "endpointType": inputs.get("endpointType"),
             }
         )
-    
+
     @classmethod
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
         """Extract from CDK CloudFormation APIGatewayV2::Api."""
         properties = resource.get("Properties", {})
         protocol_type = properties.get("ProtocolType", "HTTP")
-        
+
         return ResourceExtract(
             resource_address=resource.get("LogicalId", ""),
             node_type="routing",
@@ -83,19 +83,19 @@ def _apigw_total_cost(requests: float, data_out_gb: float = 0.0, *,
                       provider: str = "aws",
                       region: str) -> float:
     """Calculate total API Gateway HTTP API cost including egress.
-    
+
     Args:
         requests: Monthly API requests
         data_out_gb: Monthly data transfer out in GB
         catalog: Optional PricingCatalog (uses default if None, auto-loads seed)
         region: AWS region for pricing lookup
-        
+
     Returns:
         Total monthly cost in USD (requests + egress).
     """
     if catalog is None:
         catalog = PricingCatalog()
-    
+
     request_cost = _request_cost(requests, catalog=catalog, provider=provider, region=region)
     egress_cost = _egress_cost(data_out_gb, catalog=catalog, provider=provider, region=region)
     return request_cost + egress_cost
@@ -112,7 +112,7 @@ def _request_cost(requests: float, *, catalog=None, provider: str = "aws", regio
 
 def _egress_cost(data_out_gb: float, *, catalog=None, provider: str = "aws", region: str) -> float:
     """Calculate API Gateway egress cost with tiered pricing.
-    
+
     Tiered egress (first 10TB at $0.09/GB):
     - 1-10 TB: $0.09/GB
     - Next 40 TB: $0.085/GB
@@ -121,10 +121,10 @@ def _egress_cost(data_out_gb: float, *, catalog=None, provider: str = "aws", reg
     """
     if data_out_gb <= 0:
         return 0.0
-    
+
     if catalog is None:
         catalog = PricingCatalog()
-    
+
     result = catalog.query(provider, "AmazonAPIGateway", region,
                            "APIGateway-Egress", data_out_gb)
     return result.total_cost if result and hasattr(result, 'total_cost') else 0.0

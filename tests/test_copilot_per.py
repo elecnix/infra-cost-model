@@ -5,7 +5,7 @@ from infra_cost_model.pricing.catalog import PricingCatalog
 
 def test_copilot_per_evaluation():
     """Verify GitHub Copilot pricing scales with 'per: seats' parameter.
-    
+
     Scenario:
     - Seats: $19/seat (flat)
     - Credits: First 1900 * seats are free, then $0.01/credit
@@ -14,7 +14,7 @@ def test_copilot_per_evaluation():
     try:
         # PricingCatalog loads vendors automatically now
         catalog = PricingCatalog(db)
-        
+
         # Test Case 1: 1 seat, 0 credits
         # Seat cost: 1 * 19 = 19
         # Credit cost: 0
