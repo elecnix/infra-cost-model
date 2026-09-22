@@ -875,12 +875,16 @@ class CostEngine:
         self.derived_usage = all_derived
 
         # Convert per-second usage-driven costs to the output period; fixed
-        # (always-on) costs are already flat monthly totals and are not scaled.
+        # (always-on) costs are flat monthly totals and scale by 12 for yearly
+        # output. This matches _finalize_costs, so the two workflow paths agree
+        # for a given time basis.
         multiplier = self._time_multiplier
+        fixed_multiplier = 12.0 if self.time_basis == "yearly" else 1.0
         self.costs = {}
         for addr in set(all_variable) | set(all_fixed):
             self.costs[addr] = (
-                all_variable[addr] * multiplier + all_fixed.get(addr, 0.0)
+                all_variable[addr] * multiplier
+                + all_fixed.get(addr, 0.0) * fixed_multiplier
             )
 
         return self.costs
