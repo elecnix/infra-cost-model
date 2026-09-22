@@ -268,7 +268,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
         return 1
 
     catalog = PricingCatalog() if use_catalog else None
-    
+
     # Resolve time basis: --monthly flag (deprecated) or --time-basis
     time_basis = args.time_basis
     if args.monthly:
@@ -291,7 +291,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
         for node, cost in sorted(costs.items()):
             print(f"  {node}: ${cost:.6f}")
         print("-" * 40)
-        
+
         # Fixed labels for test compatibility
         if time_basis == "monthly":
             label = "Total Monthly Cost"
@@ -299,7 +299,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
             label = "Total Yearly Cost"
         else:
             label = "Total"
-            
+
         print(f"{label}: ${total:.6f}")
         return 0
     except ValueError as e:

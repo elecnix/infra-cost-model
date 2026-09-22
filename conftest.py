@@ -6,7 +6,9 @@ This eliminates the 16 flaky failures caused by catalog hermeticity
 (see issue #246, Phase 1).
 """
 
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from pathlib import Path
 # pytest imports conftest first, so setting HOME here is early enough to affect
 # infra_cost_model.pricing.cache.DB_PATH which reads Path.home() at import time.
 _test_home = Path(tempfile.mkdtemp(prefix="test-home-"))
+atexit.register(shutil.rmtree, _test_home, ignore_errors=True)
 os.environ["HOME"] = str(_test_home)
 
 # Ensure the expected directory exists so cache initialization does not error.

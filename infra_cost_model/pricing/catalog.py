@@ -8,7 +8,7 @@ from infra_cost_model.pricing.cache import PricingCache, TieredPrice, Price
 
 class PricingCatalog:
     """High-level interface for querying cloud pricing."""
-    
+
     def __init__(self, db_path: str | Path = None, seed: bool = False):
         self._cache = PricingCache(db_path, seed=seed)
 
@@ -23,7 +23,7 @@ class PricingCatalog:
               usage_metric: str, usage_quantity: float | None = None,
               parameters: dict[str, float] = None) -> Optional[Union["_CostResult", TieredPrice, Price]]:
         """Query pricing for a specific metric.
-        
+
         Args:
             vendor: Cloud provider (aws, azure, gcp)
             service: Service name (e.g., AWSLambda, AmazonDynamoDB)
@@ -31,25 +31,25 @@ class PricingCatalog:
             usage_metric: Metric name (e.g., Lambda-GB-Second, APIGateway-HTTP-Request)
             usage_quantity: Optional quantity for cost calculation
             parameters: Optional parameters for resolving 'per' multipliers
-            
+
         Returns:
             _CostResult if quantity provided, TieredPrice if multiple tiers, Price if single, None if not found
         """
         result = self._cache.query(vendor, service, region, usage_metric)
-        
+
         if result is None:
             return None
-        
+
         # Wrap in _CostResult if quantity provided
         if usage_quantity is not None:
             return _CostResult(result, usage_quantity, parameters)
-        
+
         return result
 
 
 class _CostResult:
     """Result with tiered cost calculation."""
-    
+
     def __init__(self, price_data: Union[TieredPrice, Price], quantity: float,
                  parameters: dict[str, float] = None):
         self.price_data = price_data
@@ -57,34 +57,34 @@ class _CostResult:
         self.quantity = quantity
         self.parameters = parameters or {}
         self.total_cost = self._calculate_cost()
-    
+
     def _calculate_cost(self) -> float:
         """Calculate total cost with tiered pricing."""
         total = 0.0
         quantity = self.quantity
-        
+
         # Check if all tiers have None start_usage_amount (flat price)
         all_null_start = all(t.start_usage_amount is None for t in self.tiers)
-        
+
         if all_null_start:
             # Simple flat price - average of all prices * quantity
             avg_price = sum(t.price_usd for t in self.tiers) / len(self.tiers)
             return quantity * avg_price
-        
+
         for tier in sorted(self.tiers, key=lambda t: t.start_usage_amount or 0):
             # Resolve 'per' multiplier for boundaries only
             multiplier = 1.0
             if tier.per and tier.per in self.parameters:
                 multiplier = self.parameters[tier.per]
-            
+
             tier_start = (tier.start_usage_amount or 0) * multiplier
             tier_end = (tier.end_usage_amount * multiplier) if tier.end_usage_amount is not None else None
             price = tier.price_usd
-            
+
             # Determine if this tier applies
             if quantity <= tier_start:
                 continue
-                
+
             if tier_end is None:
                 # Last tier: charge for all quantity above start
                 total += max(0, quantity - tier_start) * price
@@ -92,5 +92,5 @@ class _CostResult:
                 # Tier with upper bound
                 charged = min(quantity, tier_end) - tier_start
                 total += max(0, charged) * price
-        
+
         return max(0, total)

@@ -61,7 +61,7 @@ async def loop_run(lp: Loop, st: Stats, stop: asyncio.Event, sem: asyncio.Semaph
         code, dur = await run(build_cmd(lp.cmd, lp.prompt, provider, model), lp.name, sem)
         lp.runs += 1; lp.last_run = t0; lp.last_dur = dur; lp.last_code = code
         if lp.name == "design-principles":
-            st.dp_runs += 1; 
+            st.dp_runs += 1;
             if code != 0: st.dp_err += 1
         else:
             st.ip_runs += 1

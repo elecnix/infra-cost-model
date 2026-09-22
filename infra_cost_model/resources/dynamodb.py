@@ -7,11 +7,11 @@ from .types import StorageResource, ResourceExtract
 
 class DynamoDBTable(StorageResource):
     """DynamoDB table - storage node (leaf, no outgoing edges)."""
-    
+
     @property
     def valid_metrics(self) -> list[str]:
         return ["readRequests", "writeRequests", "storageGb"]
-    
+
     @classmethod
     def from_address(cls, resource_address: str) -> StorageResource | None:
         """Parse resource address to determine if it's a DynamoDB table."""
@@ -21,12 +21,12 @@ class DynamoDBTable(StorageResource):
            "DynamoDB::Table:" in resource_address:
             return cls()
         return None
-    
+
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         """Extract from Terraform aws_dynamodb_table resource."""
         values = resource.get("values", {})
-        
+
         return ResourceExtract(
             resource_address=resource.get("address", ""),
             node_type="storage",
@@ -41,12 +41,12 @@ class DynamoDBTable(StorageResource):
                 "writeCapacity": values.get("write_capacity"),
             }
         )
-    
+
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         """Extract from Pulumi aws.dynamodb.Table resource."""
         inputs = resource.get("inputs", {})
-        
+
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="storage",
@@ -61,14 +61,14 @@ class DynamoDBTable(StorageResource):
                 "writeCapacity": inputs.get("writeCapacity"),
             }
         )
-    
+
     @classmethod
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
         """Extract from CDK CloudFormation DynamoDB::Table."""
         properties = resource.get("Properties", {})
         key_schema = properties.get("KeySchema", [])
         billing_mode = properties.get("BillingMode", "PAY_PER_REQUEST")
-        
+
         return ResourceExtract(
             resource_address=resource.get("LogicalId", ""),
             node_type="storage",
@@ -91,26 +91,26 @@ def _dynamodb_cost(read_requests: float, write_requests: float, storage_gb: floa
                    gsi_write_requests: float = 0,
                    region: str) -> float:
     """Calculate DynamoDB cost.
-    
+
     Args:
         read_requests: Monthly read requests
-        write_requests: Monthly write requests  
+        write_requests: Monthly write requests
         storage_gb: Storage in GB-month
         billing_mode: "PAY_PER_REQUEST" or "PROVISIONED"
         catalog: Optional PricingCatalog (uses default if None, auto-loads seed)
         gsi_read_requests: GSI read request units
         gsi_write_requests: GSI write request units
         region: AWS region
-        
+
     Returns:
         Total monthly cost in USD.
     """
     read_requests += gsi_read_requests
     write_requests += gsi_write_requests
-    
+
     if catalog is None:
         catalog = PricingCatalog()
-    
+
     if billing_mode == "PROVISIONED":
         return _provisioned_cost(
             read_requests, write_requests, storage_gb, catalog=catalog, provider=provider,
@@ -127,7 +127,7 @@ def _on_demand_cost(read_requests: float, write_requests: float, storage_gb: flo
     """On-demand pricing using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
-    
+
     read_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-ReadRequest", read_requests)
     write_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-WriteRequest", write_requests)
     storage_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-Storage", storage_gb)
@@ -144,7 +144,7 @@ def _provisioned_cost(rcu_hours: float, wcu_hours: float, storage_gb: float, *,
     """Provisioned pricing using catalog prices."""
     if catalog is None:
         catalog = PricingCatalog()
-    
+
     rcu_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-RCU-Hour", rcu_hours)
     wcu_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-WCU-Hour", wcu_hours)
     storage_cost = catalog.query(provider, "AmazonDynamoDB", region, "Dynamo-Storage", storage_gb)
