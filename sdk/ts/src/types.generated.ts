@@ -112,7 +112,63 @@ export interface UsageMetric {
    * When true, this metric is a fixed (always-on) monthly total: its value is used directly and is NOT scaled by the derived invocation count. This lets one node carry both a fixed dimension (e.g. NAT gateway hours, ALB-hours) and a usage-driven dimension (e.g. GB processed, LCUs) without splitting into two nodes (Issue #196).
    */
   fixed?: boolean;
-  [k: string]: unknown;
+  /**
+   * SaaS pricing shape name (e.g., flat_subscription, free_tier, credit_pool, transactional)
+   */
+  shape?: string;
+  /**
+   * Flat rate for subscription or per-unit flat shapes
+   */
+  rate?: number;
+  /**
+   * Free tier allowance
+   */
+  free?: number;
+  /**
+   * Overage rate for free tier
+   */
+  overage?: number;
+  /**
+   * Percentage rate for transactional shapes
+   */
+  percentage_rate?: number;
+  /**
+   * Per-call fee for transactional shapes
+   */
+  per_call?: number;
+  /**
+   * Subscription cost for credit pool
+   */
+  subscription?: number;
+  /**
+   * Credits included in subscription
+   */
+  includedCredits?: number;
+  /**
+   * Value per credit
+   */
+  creditValue?: number;
+  /**
+   * Stepped overage bands for free_tier, walked in order above the free allowance. Each entry carries an inclusive upper bound and the rate charged below it; omit up_to on the final entry for an open-ended band.
+   */
+  tiers?: {
+    /**
+     * Upper bound of this band, in billable units above the free allowance. Omit on the final entry for an open-ended band.
+     */
+    up_to?: number;
+    /**
+     * Price per unit within this band
+     */
+    rate: number;
+  }[];
+  /**
+   * Transaction volume for transactional shapes, multiplied by percentage_rate. The quantity carries the transaction count for per-call and fixed-per-transaction components.
+   */
+  volume?: number;
+  /**
+   * Flat fee per transaction for transactional shapes, multiplied by the quantity
+   */
+  fixed_per_transaction?: number;
 }
 export interface Edge {
   /**
