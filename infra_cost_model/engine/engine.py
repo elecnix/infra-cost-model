@@ -468,7 +468,8 @@ class CostAggregator:
             # back to embedded pricingRates (deprecated per Principle 13).
             if metric_cost is None and self.catalog is not None:
                 result = self.catalog.query(
-                    provider, service, region, metric_name, total_quantity
+                    provider, service, region, metric_name, total_quantity,
+                    parameters=self.parameters
                 )
                 if result is None:
                     # The node used a logical metric name (e.g. "natHours"); map it
@@ -478,7 +479,8 @@ class CostAggregator:
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
                         result = self.catalog.query(
-                            provider, service, region, mapped, total_quantity
+                            provider, service, region, mapped, total_quantity,
+                            parameters=self.parameters
                         )
                 if result is not None:
                     metric_cost = result.total_cost
@@ -564,7 +566,8 @@ class CostAggregator:
 
             if metric_cost is None and self.catalog is not None:
                 result = self.catalog.query(
-                    provider, service, region, metric_name, total_quantity
+                    provider, service, region, metric_name, total_quantity,
+                    parameters=self.parameters
                 )
                 if result is None:
                     # The node used a logical metric name (e.g. "natHours"); map it
@@ -574,7 +577,8 @@ class CostAggregator:
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
                         result = self.catalog.query(
-                            provider, service, region, mapped, total_quantity
+                            provider, service, region, mapped, total_quantity,
+                            parameters=self.parameters
                         )
                 if result is not None:
                     metric_cost = result.total_cost

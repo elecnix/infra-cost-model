@@ -1,7 +1,7 @@
 """Test that the provider field accepts any lowercase vendor id instead of a closed enum,
 and rejects unrecognized ids with a clear load-time error message."""
 
-from infra_cost_model.schema.cost_model_schema import validate_cost_model
+from infra_cost_model.schema.cost_model_schema import KNOWN_PROVIDERS, validate_cost_model
 
 
 def _model(provider):
@@ -11,6 +11,12 @@ def _model(provider):
         "nodes": {"n1": {"nodeType": "external", "resourceAddress": "github.copilot.api",
                           "provider": provider, "service": "Copilot", "region": "global"}},
     }
+
+
+def test_provider_registry_skips_template_and_includes_aliases():
+    assert "example-vendor" not in KNOWN_PROVIDERS
+    assert "github-copilot" in KNOWN_PROVIDERS
+    assert "github" in KNOWN_PROVIDERS
 
 
 def test_provider_accepts_known_github():
@@ -23,6 +29,20 @@ def test_provider_rejects_uppercase_pattern():
     """An invalid provider pattern fails schema validation."""
     errors = validate_cost_model(_model("Unknown!"))
     assert len(errors) > 0, "Invalid provider pattern accepted"
+
+
+def test_unknown_shape_emits_helpful_error():
+    model = _model("aws")
+    model["nodes"]["n1"]["usageMetrics"] = {
+        "requests": {"unit": "requests", "shape": "not_a_shape"}
+    }
+
+    errors = validate_cost_model(model)
+
+    assert any(
+        "Unknown shape 'not_a_shape' on node 'n1'. Known shapes:" in error
+        for error in errors
+    )
 
 
 def test_unknown_lowercase_id_emits_helpful_error():

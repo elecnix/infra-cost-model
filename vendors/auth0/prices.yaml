@@ -1,0 +1,16 @@
+- vendor: auth0
+  service: Auth0
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.0
+  start_usage_amount: 0
+  end_usage_amount: 25000
+
+- vendor: auth0
+  service: Auth0
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.07
+  start_usage_amount: 25000
