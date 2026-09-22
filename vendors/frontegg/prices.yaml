@@ -10,6 +10,14 @@
 - vendor: frontegg
   service: Frontegg
   region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.03
+  start_usage_amount: 10000
+
+- vendor: frontegg
+  service: Frontegg
+  region: global
   usage_metric: SSO-Connection
   unit: connections
   price_usd: 250.0

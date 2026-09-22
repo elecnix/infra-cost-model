@@ -39,8 +39,18 @@ class TieredPrice:
 
     def total_cost(self, quantity: float, per_multiplier: float = 1.0) -> float:
         """Calculate total cost for a quantity with tiered pricing.
-        
-        If per_multiplier is provided, scale tier boundaries accordingly.
+
+        ``quantity`` is in the row's own unit and stays raw. ``per_multiplier``
+        is the resolved value of the row's ``per`` parameter, which converts a
+        boundary stated per unit into that raw unit: a row whose included band
+        is 1,900 credits per seat has 47,500 included at 25 seats.
+
+        The multiplier scales boundaries only. It does not scale ``price_usd``:
+        a seat row priced at $19 with ``per: seats`` charges $19 per seat, so
+        25 seats costs $475.
+
+        A row with no boundary has nothing for the multiplier to move, and its
+        price is charged once per unit of ``quantity``.
         """
         sorted_tiers = sorted(
             [t for t in self.tiers if t.start_usage_amount is not None],
