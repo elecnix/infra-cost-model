@@ -6,21 +6,45 @@ on:
 
 jobs:
   vendor-check:
-    runs-on: arc-runners
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Enforce vendor-only changes
         run: |
-          new_vendors=$(git diff --name-only origin/main...HEAD | grep '^vendors/[^/]*/prices.yaml' | sed 's|/prices.yaml||' | sort -u || true)
-          if [ -n "$new_vendors" ]; then
-            bad=$(git diff --name-only origin/main...HEAD | grep -v '^vendors/' | grep -v '^\.github/' | grep -v '^sdk/ts/src/types\.generated\.ts' | head || true)
-            if [ -n "$bad" ]; then
-              echo "Vendor PR must only touch vendors/*/: $bad"
-              exit 1
-            fi
+          # A contributor adding a vendor should touch only that vendor's
+          # directory, so two such pull requests never conflict. The guard
+          # applies to changes since this PR's own base, not since main: a
+          # stacked PR's diff against main includes every vendor the PRs below
+          # it added, which would read a docs-only PR as a vendor change.
+          base_ref="${GITHUB_BASE_REF:-main}"
+          git fetch --no-tags origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
+          base="origin/${base_ref}"
+
+          new_vendors=$(git diff --name-only "$base"...HEAD | grep '^vendors/[^/]*/prices.yaml' | sed 's|/prices.yaml||' | sort -u || true)
+          if [ -z "$new_vendors" ]; then
+            echo "vendor-only check passed (this PR adds no vendor)"
+            exit 0
+          fi
+
+          # A PR adding the pricing mechanism rather than a vendor — the loader,
+          # the schema, a new shape — legitimately adds a vendor directory and
+          # touches engine code. It opts out by naming the reason in a commit
+          # message, so the exception shows up in the history rather than being
+          # implied by a path filter.
+          if git log --format=%B "$base"..HEAD | grep -qx 'vendor-check: mechanism'; then
+            echo "vendor-only check skipped: this PR declares itself the mechanism"
+            echo "vendors added: $(echo "$new_vendors" | tr '\n' ' ')"
+            exit 0
+          fi
+
+          bad=$(git diff --name-only "$base"...HEAD | grep -v '^vendors/' | grep -v '^\.github/' | grep -v '^sdk/ts/src/types\.generated\.ts' | head || true)
+          if [ -n "$bad" ]; then
+            echo "Vendor PR must only touch vendors/*/: $bad"
+            echo "A PR adding the mechanism rather than a vendor should put 'vendor-check: mechanism' on its own line in a commit message."
+            exit 1
           fi
           echo "vendor-only check passed"
 
