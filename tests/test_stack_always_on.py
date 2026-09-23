@@ -36,7 +36,7 @@ class TestAlwaysOnModel:
         """The Secrets Manager secret has no incoming edge yet is marked fixed."""
         model = load_model()
         secret = model["nodes"]["aws_secretsmanager_secret.api_key"]
-        assert secret["usageMetrics"]["secretMonths"]["fixed"] is True
+        assert secret["usageMetrics"]["secretsCount"]["fixed"] is True
         targets = {e["to"] for e in model["edges"]}
         assert "aws_secretsmanager_secret.api_key" not in targets
 
@@ -44,51 +44,51 @@ class TestAlwaysOnModel:
         """The NAT gateway carries one fixed and one usage-driven metric."""
         model = load_model()
         nat = model["nodes"]["aws_nat_gateway.main"]["usageMetrics"]
-        assert nat["gatewayHours"]["fixed"] is True
-        assert "fixed" not in nat["gbProcessed"]
+        assert nat["natHours"]["fixed"] is True
+        assert "fixed" not in nat["dataProcessedGb"]
 
 
 class TestAlwaysOnEngine:
-    def test_all_nodes_costed_including_edgeless_secret(self):
+    def test_all_nodes_costed_including_edgeless_secret(self, seed_catalog):
         """Every node — including the edgeless always-on secret — is costed."""
         model = load_model()
-        costs = CostEngine(model, time_basis="monthly").compute()
+        costs = CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
         for addr in model["nodes"]:
             assert addr in costs, f"Node '{addr}' missing from costs"
 
-    def test_secret_costed_without_synthetic_edge(self):
+    def test_secret_costed_without_synthetic_edge(self, seed_catalog):
         """The always-on secret is costed at its flat monthly total."""
         model = load_model()
-        costs = CostEngine(model, time_basis="monthly").compute()
-        # secretMonths = 1 × $0.40 — flat, independent of any flow.
+        costs = CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
+        # secretsCount = 1 × $0.40 — flat, independent of any flow.
         assert costs["aws_secretsmanager_secret.api_key"] == pytest.approx(0.40)
 
-    def test_no_unreachable_warning_for_always_on_nodes(self):
+    def test_no_unreachable_warning_for_always_on_nodes(self, seed_catalog):
         """No unreachable warning despite the secret having no incoming edge."""
         model = load_model()
         with warnings.catch_warnings(record=True) as record:
             warnings.simplefilter("always")
-            CostEngine(model, time_basis="monthly").compute()
+            CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
         unreachable = [w for w in record if "unreachable" in str(w.message).lower()]
         assert unreachable == []
 
-    def test_no_dp9_warning_for_mixed_nat_node(self):
+    def test_no_dp9_warning_for_mixed_nat_node(self, seed_catalog):
         """The mixed NAT node receives an edge but raises no DP#9 conflict."""
         model = load_model()
         with warnings.catch_warnings(record=True) as record:
             warnings.simplefilter("always")
-            CostEngine(model, time_basis="monthly").compute()
+            CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
         conflicts = [w for w in record if "escape" in str(w.message).lower()]
         assert conflicts == []
 
-    def test_fixed_part_independent_of_frequency(self):
+    def test_fixed_part_independent_of_frequency(self, seed_catalog):
         """The fixed dimensions don't change when entry frequency changes."""
         model = load_model()
-        base = CostEngine(model, time_basis="monthly").compute()
+        base = CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
 
         model_10x = load_model()
         model_10x["workflow"]["frequency"]["value"] *= 10
-        scaled = CostEngine(model_10x, time_basis="monthly").compute()
+        scaled = CostEngine(model_10x, catalog=seed_catalog, time_basis="monthly").compute()
 
         # Secret is purely fixed → unchanged.
         assert scaled["aws_secretsmanager_secret.api_key"] == pytest.approx(
@@ -98,13 +98,13 @@ class TestAlwaysOnEngine:
         assert scaled["aws_nat_gateway.main"] > base["aws_nat_gateway.main"]
         assert scaled["aws_nat_gateway.main"] < base["aws_nat_gateway.main"] * 10
 
-    def test_nat_fixed_floor(self):
+    def test_nat_fixed_floor(self, seed_catalog):
         """NAT cost is at least its fixed gateway-hours total."""
         model = load_model()
-        costs = CostEngine(model, time_basis="monthly").compute()
+        costs = CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
         fixed_floor = 730 * 0.045
         assert costs["aws_nat_gateway.main"] > fixed_floor
 
-    def test_total_cost_positive(self):
+    def test_total_cost_positive(self, seed_catalog):
         model = load_model()
-        assert CostEngine(model, time_basis="monthly").total_cost() > 0
+        assert CostEngine(model, catalog=seed_catalog, time_basis="monthly").total_cost() > 0

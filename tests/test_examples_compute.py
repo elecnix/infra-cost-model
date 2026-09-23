@@ -1,23 +1,42 @@
 """Every bundled example computes a non-zero monthly total through the CLI.
 
 The examples are the first thing a reader runs. Each one goes through
-`infra-cost-model compute --time-basis monthly <file>` with the default
-catalog (seed prices plus the bundled vendor prices), the same path a user
-takes from a source checkout. An error or a $0 total means the example no
-longer shows what it claims to show.
+`infra-cost-model compute --time-basis monthly <file>` with the seed prices
+and the bundled vendor prices, the catalog a user has after `seed-pricing`.
+An error or a $0 total means the example no longer shows what it claims to
+show.
+
+The AWS nodes price from the catalog, not from `pricingRates` (Principle 13,
+#296). A test here fails when an AWS node carries `pricingRates` or when any
+metric in an example has no price.
 """
 
 import re
+import warnings
 from pathlib import Path
 
 import pytest
+import yaml
 
+from infra_cost_model import cli
 from infra_cost_model.cli import main
+from infra_cost_model.engine import CostEngine
 
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 EXAMPLES = sorted(EXAMPLES_DIR.glob("*.yaml"))
 TOTAL_LINE = re.compile(r"^Total Monthly Cost: \$([0-9.]+)$", re.MULTILINE)
+
+
+@pytest.fixture(autouse=True)
+def cli_uses_the_seed_catalog(monkeypatch, seed_catalog):
+    """`seed_catalog` loads every service in the seed file, so these tests
+    don't depend on what `seed-pricing` loads (#293)."""
+    monkeypatch.setattr(cli, "PricingCatalog", lambda *args, **kwargs: seed_catalog)
+
+
+def load_model(path: Path) -> dict:
+    return yaml.safe_load(path.read_text())
 
 
 def compute_monthly_total(path: Path, capsys) -> float:
@@ -39,8 +58,76 @@ def test_example_computes_a_non_zero_monthly_total(path, capsys):
 
 
 @pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
+def test_aws_nodes_have_no_pricing_rates(path):
+    """An AWS node prices from the seed catalog. `pricingRates` is the escape
+    hatch for a price the catalog doesn't have (Principles 9 and 13)."""
+    nodes = load_model(path)["nodes"]
+    with_rates = sorted(address for address, node in nodes.items()
+                        if node.get("provider") == "aws" and "pricingRates" in node)
+    assert with_rates == []
+
+
+@pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
+def test_every_metric_has_a_price(path, seed_catalog):
+    engine = CostEngine(load_model(path), catalog=seed_catalog, time_basis="monthly")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        engine.compute()
+    assert [(m.node, m.metric) for m in engine.unpriced_metrics] == []
+
+
+@pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
 def test_example_validates(path):
     assert main(["validate", str(path)]) == 0
+
+
+# Each example's monthly total, as a range. The low end applies each free
+# tier once per node, which the engine does today. The high end prices every
+# unit with no free tier. Once a free tier applies once per account (#294),
+# a total moves up inside the range. A month is 2,629,800 seconds, so 1,000
+# requests a minute is 43,830,000 requests. Hand checks, at the low end:
+MONTHLY_TOTALS = {
+    # ALB 730 h x $0.0225 + 487 LCU-h x $0.008 = $20.32; Lambda 42.83M paid
+    # requests x $0.20/M + 5,078,750 paid GB-s x $0.0000166667 = $93.21;
+    # DynamoDB 43.83M reads x $1.25/M = $54.79; NAT 730 h x $0.045 + 2,191.5
+    # GB x $0.045 = $131.47; one secret $0.40.
+    "always-on-infrastructure.yaml": (300.19, 307.05),
+    # S3 1,500 GB x $0.023 + 30,437.5 puts x $5/M = $34.65; DynamoDB 3 GB x
+    # $0.25 + 30,437.5 writes x $6.25/M = $0.94; RDS 730 h x $0.034 = $24.82;
+    # reports $0.01. Every Lambda and EventBridge quantity is in a free tier.
+    "data-pipeline.yaml": (60.42, 63.05),
+    # Stripe 175,320 orders x (2.9% of $50 + $0.30) = $306,810.00; API 438,300
+    # requests x $1/M + 8.77 GB x $0.09 = $1.23; DynamoDB 788,940 reads x
+    # $1.25/M + 341,874 writes x $6.25/M = $3.12. Lambda, SQS and SNS are free.
+    "ecommerce-microservices.yaml": (306814.35, 306815.74),
+    # The analyzer Lambda dominates: 10.96M calls x 5 GB-s, less 400,000 free,
+    # is 54,387,500 GB-s x $0.0000166667 = $906.46, plus $1.99 of requests.
+    # DynamoDB 35.06M writes x $6.25/M = $219.15; S3 10.96M puts x $5/M =
+    # $54.79; API and egress $41.64; the rest $91.17.
+    "event-driven-fanout.yaml": (1315.20, 1342.77),
+    # Bedrock 4.383M calls x (500 x $3/M + 1,000 x $15/M) = $72,319.50; API,
+    # egress, Lambda, S3 and DynamoDB $60.12.
+    "llm-augmented-api.yaml": (72379.62, 72393.35),
+    # WorkOS $250 + $15 + $99 and Datadog 6 x $23 = $502; DynamoDB 21.915M
+    # calls x ($1.25 + $6.25)/M = $164.36; API $21.92 + egress $39.45; Lambda
+    # $15.78.
+    "saas-subscription-api.yaml": (743.50, 750.37),
+    # API 43.83M x $1/M = $43.83; egress 2,191.5 GB x $0.09 = $197.24;
+    # DynamoDB 43.83M x ($1.25 + $6.25)/M = $328.73; Lambda $23.61.
+    "serverless-api.yaml": (593.40, 606.86),
+}
+
+
+def test_every_aws_example_has_a_hand_checked_total():
+    priced_by_vendor_rows = {"github-copilot.yaml"}
+    assert set(MONTHLY_TOTALS) == {p.name for p in EXAMPLES} - priced_by_vendor_rows
+
+
+@pytest.mark.parametrize("name", sorted(MONTHLY_TOTALS))
+def test_example_monthly_total_matches_the_hand_check(name, capsys):
+    low, high = MONTHLY_TOTALS[name]
+    total = compute_monthly_total(EXAMPLES_DIR / name, capsys)
+    assert low - 0.01 <= total <= high + 0.01
 
 
 def test_github_copilot_prices_from_the_vendor_rows(capsys):

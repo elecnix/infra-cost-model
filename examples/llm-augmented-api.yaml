@@ -19,13 +19,20 @@ nodes:
     resourceAddress: aws_apigatewayv2_api.llm_api
     provider: aws
     region: us-east-1
-    service: ApiGatewayV2
+    service: AmazonAPIGatewayHTTP
     usageMetrics:
-      requests: { unit: requests, value: 1 }
-      dataOutGb: { unit: GB, value: 0.000005 }    # 5KB per request
-    pricingRates:
-      requests: 1.00e-6            # $1.00 per million HTTP requests
-      dataOutGb: 0.09              # $0.09 per GB egress
+      APIGateway-HTTP-Request: { unit: requests, value: 1 }
+
+  # An HTTP API has no egress price of its own. AWS bills the response bytes
+  # as data transfer out to the internet.
+  data_transfer.llm_api_egress:
+    nodeType: external
+    resourceAddress: data_transfer.llm_api_egress
+    provider: aws
+    region: us-east-1
+    service: AWSDataTransfer
+    usageMetrics:
+      internetOutGb: { unit: GB, value: 0.000005 }    # 5KB per request
 
   aws_lambda_function.orchestrator:
     nodeType: compute
@@ -35,10 +42,8 @@ nodes:
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.125 }   # 500ms × 256MB = 0.125 GB-sec
-    pricingRates:
-      invocations: 0.20e-6
-      gb_seconds: 0.0000166667
+      avgDurationMs: { unit: ms, value: 500 }
+      memoryMb: { unit: MB, value: 256 }
 
   aws_bedrock_model.claude_sonnet:
     nodeType: compute
@@ -47,6 +52,10 @@ nodes:
     service: claude-3-5-sonnet
     region: us-east-1
     pricingModel: token_based
+    # Token pricing looks up the catalog under the usage metric names
+    # (inputTokens, outputTokens), and no catalog row has those names, so
+    # this node states its rates. It is not an AWS node: its provider is
+    # bedrock.
     usageMetrics:
       inputTokens: { unit: tokens, value: 500 }
       outputTokens: { unit: tokens, value: 1000 }
@@ -61,9 +70,7 @@ nodes:
     region: us-east-1
     service: AmazonS3
     usageMetrics:
-      putRequests: { unit: requests, value: 1 }
-    pricingRates:
-      putRequests: 0.005e-3
+      S3-PutRequest: { unit: requests, value: 1 }
 
   aws_lambda_function.processor:
     nodeType: compute
@@ -73,10 +80,8 @@ nodes:
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.1 }   # 200ms × 512MB = 0.1 GB-sec
-    pricingRates:
-      invocations: 0.20e-6
-      gb_seconds: 0.0000166667
+      avgDurationMs: { unit: ms, value: 200 }
+      memoryMb: { unit: MB, value: 512 }
 
   aws_dynamodb_table.results:
     nodeType: storage
@@ -85,11 +90,14 @@ nodes:
     region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
-      writeRequests: { unit: requests, value: 1 }
-    pricingRates:
-      writeRequests: 1.25e-6
+      Dynamo-WriteRequest: { unit: requests, value: 1 }
 
 edges:
+  # Every response leaves AWS as data transfer out
+  - from: aws_apigatewayv2_api.llm_api
+    to: data_transfer.llm_api_egress
+    rate: 1
+
   - from: aws_apigatewayv2_api.llm_api
     to: aws_lambda_function.orchestrator
     rate: 1

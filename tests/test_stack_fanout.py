@@ -51,13 +51,15 @@ class TestFanoutModel:
     def test_analyzer_long_running(self):
         """Analyzer Lambda runs 5s at 1024MB = 5.0 GB-sec."""
         model = load_yaml_model("event-driven-fanout.yaml")
-        analyzer = model["nodes"]["aws_lambda_function.analyzer"]
-        assert analyzer["usageMetrics"]["gb_seconds"]["value"] == 5.0
+        metrics = model["nodes"]["aws_lambda_function.analyzer"]["usageMetrics"]
+        assert metrics["avgDurationMs"]["value"] == 5000
+        assert metrics["memoryMb"]["value"] == 1024
 
     def test_all_nodes_defined(self):
         model = load_yaml_model("event-driven-fanout.yaml")
         expected = {
             "aws_apigatewayv2_api.orders_api",
+            "data_transfer.orders_api_egress",
             "aws_lambda_function.producer",
             "aws_sns_topic.order_events",
             "aws_sqs_queue.orders_queue",
@@ -83,9 +85,9 @@ class TestFanOutDerivation:
     """Validates fan-out invocation derivation."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("event-driven-fanout.yaml")
-        return CostEngine(model)
+        return CostEngine(model, catalog=seed_catalog)
 
     def test_sns_invocations_match_producer(self, engine):
         """SNS receives 1:1 from producer Lambda."""
@@ -159,9 +161,9 @@ class TestFanOutCosts:
     """Validates cost computation for fan-out pattern."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("event-driven-fanout.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_total_cost_positive(self, engine):
         assert engine.total_cost() > 0
@@ -193,12 +195,12 @@ class TestFanOutCosts:
         costs = engine.compute()
         assert costs["aws_sns_topic.order_events"] > 0
 
-    def test_analytics_sampling_reduces_cost(self, engine):
+    def test_analytics_sampling_reduces_cost(self, engine, seed_catalog):
         """Reducing analytics sampling from 0.5 to 0.1 reduces total cost."""
         from infra_cost_model.engine.engine import ParametricSensitivityAnalyzer
 
         model = load_yaml_model("event-driven-fanout.yaml")
-        base_engine = CostEngine(model, time_basis="monthly")
+        base_engine = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         base_total = base_engine.total_cost()
 
         # Change analytics sampling to 0.1
@@ -209,7 +211,7 @@ class TestFanOutCosts:
                     edge["to"] == "aws_sqs_queue.analytics_queue"):
                 edge["rate"] = 0.1
 
-        mod_engine = CostEngine(model, time_basis="monthly")
+        mod_engine = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         mod_total = mod_engine.total_cost()
 
         assert mod_total < base_total
