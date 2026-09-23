@@ -33,6 +33,8 @@ Each entry in `prices.yaml` represents one flat price or one tier. Fields use th
 - `source` (optional): Provenance for the price, preferably the provider's authoritative pricing or billing documentation URL. Every manually maintained price should be traceable to such a source; do not use an aggregator when first-party documentation exists.
 - `fetched_at` (optional): Timestamp when an automatically fetched price was retrieved. This is cache metadata and is normally omitted from hand-maintained vendor files.
 
+State `start_usage_amount` and `end_usage_amount` as a quantity per month, the way providers publish their allowances. The engine derives usage per second, so it scales a month of usage against the boundaries and then converts the cost to the output time basis ([#287](https://github.com/elecnix/infra-cost-model/issues/287)).
+
 A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. References in examples, provider registration, and price rows must use that identity consistently. `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
 
 ## Development

@@ -5,6 +5,14 @@ from typing import Optional, Union
 
 from infra_cost_model.pricing.cache import PricingCache, TieredPrice, Price
 
+# Seconds in an average month (365.25 days / 12).
+SECONDS_PER_MONTH = 86400 * 365.25 / 12  # = 2629800.0
+
+# The period that the tier boundaries of every catalog row describe. The AWS
+# price list and the bundled vendor rows state their tiers per month: a free
+# allowance of 1,000,000 SQS requests is 1,000,000 requests a month (#287).
+TIER_BOUNDARY_PERIOD_SECONDS = SECONDS_PER_MONTH
+
 
 class PricingCatalog:
     """High-level interface for querying cloud pricing."""
@@ -22,7 +30,9 @@ class PricingCatalog:
     def query(self, vendor: str, service: str, region: str,
               usage_metric: str, usage_quantity: float | None = None,
               parameters: dict[str, float] = None,
-              include_free_tier: bool = True) -> Optional[Union["_CostResult", TieredPrice, Price]]:
+              include_free_tier: bool = True,
+              period_seconds: float | None = None,
+              ) -> Optional[Union["_CostResult", TieredPrice, Price]]:
         """Query pricing for a specific metric.
 
         Args:
@@ -35,6 +45,12 @@ class PricingCatalog:
             include_free_tier: When False, treat the leading $0 tiers as
                 already used, so the quantity is priced from the first paid
                 tier. Only applies when usage_quantity is given.
+            period_seconds: The length of time, in seconds, that
+                usage_quantity covers. When given, the quantity is scaled to
+                the tier boundary period (a month) before the tiers apply,
+                and the cost is scaled back to period_seconds. When omitted,
+                usage_quantity is taken to be the quantity for one boundary
+                period.
 
         Returns:
             _CostResult if quantity provided, TieredPrice if multiple tiers, Price if single, None if not found
@@ -46,22 +62,33 @@ class PricingCatalog:
 
         # Wrap in _CostResult if quantity provided
         if usage_quantity is not None:
+            periods = 1.0
+            if period_seconds is not None:
+                periods = TIER_BOUNDARY_PERIOD_SECONDS / period_seconds
             return _CostResult(result, usage_quantity, parameters,
-                               include_free_tier=include_free_tier)
+                               include_free_tier=include_free_tier,
+                               periods=periods)
 
         return result
 
 
 class _CostResult:
-    """Result with tiered cost calculation."""
+    """Result with tiered cost calculation.
+
+    ``quantity`` covers ``1 / periods`` of a tier boundary period. The tiers
+    apply to ``quantity * periods``, and ``total_cost`` is the cost of
+    ``quantity`` alone.
+    """
 
     def __init__(self, price_data: Union[TieredPrice, Price], quantity: float,
-                 parameters: dict[str, float] = None, include_free_tier: bool = True):
+                 parameters: dict[str, float] = None, include_free_tier: bool = True,
+                 periods: float = 1.0):
         self.price_data = price_data
         self.tiers = price_data.tiers if isinstance(price_data, TieredPrice) else [price_data]
         self.quantity = quantity
         self.parameters = parameters or {}
         self.include_free_tier = include_free_tier
+        self.periods = periods
         self.total_cost = self._calculate_cost()
 
     def _multiplier(self, tier) -> float:
@@ -82,9 +109,13 @@ class _CostResult:
         return end
 
     def _calculate_cost(self) -> float:
-        """Calculate total cost with tiered pricing."""
+        """Calculate total cost with tiered pricing.
+
+        The tiers apply to the quantity for one boundary period, and the
+        result is divided back down to the cost of ``self.quantity``.
+        """
         total = 0.0
-        quantity = self.quantity
+        quantity = self.quantity * self.periods
         if not self.include_free_tier:
             # Shift the quantity past the free allowance, so each unit is
             # priced as if the allowance were already used up.
@@ -96,7 +127,7 @@ class _CostResult:
         if all_null_start:
             # Simple flat price - average of all prices * quantity
             avg_price = sum(t.price_usd for t in self.tiers) / len(self.tiers)
-            return quantity * avg_price
+            return quantity * avg_price / self.periods
 
         for tier in sorted(self.tiers, key=lambda t: t.start_usage_amount or 0):
             # Resolve 'per' multiplier for boundaries only
@@ -118,4 +149,4 @@ class _CostResult:
                 charged = min(quantity, tier_end) - tier_start
                 total += max(0, charged) * price
 
-        return max(0, total)
+        return max(0, total) / self.periods

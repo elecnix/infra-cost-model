@@ -57,16 +57,21 @@ def compute_monthly(model):
 
 @pytest.mark.parametrize("pricing_model", [None, "flat", "tiered"])
 def test_extracted_lambda_prices_requests_and_gb_seconds(pricing_model):
-    cost, unpriced = compute_monthly(lambda_model(pricing_model=pricing_model))
-    # $0.20 for 1M requests plus 1M GB-seconds at $0.0000166667.
-    assert cost == pytest.approx(0.20 + 16.6667, rel=1e-4)
+    cost, unpriced = compute_monthly(lambda_model(
+        pricing_model=pricing_model, invocations_per_month=3_000_000))
+    # 2M requests above the 1M free requests at $0.20 per million, plus
+    # 2.6M GB-seconds above the 400,000 free GB-seconds at $0.0000166667
+    # (#287: the monthly free tier applies).
+    assert cost == pytest.approx(0.40 + 2_600_000 * 0.0000166667, rel=1e-6)
     assert unpriced == []
 
 
 def test_gb_seconds_scale_with_memory_and_duration():
-    cost, _ = compute_monthly(lambda_model(memory_mb=512, duration_ms=200))
-    # 1M × 0.5 GB × 0.2 s = 100,000 GB-seconds.
-    assert cost == pytest.approx(0.20 + 100_000 * 0.0000166667, rel=1e-4)
+    cost, _ = compute_monthly(lambda_model(memory_mb=512, duration_ms=200,
+                                           invocations_per_month=10_000_000))
+    # 10M × 0.5 GB × 0.2 s = 1,000,000 GB-seconds, 600,000 of them above
+    # the free tier. 9M requests above the free tier cost $1.80.
+    assert cost == pytest.approx(1.80 + 600_000 * 0.0000166667, rel=1e-6)
 
 
 def test_region_without_lambda_rows_still_warns_about_logical_metrics():
