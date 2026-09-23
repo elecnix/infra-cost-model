@@ -1,12 +1,12 @@
 """AWS Pricing API client for fallback pricing."""
 
 from datetime import datetime
-from pathlib import Path
 
 import requests
 
+from infra_cost_model.pricing.cache import SEED_PRICES_PATH
+
 AWS_PRICE_LIST_URL = "https://pricing.us-east-1.amazonaws.com"
-SEED_PRICES_PATH = Path(__file__).parent.parent.parent.parent / "data" / "seed" / "aws_pricelist_seed.json"
 
 SERVICE_CODES = {
     "AWSLambda": "AWSLambda",

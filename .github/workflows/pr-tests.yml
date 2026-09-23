@@ -74,6 +74,43 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 
+  wheel-install:
+    # The test job imports the package from the source tree, where every data
+    # file is present whatever the packaging says. This job installs the built
+    # wheel into a clean virtual environment and runs the command-line tool
+    # from outside the checkout, as a user would (#265).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build and install the wheel
+        run: |
+          python -m pip wheel --no-deps --quiet -w "$RUNNER_TEMP/dist" .
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "$RUNNER_TEMP"/dist/*.whl
+
+      - name: Run the installed command-line tool
+        working-directory: ${{ runner.temp }}
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          cli="$RUNNER_TEMP/venv/bin/infra-cost-model"
+          "$cli" validate "$GITHUB_WORKSPACE/examples/saas-subscription-api.yaml"
+          "$cli" seed-pricing
+          out=$("$cli" compute --time-basis monthly "$GITHUB_WORKSPACE/examples/always-on-infrastructure.yaml")
+          echo "$out"
+          # A missing seed file prices at $0 instead of failing. The pattern
+          # matches a literal "$0", so it stays in single quotes.
+          # shellcheck disable=SC2016
+          if echo "$out" | grep -q 'Total Monthly Cost: \$0\.0*$'; then
+            echo "compute priced the example at \$0" >&2
+            exit 1
+          fi
+
   ts:
     runs-on: ubuntu-latest
     steps:

@@ -17,6 +17,16 @@ This project specifies a model where usage flows through the graph: a frontend r
 - **Symbolic cost expressions**: Cost formulas parameterized by input features, enabling what-if analysis without re-derivation (Skyler, ibid.)
 - **What-if & sensitivity analysis**: Exploring cost impact of workload changes or architectural decisions before implementation (CostHat; Skyler)
 
+## Install
+
+The package isn't on PyPI. Install it from this repository:
+
+```bash
+pip install "git+https://github.com/elecnix/infra-cost-model"
+```
+
+Add `@<tag or commit>` to the URL to install a specific version.
+
 ## Quick Usage
 
 ```bash
@@ -66,7 +76,7 @@ infra-cost-model sync-pricing                              # all services, all r
 infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
 ```
 
-The bundled `data/seed/aws_pricelist_seed.json` is a small us-east-1 fixture used by the test suite only — it is **not** a setup step for users, and `seed-pricing` exists purely for offline/testing.
+The bundled `infra_cost_model/pricing/seed/aws_pricelist_seed.json` is a small us-east-1 fixture for the test suite and offline use. You don't need it to set up the tool. `seed-pricing` loads it into the local cache.
 
 ## Blanket pricing for the long tail
 
