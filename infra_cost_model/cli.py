@@ -18,6 +18,7 @@ import yaml
 from infra_cost_model.schema import validate_cost_model
 from infra_cost_model.engine import CostEngine, SensitivityAnalyzer, UnpricedMetricWarning
 from infra_cost_model.pricing.catalog import PricingCatalog
+from infra_cost_model.pricing.vendors import VendorPackageError
 from infra_cost_model.version_requirement import check_engine_requirement
 
 
@@ -251,6 +252,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     except _CLIError as e:
         return e.code
+    except VendorPackageError as e:
+        # Any command that opens the pricing catalog or the price cache loads
+        # the vendors package. Report a missing or foreign one on one line,
+        # like other CLI errors, instead of as a traceback (#289).
+        _print_stderr(f"Error: {e}")
+        return 1
     except SystemExit as e:
         # Normalize argparse exit code 2 to 1 for test compatibility
         code = e.code if isinstance(e.code, int) else 1
