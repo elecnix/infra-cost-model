@@ -688,6 +688,14 @@ def seed_pricing_catalog(services: list[str] | None = None) -> tuple[int, str]:
 
 
 def _sync_fallback(vendor: str, services: list[str] | None, cache) -> tuple[int, str]:
+    """Load prices without Infracost: the seed file, then the AWS Price List API.
+
+    With ``services=None``, loads every service in the seed file, as
+    ``seed-pricing`` does, then fetches live prices for the services in
+    ``SERVICE_CODES`` that the seed file didn't cover. With a list, loads the
+    seed rows of those services, and skips with a warning any name that the
+    live fetch can't look up. See ``aws_fallback_prices``.
+    """
     from .aws_pricing import aws_fallback_prices
 
     if vendor != "aws":
