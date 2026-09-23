@@ -9,7 +9,8 @@ import json
 
 DB_PATH = Path.home() / ".infra-cost-model" / "pricing.db"
 DEFAULT_TTL_DAYS = 7
-SEED_PRICES_PATH = Path(__file__).parent.parent.parent / "data" / "seed" / "aws_pricelist_seed.json"
+# Package data, next to this module, so an installed wheel carries it (#265).
+SEED_PRICES_PATH = Path(__file__).parent / "seed" / "aws_pricelist_seed.json"
 
 
 @dataclass

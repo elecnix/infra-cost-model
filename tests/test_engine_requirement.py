@@ -119,6 +119,15 @@ class TestCheckEngineRequirement:
         error = check_engine_requirement(make_model(">=0.2.0"), "0.1.0")
         assert "pip install" in error
 
+    def test_remedy_installs_from_the_repository(self):
+        """The upgrade command points at the git repository (#265).
+
+        The package isn't on PyPI, so `pip install -U infra-cost-model`
+        can't find it.
+        """
+        error = check_engine_requirement(make_model(">=0.2.0"), "0.1.0")
+        assert "git+https://github.com/elecnix/infra-cost-model" in error
+
     def test_upper_bound_is_enforced(self):
         """An excluded range fails on a version above it."""
         model = make_model(">=0.2.0,<0.3")

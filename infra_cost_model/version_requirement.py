@@ -35,8 +35,9 @@ from packaging.version import InvalidVersion, Version
 #: lowerCamelCase as the rest of the cost model representation.
 ENGINE_REQUIREMENT_KEY = "requiresEngine"
 
-#: Distribution name to name in the upgrade hint.
-DISTRIBUTION_NAME = "infra-cost-model"
+#: Where the upgrade hint installs the engine from. The package isn't on
+#: PyPI, so the hint gives the git repository rather than a bare name (#265).
+INSTALL_SOURCE = "git+https://github.com/elecnix/infra-cost-model"
 
 
 class EngineRequirementError(ValueError):
@@ -67,7 +68,7 @@ def _requirement_error(requirement: object, running: object, detail: str) -> str
     return (
         f"Model requires engine {requirement!r} but this engine is {running}. "
         f"{detail} Upgrade the engine with "
-        f"`pip install -U {DISTRIBUTION_NAME}`, or lower the model's "
+        f"`pip install -U \"{INSTALL_SOURCE}\"`, or lower the model's "
         f"`{ENGINE_REQUIREMENT_KEY}`."
     )
 
