@@ -53,11 +53,14 @@ def build_wheel(tmp_dir: Path) -> Path:
     longer includes. A fresh copy leaves them out.
     """
     src = tmp_dir / "src"
+    # `.hermetic-probe-*` folders belong to test_hermetic_home_guard.py runs
+    # going on at the same time. One can vanish mid-copy, and the copy fails.
     shutil.copytree(
         REPO_ROOT,
         src,
         ignore=shutil.ignore_patterns(
-            ".git", ".venv", "node_modules", "build", "dist", "__pycache__", "*.egg-info"
+            ".git", ".venv", "node_modules", "build", "dist", "__pycache__", "*.egg-info",
+            ".hermetic-probe-*",
         ),
     )
     out = tmp_dir / "dist"
