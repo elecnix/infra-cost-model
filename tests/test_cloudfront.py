@@ -160,3 +160,22 @@ class TestCloudFrontEndToEndPricing:
                             region="us-east-1", seed_only=True)
         catalog = PricingCatalog(db_path=tmp_path / "prices.db")
         assert catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request", 1_000_000) is not None
+
+    @pytest.mark.parametrize("region, metric", [
+        ("global", "Lambda-Request"),        # a global row for the service
+        ("us-east-1", "Lambda-Request"),     # one regional row from another source
+    ])
+    def test_seed_fallback_loads_rows_the_cache_lacks(self, tmp_path, region, metric):
+        """A cached row for a service doesn't stop its other seed rows from loading."""
+        from infra_cost_model.pricing.cache import PricingCache, Price
+        from infra_cost_model.pricing.sources.aws_pricing import aws_fallback_prices
+
+        cache = PricingCache(db_path=tmp_path / "prices.db")
+        cache.upsert(Price(
+            vendor="aws", service="AWSLambda", region=region, product_family="",
+            attributes={}, usage_metric=metric, unit="requests", price_usd=0.2e-6,
+            source="infracost", effective_date="2026-01-01", fetched_at="2026-01-01",
+        ))
+        aws_fallback_prices(["AWSLambda"], cache, region="us-east-1", seed_only=True)
+        catalog = PricingCatalog(db_path=tmp_path / "prices.db")
+        assert catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-GB-Second", 1000) is not None
