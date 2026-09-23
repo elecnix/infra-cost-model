@@ -215,11 +215,3 @@ def _model_cost_comparison(input_tokens: float, output_tokens: float, *, provide
         results[model_name] = total
 
     return results
-
-
-def is_economic_sink(node_type: str, provider: str) -> bool:
-    """Check if a node is a leaf node (LLM node).
-
-    LLM nodes accept input tokens and produce output tokens - both billable.
-    """
-    return provider in ("bedrock", "openai") and node_type == "compute"
