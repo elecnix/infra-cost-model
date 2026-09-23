@@ -1,8 +1,8 @@
 """Amazon EventBridge Rule resource model.
 
 EventBridge enables event-driven and schedule-triggered patterns.
-Pricing: Custom events $1.00/1M (free tier 1M/month),
-Schedule invocations $1.00/1M, Archive replay $0.20/1M.
+Pricing: custom events $1.00/1M, archive replay $1.00/1M.
+A scheduled rule on the default event bus costs nothing to run (#326).
 """
 
 from typing import Optional

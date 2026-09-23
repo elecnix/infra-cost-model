@@ -7,7 +7,8 @@ nodes: a user attaches a named node with GB/month usage estimates.
 
 Pricing dimensions (service ``AWSDataTransfer``, region ``us-east-1``):
 - ``DataTransfer-InterRegion-GB``  - $0.02/GB (inter-region within North America)
-- ``DataTransfer-Internet-Out-GB`` - $0.09/GB (internet egress, standard tier)
+- ``DataTransfer-Internet-Out-GB`` - first 100 GB a month free, then $0.09/GB
+  (internet egress, standard tier)
 - ``DataTransfer-InterAZ-GB``      - $0.01/GB (regional, between AZs)
 
 Ingress is free and has no paid metric.

@@ -101,9 +101,9 @@ class TestDataTransferPricing:
         assert cost == pytest.approx(2.0, rel=0.01)  # 100 * $0.02
 
     def test_internet_out_gb(self):
-        cost = _data_transfer_cost(internet_out_gb=100, catalog=self.catalog,
+        cost = _data_transfer_cost(internet_out_gb=200, catalog=self.catalog,
                                    region="us-east-1")
-        assert cost == pytest.approx(9.0, rel=0.01)  # 100 * $0.09
+        assert cost == pytest.approx(9.0, rel=0.01)  # 100 GB free, 100 * $0.09
 
     def test_inter_az_gb(self):
         cost = _data_transfer_cost(inter_az_gb=100, catalog=self.catalog,
@@ -111,7 +111,7 @@ class TestDataTransferPricing:
         assert cost == pytest.approx(1.0, rel=0.01)  # 100 * $0.01
 
     def test_combined(self):
-        cost = _data_transfer_cost(inter_region_gb=100, internet_out_gb=100,
+        cost = _data_transfer_cost(inter_region_gb=100, internet_out_gb=200,
                                    inter_az_gb=100, catalog=self.catalog,
                                    region="us-east-1")
         # 2.0 + 9.0 + 1.0

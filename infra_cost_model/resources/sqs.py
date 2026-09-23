@@ -4,7 +4,8 @@ SQS is the queuing backbone for event-driven architectures.
 Pricing covers:
 - Standard queue requests: $0.40/1M (free tier: 1M/month)
 - FIFO queue requests: $0.50/1M (free tier: 1M/month)
-- Message retention: $0.023/GB-month
+
+AWS doesn't charge for storing messages in a queue (#324).
 
 SQS is a routing node — it can forward messages to Lambda consumers.
 Dead-letter queues are modeled as separate SQS nodes with their own cost.
@@ -95,7 +96,6 @@ def _sqs_cost(
     messages_sent: float = 0,
     messages_received: float = 0,
     fifo: bool = False,
-    retention_gb: float = 0,
     *,
     catalog=None,
     provider: str = "aws",
@@ -105,7 +105,6 @@ def _sqs_cost(
 
     Standard: $0.40/1M requests (free tier 1M/month).
     FIFO: $0.50/1M requests (free tier 1M/month).
-    Retention: $0.023/GB-month.
     """
     if catalog is None:
         catalog = PricingCatalog()
@@ -117,12 +116,6 @@ def _sqs_cost(
         metric = "SQS-FIFO-Request" if fifo else "SQS-Standard-Request"
         result = catalog.query(provider, "AmazonSQS", region, metric,
                                total_requests)
-        if result and hasattr(result, "total_cost"):
-            total += result.total_cost
-
-    if retention_gb > 0:
-        result = catalog.query(provider, "AmazonSQS", region, "SQS-Retention",
-                               retention_gb)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 

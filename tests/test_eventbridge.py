@@ -40,12 +40,13 @@ class TestEventBridgePricing:
     def test_custom_event_pricing(self):
         cost = _eventbridge_cost(events_published=3_000_000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(3.00, rel=0.01)
-    def test_schedule_pricing_no_free_tier(self):
+    def test_scheduled_rule_is_free(self):
+        """A scheduled rule on the default event bus costs nothing (#326)."""
         cost = _eventbridge_cost(schedule_invocations=1_000_000, catalog=self.catalog, region="us-east-1")
-        assert cost == pytest.approx(1.00, rel=0.01)
+        assert cost == 0.0
     def test_event_vs_schedule_difference(self):
         assert _eventbridge_cost(events_published=500_000, catalog=self.catalog, region="us-east-1") == pytest.approx(0.50, rel=0.01)
-        assert _eventbridge_cost(schedule_invocations=500_000, catalog=self.catalog, region="us-east-1") == pytest.approx(0.50, rel=0.01)
+        assert _eventbridge_cost(schedule_invocations=500_000, catalog=self.catalog, region="us-east-1") == 0.0
     def test_fan_out_multiple_rules(self):
         cost = _eventbridge_cost(events_published=3_000_000, events_matched=6_000_000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(9.00, rel=0.01)
