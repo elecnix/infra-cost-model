@@ -78,6 +78,12 @@ infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
 
 The bundled `infra_cost_model/pricing/seed/aws_pricelist_seed.json` is a small us-east-1 fixture for the test suite and offline use. You don't need it to set up the tool. `seed-pricing` loads it into the local cache.
 
+## Metrics with no price
+
+The engine prices a usage metric from its `shape`, then from the catalog, then from the node's `pricingRates`. If all three come up empty, the node's cost leaves that metric out. Each command that computes costs prints one warning per such metric on stderr, with the node, the metric, the provider, service and region, and the quantity left out. `analyze --json` also lists them under `unpriced_metrics`. A metric with a quantity of 0 doesn't warn.
+
+Exit codes stay 0. To fail a CI run instead, pass `--exit-on-unpriced` to `compute` or `analyze`. Python callers can read `CostEngine.unpriced_metrics` after `compute()`, and each metric also raises an `UnpricedMetricWarning` through the `warnings` module.
+
 ## Blanket pricing for the long tail
 
 Native handlers cover the resources whose usage the DAG derives from upstream flow. For the static, always-on tail (anything Infracost already prices), import an `infracost breakdown` instead of hand-writing a handler + descriptor:

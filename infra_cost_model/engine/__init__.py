@@ -8,6 +8,8 @@ from .engine import (
     DerivedUsage,
     SensitivityAnalyzer,
     ParametricSensitivityAnalyzer,
+    UnpricedMetric,
+    UnpricedMetricWarning,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "DerivedUsage",
     "SensitivityAnalyzer",
     "ParametricSensitivityAnalyzer",
+    "UnpricedMetric",
+    "UnpricedMetricWarning",
 ]
