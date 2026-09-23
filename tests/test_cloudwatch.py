@@ -91,20 +91,20 @@ class TestCWPricing:
         self.catalog = PricingCatalog(seed=True)
 
     def test_ingestion_only(self):
-        cost = _cloudwatch_log_cost(ingested_gb=10, catalog=self.catalog)
+        cost = _cloudwatch_log_cost(ingested_gb=10, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(5.00, rel=0.01)
 
     def test_storage_only(self):
-        cost = _cloudwatch_log_cost(stored_gb=50, catalog=self.catalog)
+        cost = _cloudwatch_log_cost(stored_gb=50, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(1.50, rel=0.01)
 
     def test_combined(self):
         cost = _cloudwatch_log_cost(ingested_gb=10, stored_gb=50,
-                                    catalog=self.catalog)
+                                    catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(6.50, rel=0.01)
 
     def test_zero_usage(self):
-        assert _cloudwatch_log_cost(catalog=self.catalog) == 0.0
+        assert _cloudwatch_log_cost(catalog=self.catalog, region="us-east-1") == 0.0
 
 
 class TestCWNodeType:
@@ -255,33 +255,33 @@ class TestCWAlarmPricing:
         self.catalog = PricingCatalog(seed=True)
 
     def test_custom_metrics_only(self):
-        cost = _cloudwatch_metric_cost(custom_metrics_count=10, catalog=self.catalog)
+        cost = _cloudwatch_metric_cost(custom_metrics_count=10, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(3.00, rel=0.01)
 
     def test_alarms_only(self):
-        cost = _cloudwatch_metric_cost(alarms_count=5, catalog=self.catalog)
+        cost = _cloudwatch_metric_cost(alarms_count=5, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(0.50, rel=0.01)
 
     def test_get_metric_data_free_tier(self):
         # Within the 1,000,000 free tier -> $0.
         cost = _cloudwatch_metric_cost(
-            get_metric_data_requests=500_000, catalog=self.catalog)
+            get_metric_data_requests=500_000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(0.0, abs=1e-9)
 
     def test_get_metric_data_paid_tier(self):
         # 2,000,000 requests: first 1M free, next 1M at $0.00001 -> $10.00.
         cost = _cloudwatch_metric_cost(
-            get_metric_data_requests=2_000_000, catalog=self.catalog)
+            get_metric_data_requests=2_000_000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(10.00, rel=0.01)
 
     def test_combined(self):
         cost = _cloudwatch_metric_cost(
             custom_metrics_count=10, alarms_count=5,
-            get_metric_data_requests=2_000_000, catalog=self.catalog)
+            get_metric_data_requests=2_000_000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(13.50, rel=0.01)
 
     def test_zero_usage(self):
-        assert _cloudwatch_metric_cost(catalog=self.catalog) == 0.0
+        assert _cloudwatch_metric_cost(catalog=self.catalog, region="us-east-1") == 0.0
 
 
 class TestCWAlarmNodeType:

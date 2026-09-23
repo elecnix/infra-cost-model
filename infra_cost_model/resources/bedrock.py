@@ -160,11 +160,11 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
     return input_cost + cached_cost + output_cost
 
 
-def _model_cost_comparison(input_tokens: float, output_tokens: float, provider: str = "aws", region: str = "us-east-1") -> dict:
+def _model_cost_comparison(input_tokens: float, output_tokens: float, *, provider: str = "aws", region: str) -> dict:
     """Compare costs across LLM models.
 
-    Note: Uses seed prices for comparison. Region defaults to us-east-1
-    since this is a cross-model comparison utility, not a per-region cost helper.
+    Note: Uses seed prices for comparison. The caller passes the region, as
+    with every other cost helper (#164).
     """
     from infra_cost_model.pricing.catalog import PricingCatalog
 

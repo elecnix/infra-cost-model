@@ -78,7 +78,7 @@ class ApplicationLoadBalancer(RoutingResource):
 
 def _alb_cost(alb_hours=730, processed_gb=0, new_connections=0,
               active_connections=0, rule_evaluations=0, *,
-              catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
+              catalog=None, provider: str = "aws", region: str) -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
