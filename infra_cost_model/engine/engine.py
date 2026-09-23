@@ -1124,14 +1124,18 @@ class CostEngine:
             aggregator.aggregate()
             all_unpriced.extend(aggregator.unpriced)
 
+            wf_fixed_charges: dict[str, list[_CatalogCharge]] = defaultdict(list)
+            for charge in aggregator.catalog_charges:
+                if charge.fixed:
+                    wf_fixed_charges[charge.node].append(charge)
+                else:
+                    variable_charges.append(charge)
+
             for addr, combined in aggregator.costs.items():
                 fixed = aggregator.fixed_costs.get(addr, 0.0)
                 all_variable[addr] += combined - fixed
                 all_fixed[addr] = fixed
-                fixed_charges[addr] = [c for c in aggregator.catalog_charges
-                                       if c.node == addr and c.fixed]
-            variable_charges.extend(
-                c for c in aggregator.catalog_charges if not c.fixed)
+                fixed_charges[addr] = wf_fixed_charges.get(addr, [])
 
             # Merge derived usage (sum invocation counts for shared nodes)
             for addr, du in derived.items():
