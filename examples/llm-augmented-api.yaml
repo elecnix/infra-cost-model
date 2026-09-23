@@ -48,20 +48,16 @@ nodes:
   aws_bedrock_model.claude_sonnet:
     nodeType: compute
     resourceAddress: aws_bedrock_model.claude_sonnet
-    provider: bedrock
-    service: claude-3-5-sonnet
+    provider: aws
+    service: AmazonBedrock
     region: us-east-1
     pricingModel: token_based
-    # Token pricing looks up the catalog under the usage metric names
-    # (inputTokens, outputTokens), and no catalog row has those names, so
-    # this node states its rates. It is not an AWS node: its provider is
-    # bedrock.
+    # Claude 3.5 Sonnet. The Bedrock handler maps inputTokens and
+    # outputTokens to the Bedrock-Input-Token and Bedrock-Output-Token
+    # catalog rows (#312).
     usageMetrics:
       inputTokens: { unit: tokens, value: 500 }
       outputTokens: { unit: tokens, value: 1000 }
-    pricingRates:
-      inputTokens: 0.003e-3        # $0.003 per 1K input tokens
-      outputTokens: 0.015e-3       # $0.015 per 1K output tokens
 
   aws_s3_bucket.prompt_logs:
     nodeType: storage

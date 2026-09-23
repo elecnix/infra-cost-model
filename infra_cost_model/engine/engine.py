@@ -1017,10 +1017,15 @@ class CostAggregator:
             if total_tokens <= 0:
                 continue
             if self.catalog is not None:
-                result = self._query_catalog(
-                    node, token_name, total_tokens,
-                    fixed=node.get("flatOverride", False),
-                )
+                fixed = node.get("flatOverride", False)
+                result = self._query_catalog(node, token_name, total_tokens, fixed)
+                if result is None:
+                    # The catalog names token rows by provider, such as
+                    # "Bedrock-Input-Token". The node's handler maps the
+                    # logical token name to that row (#312).
+                    mapped = self._resolve_catalog_metric(address, node, token_name)
+                    if mapped is not None:
+                        result = self._query_catalog(node, mapped, total_tokens, fixed)
                 if result is not None:
                     total_cost += result.total_cost
                     continue

@@ -103,3 +103,51 @@ def test_cached_prompt_cost_discount():
 def test_streaming_cost_matches_total_tokens():
     """Streaming changes delivery, not total token cost."""
     assert _streaming_bedrock_cost(1_000_000, 2_000_000, region="us-east-1") == _bedrock_cost(1_000_000, 2_000_000, region="us-east-1")
+
+
+def test_bedrock_handler_owns_the_terraform_style_address():
+    """The LLM example names its node `aws_bedrock_model.<name>` (#312)."""
+    assert BedrockModel.from_address("aws_bedrock_model.claude_sonnet") is not None
+
+
+def test_bedrock_maps_token_metrics_to_catalog_rows():
+    """Logical token names map to the AmazonBedrock seed rows (#312)."""
+    assert BedrockModel().catalog_metrics == {
+        "inputTokens": "Bedrock-Input-Token",
+        "cachedReadTokens": "Bedrock-Cached-Input-Token",
+        "outputTokens": "Bedrock-Output-Token",
+    }
+
+
+def test_token_based_bedrock_node_prices_from_the_seed_catalog(seed_catalog):
+    """A Bedrock node without pricingRates prices every token class from the
+    seed rows: $3/M input, $1.5/M cached input, $15/M output (#312)."""
+    from infra_cost_model.engine import CostEngine
+
+    model = {
+        "version": "1.0",
+        "workflow": {"name": "llm", "entry": "aws_bedrock_model.claude",
+                     "frequency": {"unit": "perMonth", "value": 1000}},
+        "nodes": {
+            "aws_bedrock_model.claude": {
+                "nodeType": "compute",
+                "resourceAddress": "aws_bedrock_model.claude",
+                "provider": "aws",
+                "service": "AmazonBedrock",
+                "region": "us-east-1",
+                "pricingModel": "token_based",
+                "usageMetrics": {
+                    "inputTokens": {"unit": "tokens", "value": 500},
+                    "cachedReadTokens": {"unit": "tokens", "value": 200},
+                    "outputTokens": {"unit": "tokens", "value": 1000},
+                },
+            },
+        },
+        "edges": [],
+    }
+    engine = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
+    cost = engine.compute()["aws_bedrock_model.claude"]
+
+    expected = 1000 * (500 * 3 + 200 * 1.5 + 1000 * 15) / 1_000_000
+    assert cost == pytest.approx(expected)
+    assert engine.unpriced_metrics == []
