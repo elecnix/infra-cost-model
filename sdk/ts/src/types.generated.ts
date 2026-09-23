@@ -166,7 +166,7 @@ export interface UsageMetric {
     rate: number;
   }[];
   /**
-   * Transaction volume for transactional shapes, multiplied by percentage_rate. The quantity carries the transaction count for per-call and fixed-per-transaction components.
+   * Value of one transaction for transactional shapes. Each transaction is charged volume × percentage_rate, plus fixed_per_transaction and per_call.
    */
   volume?: number;
   /**

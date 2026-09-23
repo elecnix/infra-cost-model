@@ -37,10 +37,12 @@ from typing import Any, Callable, Optional, Protocol
 class SaaSCostHandler(Protocol):
     """Protocol for a SaaS pricing-shape handler.
 
-    A handler receives the total quantity for one metric (already scaled by the
-    derived invocation count for usage-driven metrics, or the raw value for
-    fixed metrics) and the metric's shape parameters from the model YAML, and
-    returns the monthly cost in USD.
+    A handler receives the quantity of one metric for a month and the
+    metric's shape parameters from the model YAML, and returns the cost of
+    that month in USD. For a fixed metric the quantity is the metric's value.
+    For a usage-driven metric the engine derives a rate per second, so it
+    passes the handler a month of usage and converts the monthly cost to the
+    output time basis (#295).
     """
 
     def __call__(self, quantity: float, params: dict[str, Any]) -> float: ...
@@ -61,10 +63,16 @@ def flat_subscription(quantity: float, params: dict[str, Any]) -> float:
     (the feature is off) and any quantity >= 1 charges ``rate`` once. For
     multi-instance flat subscriptions (e.g. 3 custom domains), pass the count
     as quantity — it charges ``rate × quantity``.
+
+    On a usage-driven metric (the engine sets ``params['fixed']`` to False),
+    the quantity counts uses, not subscriptions. Any use in the month charges
+    ``rate`` once (#295).
     """
     rate = float(params.get("rate", 0.0))
     if quantity <= 0:
         return 0.0
+    if params.get("fixed") is False:
+        return rate
     if quantity < 1:
         # A fractional quantity (shouldn't normally happen for a flat
         # subscription, but be defensive) charges once.
@@ -127,19 +135,20 @@ def free_tier(quantity: float, params: dict[str, Any]) -> float:
 
 
 def transactional(quantity: float, params: dict[str, Any]) -> float:
-    """The existing percentage/per-call shape, preserved for shape-parity.
+    """A percentage fee plus a fixed fee on each transaction, or a per-call fee.
 
     ``quantity`` is the transaction count. ``params`` may carry
-    ``percentage_rate`` (of a separate ``volume`` param), ``fixed_per_transaction``,
-    and ``per_call``. This handler exists so a transactional vendor can declare
-    ``shape: transactional`` in the model rather than relying on the legacy
-    ``_external_cost`` function — the shape vocabulary is exhaustive.
+    ``percentage_rate``, ``volume``, ``fixed_per_transaction`` and
+    ``per_call``. ``volume`` is the value of one transaction, so each
+    transaction costs ``volume × percentage_rate + fixed_per_transaction +
+    per_call``. The engine's ``percentage`` pricing model uses the same
+    convention (#281, #288).
     """
     percentage_rate = float(params.get("percentage_rate", 0.0))
     fixed_per_transaction = float(params.get("fixed_per_transaction", 0.0))
     per_call = float(params.get("per_call", 0.0))
     volume = float(params.get("volume", 0.0))
-    return volume * percentage_rate + quantity * fixed_per_transaction + quantity * per_call
+    return quantity * (volume * percentage_rate + fixed_per_transaction + per_call)
 
 
 # ── Registry ─────────────────────────────────────────────────────────────

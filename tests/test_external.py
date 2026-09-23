@@ -164,14 +164,16 @@ def test_sendgrid_cost():
 
 def test_external_cost_with_percentage():
     """Test external cost with percentage model."""
+    # 5,000 transactions of $50 each: volume is one transaction's value, as
+    # in the transactional shape and the percentage pricing model (#288).
     cost = _external_cost(
         transactions=5_000,
-        volume=250_000,
+        volume=50,
         percentage_rate=0.029,
         fixed_per_transaction=0.30,
     )
 
-    expected = 250_000 * 0.029 + 5_000 * 0.30
+    expected = 5_000 * (50 * 0.029 + 0.30)
     assert cost == pytest.approx(expected)
 
 

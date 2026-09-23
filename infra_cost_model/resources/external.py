@@ -114,10 +114,13 @@ def _external_cost(transactions: float, volume: float,
                    catalog=None) -> float:
     """Calculate external service cost.
 
+    ``volume`` is the value of one transaction, as in the ``transactional``
+    SaaS shape and the engine's ``percentage`` pricing model (#288).
+
     Args:
         transactions: Number of transactions per month
-        volume: Transaction volume in USD
-        percentage_rate: Percentage taken of volume (e.g., 0.029 for 2.9%)
+        volume: Value of one transaction in USD
+        percentage_rate: Percentage taken of each transaction (e.g., 0.029 for 2.9%)
         fixed_per_transaction: Fixed fee per transaction (e.g., 0.30)
         per_call: Fixed price per API call
         catalog: Optional pricing catalog for lookup
@@ -138,7 +141,7 @@ def _external_cost(transactions: float, volume: float,
             return result.total_cost
 
     # Percentage + fixed per transaction (Stripe model)
-    percentage_cost = volume * percentage_rate
+    percentage_cost = transactions * volume * percentage_rate
     fixed_cost = transactions * fixed_per_transaction
 
     # Per-call pricing (Twilio/SendGrid model)
