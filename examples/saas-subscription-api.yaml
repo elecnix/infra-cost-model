@@ -1,0 +1,96 @@
+# Example: SaaS subscription stack (Vercel + WorkOS + Datadog)
+# Demonstrates: declarative SaaS pricing shapes, the engine pin that keeps them
+# honest, and per-unit / free-tier / flat-subscription pricing on non-IaC nodes.
+#
+# Issue: https://github.com/elecnix/infra-cost-model/issues/241
+
+version: "1.0"
+
+# The SaaS `shape` vocabulary is an engine feature. An engine without shape
+# dispatch prices each of these metrics at $0 and reports a total that looks
+# reasonable, so the model states the version it needs and the engine refuses
+# rather than reporting a number it cannot stand behind.
+requiresEngine: ">=0.2.0"
+
+workflow:
+  name: saas-subscription-api
+  entry: aws_apigatewayv2_api.public_api
+  frequency:
+    unit: perMinute
+    value: 500
+
+nodes:
+  aws_apigatewayv2_api.public_api:
+    nodeType: routing
+    resourceAddress: aws_apigatewayv2_api.public_api
+    provider: aws
+    service: ApiGatewayV2
+    region: us-east-1
+    usageMetrics:
+      requests: { unit: requests, value: 1 }
+      dataOutGb: { unit: GB, value: 0.00002 }   # 20KB per request
+    pricingRates:
+      requests: 1.00e-6
+      dataOutGb: 0.09
+
+  aws_lambda_function.api:
+    nodeType: compute
+    resourceAddress: aws_lambda_function.api
+    provider: aws
+    service: AWSLambda
+    region: us-east-1
+    usageMetrics:
+      invocations: { unit: requests, value: 1 }
+      gb_seconds: { unit: GB-seconds, value: 0.05 }   # 200ms x 256MB
+    pricingRates:
+      invocations: 0.20e-6
+      gb_seconds: 0.0000166667
+
+  # WorkOS: identity, priced per connection and per organization. These are
+  # counts, not traffic, so they carry `fixed: true` and their value is a flat
+  # monthly total rather than a per-invocation multiplier.
+  workos_identity:
+    nodeType: external
+    resourceAddress: workos_identity
+    service: WorkOS
+    region: global
+    usageMetrics:
+      # First 1M monthly active users are free; overage is $0 on this plan.
+      WorkOS-MAU:            { unit: Users,  value: 1200000, fixed: true, shape: free_tier, free: 1000000, overage: 0.0 }
+      # $125/mo per SSO connection.
+      WorkOS-SSO-Connection: { unit: Conns,  value: 2,       fixed: true, shape: per_unit_flat, rate: 125.0 }
+      # $5/mo per organization for audit logs.
+      WorkOS-AuditLog-Org:   { unit: Orgs,   value: 3,       fixed: true, shape: per_unit_flat, rate: 5.0 }
+      # A flat $99/mo feature, charged once when enabled (value 1).
+      WorkOS-CustomDomain:   { unit: Months, value: 1,       fixed: true, shape: flat_subscription, rate: 99.0 }
+
+  # Datadog: a flat subscription per host.
+  datadog_observability:
+    nodeType: external
+    resourceAddress: datadog_observability
+    service: Datadog
+    region: global
+    usageMetrics:
+      Hosts: { unit: Hosts, value: 6, fixed: true, shape: flat_subscription, rate: 23.0 }
+
+  aws_dynamodb_table.tenants:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.tenants
+    provider: aws
+    service: AmazonDynamoDB
+    region: us-east-1
+    usageMetrics:
+      readRequests: { unit: requests, value: 1 }
+      writeRequests: { unit: requests, value: 1 }
+    pricingRates:
+      readRequests: 0.25e-6
+      writeRequests: 1.25e-6
+
+edges:
+  - from: aws_apigatewayv2_api.public_api
+    to: aws_lambda_function.api
+    rate: 1
+  - from: aws_lambda_function.api
+    to: aws_dynamodb_table.tenants
+    rate: 1
+    type: read

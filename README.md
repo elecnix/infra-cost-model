@@ -41,6 +41,21 @@ infra-cost-model what-if model-a.yaml --compare model-b.yaml \
 infra-cost-model graph model.yaml
 ```
 
+## Pinning the engine version
+
+A model may name the engine version it needs:
+
+```yaml
+version: "1.0"
+requiresEngine: ">=0.2.0"
+```
+
+The value is a [PEP 440](https://peps.python.org/pep-0440/#version-specifiers) specifier, so `>=0.2.0`, `==0.2.1`, and `>=0.2,<0.4` all work. When the running engine does not satisfy it, `compute`, `analyze`, `what-if`, and `sensitivity` exit non-zero and name both versions, and `validate` reports the mismatch as a validation error. There is no flag to bypass the check.
+
+The pin matters because an engine too old for a model does not fail. It prices the fields it does not recognise at $0 and reports a total that reads as reasonable. A model using a SaaS `shape:` (see `examples/saas-subscription-api.yaml`) priced $0 for every shaped node on an engine from before that feature, and the run exited 0.
+
+A model with no `requiresEngine` behaves exactly as it did before, so adding the field to an existing model is optional. Add it when the model uses a feature a reader's engine may predate.
+
 ## Pricing data
 
 Prices are fetched live from the [Infracost Cloud Pricing API](https://www.infracost.io/docs/), covering all supported services and all regions:

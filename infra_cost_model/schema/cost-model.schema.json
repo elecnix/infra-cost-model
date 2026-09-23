@@ -16,6 +16,11 @@
       "const": "1.0",
       "description": "Schema version"
     },
+    "requiresEngine": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PEP 440 version specifier naming the engine version this model needs (e.g. \">=0.2.0\"). The engine refuses to price the model when the running version does not satisfy the specifier, instead of silently dropping fields it does not understand or pricing them at $0. Absent means no requirement."
+    },
     "workflow": {
       "$ref": "#/definitions/workflow"
     },

@@ -16,6 +16,7 @@ import yaml
 from infra_cost_model.schema import validate_cost_model
 from infra_cost_model.engine import CostEngine, SensitivityAnalyzer
 from infra_cost_model.pricing.catalog import PricingCatalog
+from infra_cost_model.version_requirement import check_engine_requirement
 
 
 class _CLIError(Exception):
@@ -237,6 +238,13 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     errors = validate_cost_model(model)
+
+    # A model may pin the engine it needs. `validate` is where a reader looks
+    # first, so report a pin this engine cannot meet here rather than letting
+    # the mismatch surface later as a refusal to price.
+    requirement_error = check_engine_requirement(model)
+    if requirement_error is not None:
+        errors = errors + [requirement_error]
 
     if errors:
         print("Validation errors:")

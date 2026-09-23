@@ -214,3 +214,23 @@ Cloud prices change monthly. Hard-coded prices in source code go stale. The pric
 The catalog must handle tiered pricing (e.g., Lambda GB-seconds has three price tiers), free tiers (first 1M requests free), and regional variation across all services and regions. Prices are fetched live from the pricing source and refresh on a schedule — cloud pricing changes monthly at most. The bundled seed price list is a test fixture and offline fallback, not a normal setup step.
 
 A provider plugin architecture is premature. Use a normalized multi-cloud source until it doesn't cover a needed provider.
+
+## 14. A model states the engine it needs
+
+An engine too old for a model does not fail. It silently prices what it does not understand, and the resulting total reads as reasonable. A model written against the SaaS `shape` vocabulary therefore reports $0 for every shaped node on an engine from before that feature, and exits 0. The model author has no signal that a term went missing.
+
+The model states its requirement, and the engine refuses rather than guessing:
+
+```yaml
+version: "1.0"
+requiresEngine: ">=0.2.0"
+```
+
+- The value is a PEP 440 specifier, evaluated with `packaging`, the library pip itself uses. A minimum, an exact pin, and an excluded range all work.
+- The check runs in `CostEngine.compute`, so every caller hits the same gate: the CLI, the SDK, and any script that builds an engine. A mismatch raises `EngineRequirementError`, a `ValueError` subclass, matching what callers already catch.
+- `validate` reports the same mismatch, so a reader finds it before pricing.
+- A model that declares no requirement behaves exactly as before. The field is opt-in, and every model written before it keeps working.
+
+The engine version is `infra_cost_model.__version__`, and `pyproject.toml` reads it from there. One number, one place. Bump the minor version when a model written for the new engine would price differently, or not at all, on the previous one. That is what a pin is worth pinning against.
+
+The pin cannot help a model run on an engine older than the pin itself. An engine predating this field drops the key along with any other key it does not recognise, which is the failure the field exists to make visible on engines that have it.
