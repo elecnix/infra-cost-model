@@ -117,8 +117,8 @@ def test_external_no_infrastructure_extraction():
 
 def test_stripe_standard_cost():
     """Test Stripe standard pricing."""
-    # 10,000 transactions, $500,000 volume
-    cost = _stripe_cost(10_000, 500_000)
+    # 10,000 transactions of $50 each: volume is one transaction's value (#288).
+    cost = _stripe_cost(10_000, 50)
 
     expected = 500_000 * 0.029 + 10_000 * 0.30
     assert cost == pytest.approx(expected)
@@ -127,7 +127,7 @@ def test_stripe_standard_cost():
 def test_stripe_international_cost():
     """Test Stripe international card pricing. Currency conversion fee
     is queried from the pricing catalog per DP#13."""
-    cost = _stripe_cost(10_000, 500_000, international=True)
+    cost = _stripe_cost(10_000, 50, international=True)
 
     # Standard + 1% currency conversion
     expected = 500_000 * 0.039 + 10_000 * 0.30 + 500_000 * 0.01
@@ -139,7 +139,7 @@ def test_stripe_international_catalog_fee():
     from infra_cost_model.pricing.catalog import PricingCatalog
     catalog = PricingCatalog(seed=True)
 
-    cost = _stripe_cost(10_000, 500_000, international=True, catalog=catalog)
+    cost = _stripe_cost(10_000, 50, international=True, catalog=catalog)
 
     # Verify catalog was used - query the fee directly
     result = catalog.query("external", "ExternalAPI", "global", "currency_conversion_fee")
@@ -164,14 +164,16 @@ def test_sendgrid_cost():
 
 def test_external_cost_with_percentage():
     """Test external cost with percentage model."""
+    # 5,000 transactions of $50 each: volume is one transaction's value, as
+    # in the transactional shape and the percentage pricing model (#288).
     cost = _external_cost(
         transactions=5_000,
-        volume=250_000,
+        volume=50,
         percentage_rate=0.029,
         fixed_per_transaction=0.30,
     )
 
-    expected = 250_000 * 0.029 + 5_000 * 0.30
+    expected = 5_000 * (50 * 0.029 + 0.30)
     assert cost == pytest.approx(expected)
 
 

@@ -17,6 +17,7 @@ from infra_cost_model.saas import (
 )
 from infra_cost_model.saas.pricing_shapes import discover_entry_point_handlers
 from infra_cost_model.engine import CostEngine
+from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH
 
 
 # ── Built-in shape handlers ──────────────────────────────────────────────
@@ -40,6 +41,12 @@ class TestFlatSubscription:
     def test_missing_rate_defaults_to_zero(self):
         """No rate param → $0 (defensive)."""
         assert flat_subscription(1, {}) == 0.0
+
+    def test_usage_driven_charges_once(self):
+        """On a usage-driven metric the quantity counts uses: 1,000 uses in a
+        month still charge the rate once (#295)."""
+        assert flat_subscription(1000, {"rate": 49.0, "fixed": False}) == 49.0
+        assert flat_subscription(0, {"rate": 49.0, "fixed": False}) == 0.0
 
     def test_fractional_quantity_charges_once(self):
         """A fractional quantity (unusual) charges once, not 0."""
@@ -115,13 +122,23 @@ class TestTransactional:
     """transactional: the preserved percentage/per-call shape."""
 
     def test_percentage_plus_fixed(self):
-        """2.9% + $0.30 per transaction, 100 transactions, $1000 volume."""
+        """2.9% + $0.30 on each of 100 transactions of $10 (#288)."""
         cost = transactional(100, {
             "percentage_rate": 0.029,
             "fixed_per_transaction": 0.30,
-            "volume": 1000.0,
+            "volume": 10.0,
         })
-        assert cost == pytest.approx(1000 * 0.029 + 100 * 0.30)  # $29 + $30 = $59
+        assert cost == pytest.approx(100 * (10 * 0.029 + 0.30))  # $29 + $30 = $59
+
+    def test_percentage_is_charged_on_every_transaction(self):
+        """``volume`` is the value of one transaction, as in the engine's
+        ``percentage`` model (#281): 1,000 payments of $50 cost $1,750."""
+        cost = transactional(1000, {
+            "percentage_rate": 0.029,
+            "fixed_per_transaction": 0.30,
+            "volume": 50.0,
+        })
+        assert cost == pytest.approx(1750.0)
 
     def test_per_call(self):
         """Twilio-style: $0.0075 per call, 1000 calls."""
@@ -462,6 +479,113 @@ class TestEngineShapeIntegration:
         # 1000 requests × 0.00002 GB/req = 0.02 GB
         # 0.02 GB × $0.10/GB = $0.002
         assert costs["saas_node"] == pytest.approx(0.002)
+
+
+class TestShapesGetMonthlyQuantities:
+    """A usage-driven shaped metric is priced on a month of usage (#295).
+
+    The engine derives usage per second, while shape parameters (a
+    subscription rate, a free allowance) describe a month. The engine passes
+    each handler the monthly quantity and converts the monthly cost to the
+    output time basis, the way catalog tiers work since #292.
+    """
+
+    # Each case: shape parameters, invocations a month, expected monthly cost.
+    CASES = {
+        # Any use in the month charges the subscription once.
+        "flat_subscription": ({"rate": 49.0}, 1000, 49.0),
+        "per_unit_flat": ({"rate": 0.10}, 1000, 100.0),
+        # 20,000 used, 10,000 free, 10,000 × $0.02 = $200.
+        "free_tier": ({"free": 10_000, "overage": 0.02}, 20_000, 200.0),
+        # 1,000 × ($50 × 0.029 + $0.30) = $1,750 (#288).
+        "transactional": (
+            {"percentage_rate": 0.029, "fixed_per_transaction": 0.30, "volume": 50.0},
+            1000, 1750.0,
+        ),
+    }
+
+    # Output time basis → how many months it covers.
+    BASES = {
+        "monthly": 1.0,
+        "yearly": 12.0,
+        "perSecond": 1.0 / SECONDS_PER_MONTH,
+    }
+
+    @staticmethod
+    def _model(metric, invocations, pricing_model="flat", fixed=False):
+        metric = {"unit": "units", "value": 1, **metric}
+        if fixed:
+            metric["fixed"] = True
+        return {
+            "workflow": {
+                "name": "test", "entry": "entry",
+                "frequency": {"unit": "perMonth", "value": invocations},
+            },
+            "nodes": {
+                "entry": {
+                    "nodeType": "routing",
+                    "resourceAddress": "entry",
+                    "provider": "test",
+                    "service": "Test",
+                    "region": "global",
+                    "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
+                    "pricingRates": {"requests": 0.0},
+                },
+                "saas_node": {
+                    "nodeType": "external",
+                    "resourceAddress": "saas_node",
+                    "provider": "external",
+                    "service": "SaaS",
+                    "region": "global",
+                    "pricingModel": pricing_model,
+                    "usageMetrics": {"Metric": metric},
+                },
+            },
+            # A fixed node takes no edge, which would only warn (DP#9).
+            "edges": [] if fixed else [{"from": "entry", "to": "saas_node", "rate": 1}],
+        }
+
+    @pytest.mark.parametrize("basis", list(BASES))
+    @pytest.mark.parametrize("shape", list(CASES))
+    def test_builtin_shape_at_time_basis(self, shape, basis):
+        params, invocations, monthly = self.CASES[shape]
+        model = self._model({"shape": shape, **params}, invocations)
+        costs = CostEngine(model, catalog=None, time_basis=basis).compute()
+        assert costs["saas_node"] == pytest.approx(monthly * self.BASES[basis])
+
+    @pytest.mark.parametrize("shape", list(CASES))
+    def test_tiered_pricing_model_gets_monthly_quantity(self, shape):
+        """The tiered pricing model dispatches shapes the same way."""
+        params, invocations, monthly = self.CASES[shape]
+        model = self._model({"shape": shape, **params}, invocations,
+                            pricing_model="tiered")
+        costs = CostEngine(model, catalog=None, time_basis="monthly").compute()
+        assert costs["saas_node"] == pytest.approx(monthly)
+
+    @pytest.mark.parametrize("basis", ["monthly", "yearly"])
+    def test_fixed_metric_is_unchanged(self, basis):
+        """A fixed metric's value is already a monthly total: 2 × $49."""
+        model = self._model({"shape": "flat_subscription", "rate": 49.0, "value": 2},
+                            1000, fixed=True)
+        costs = CostEngine(model, catalog=None, time_basis=basis).compute()
+        assert costs["saas_node"] == pytest.approx(98.0 * self.BASES[basis])
+
+    def test_plugin_shape_gets_monthly_quantity(self):
+        """A shape that a plugin registers also receives the monthly quantity."""
+        seen = []
+
+        def recording_shape(quantity, params):
+            seen.append(quantity)
+            return quantity * float(params["rate"])
+
+        SaaSPricingRegistry.register("recording_shape", recording_shape)
+        try:
+            model = self._model({"shape": "recording_shape", "rate": 0.5}, 1000)
+            costs = CostEngine(model, catalog=None, time_basis="monthly").compute()
+        finally:
+            SaaSPricingRegistry._handlers.pop("recording_shape", None)
+        assert seen == [pytest.approx(1000.0)]
+        assert costs["saas_node"] == pytest.approx(500.0)
 
 
 # ── Entry-point discovery ────────────────────────────────────────────────

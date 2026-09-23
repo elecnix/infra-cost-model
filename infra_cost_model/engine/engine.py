@@ -641,15 +641,7 @@ class CostAggregator:
             # resources that the catalog cannot reach. An unknown shape raises
             # ValueError from the registry rather than falling through to the
             # catalog, so a misspelled shape cannot price at $0.
-            metric_cost = None
-            shape = None
-            if isinstance(metric_def, dict):
-                shape = metric_def.get("shape")
-            if shape is not None:
-                from infra_cost_model.saas import SaaSPricingRegistry
-                metric_cost = SaaSPricingRegistry.compute(
-                    shape, total_quantity, metric_def if isinstance(metric_def, dict) else {}
-                )
+            metric_cost = self._price_shape(metric_def, total_quantity, metric_fixed)
 
             # Query catalog first (preferred path per Principle 13), else fall
             # back to embedded pricingRates (deprecated per Principle 13).
@@ -723,17 +715,9 @@ class CostAggregator:
                 per_invocation if metric_fixed else invocations * per_invocation
             )
 
-            metric_cost = None
             # SaaS pricing shapes (#241): dispatch to the shape registry before
             # the catalog path, same as _compute_flat_cost.
-            shape = None
-            if isinstance(metric_def, dict):
-                shape = metric_def.get("shape")
-            if shape is not None:
-                from infra_cost_model.saas import SaaSPricingRegistry
-                metric_cost = SaaSPricingRegistry.compute(
-                    shape, total_quantity, metric_def if isinstance(metric_def, dict) else {}
-                )
+            metric_cost = self._price_shape(metric_def, total_quantity, metric_fixed)
 
             if metric_cost is None and self.catalog is not None:
                 result = self._query_catalog(node, metric_name,
@@ -807,6 +791,27 @@ class CostAggregator:
                 return 0.0, frozenset()
             cost += result.total_cost
         return cost, derived.consumed
+
+    def _price_shape(self, metric_def, quantity: float,
+                     fixed: bool) -> Optional[float]:
+        """Price a metric through its SaaS pricing shape, if it has one.
+
+        Returns ``None`` when the metric declares no ``shape``. Shape
+        parameters, such as a subscription rate or a free allowance, describe
+        a month. A fixed quantity is already a monthly total. A usage-driven
+        quantity is a rate per second, so the handler gets a month of usage
+        and its monthly cost is converted back to a cost per second, the way
+        catalog tiers are priced (#292, #295). The handler also gets the
+        metric's effective ``fixed`` flag, which ``flatOverride`` can set.
+        """
+        if not isinstance(metric_def, dict) or metric_def.get("shape") is None:
+            return None
+        from infra_cost_model.saas import SaaSPricingRegistry
+        period = 1.0 if fixed else SECONDS_PER_MONTH
+        monthly_cost = SaaSPricingRegistry.compute(
+            metric_def["shape"], quantity * period, {**metric_def, "fixed": fixed}
+        )
+        return monthly_cost / period
 
     def _query_catalog(self, node: dict, metric: str, quantity: float,
                        fixed: bool):
