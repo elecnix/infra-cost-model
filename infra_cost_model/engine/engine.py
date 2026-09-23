@@ -416,6 +416,72 @@ class WorkloadDeriver:
         return float(value)
 
 
+@dataclass
+class _CatalogCharge:
+    """One catalog quantity that a node pays for.
+
+    ``quantity`` and ``cost`` cover a month. ``cost`` is what the node's
+    cost holds for this charge right now.
+    """
+    node: str
+    pool: tuple
+    quantity: float
+    cost: float
+    fixed: bool
+    parameters: dict
+
+
+def _pool_key(node: dict, metric: str, result) -> tuple:
+    """The account-level pool that a catalog charge belongs to (#294).
+
+    The provider applies tiers, such as a free allowance, to the account's
+    total use of a metric in a region. A row with ``per`` scaling moves its
+    boundaries by a parameter, so charges pool only when that parameter has
+    the same value.
+    """
+    scaling = tuple(sorted(
+        (tier.per, result.parameters.get(tier.per))
+        for tier in result.tiers if tier.per
+    ))
+    return (node.get("provider"), node.get("service", ""), node.get("region"),
+            metric, scaling)
+
+
+def _price_pooled_charges(catalog: PricingCatalog,
+                          charges: list[_CatalogCharge]) -> dict[str, list[float]]:
+    """Price each pool's monthly total once and split it by quantity (#294).
+
+    Each charge gets ``pool cost * charge quantity / pool quantity``, so the
+    node costs still add up to the pool cost. Returns, per node, the change
+    to its usage-driven cost (per second) and to its fixed cost (per
+    month), and updates ``cost`` on each charge. A pool with one charge
+    keeps its cost.
+    """
+    pools: dict[tuple, list[_CatalogCharge]] = defaultdict(list)
+    for charge in charges:
+        pools[charge.pool].append(charge)
+
+    deltas: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+    for (provider, service, region, metric, _), members in pools.items():
+        if len(members) < 2:
+            continue
+        total_quantity = sum(c.quantity for c in members)
+        if total_quantity <= 0:
+            continue
+        result = catalog.query(provider, service, region, metric, total_quantity,
+                               parameters=members[0].parameters,
+                               period_seconds=SECONDS_PER_MONTH)
+        for charge in members:
+            share = result.total_cost * charge.quantity / total_quantity
+            delta = share - charge.cost
+            charge.cost = share
+            if charge.fixed:
+                deltas[charge.node][1] += delta
+            else:
+                deltas[charge.node][0] += delta / SECONDS_PER_MONTH
+    return deltas
+
+
 class CostAggregator:
     """Aggregates costs bottom-up from derived usage + pricing."""
 
@@ -435,6 +501,10 @@ class CostAggregator:
         # Metrics with a non-zero quantity that no shape, catalog row or
         # pricingRates entry could price. Their cost is left out of the node.
         self.unpriced: list[_Miss] = []
+        # Every catalog quantity a node pays for, so that tiers apply to the
+        # account's total rather than to each node (#294).
+        self.catalog_charges: list[_CatalogCharge] = []
+        self._pricing_address: Optional[str] = None
 
     def _record_unpriced(self, address: str, node: dict, metric: str,
                          quantity: float, fixed: bool) -> None:
@@ -452,12 +522,24 @@ class CostAggregator:
         Variable cost is in per-second internal units; fixed cost is a flat
         monthly total. The CostEngine scales the variable portion to the output
         time basis using ``fixed_costs`` to keep fixed totals unscaled.
+
+        Catalog tiers apply to the total across all nodes: each node first
+        gets the cost of its own quantity, then the pooled pricing replaces
+        it with the node's share of the pool cost (#294).
         """
         for addr, usage in self.derived_usage.items():
             if addr in self.nodes:
+                self._pricing_address = addr
                 variable, fixed = self._compute_node_cost(addr, usage)
                 self.fixed_costs[addr] = fixed
                 self.costs[addr] = variable + fixed
+        self._pricing_address = None
+
+        if self.catalog is not None:
+            deltas = _price_pooled_charges(self.catalog, self.catalog_charges)
+            for addr, (variable_delta, fixed_delta) in deltas.items():
+                self.costs[addr] += variable_delta + fixed_delta
+                self.fixed_costs[addr] += fixed_delta
 
         return self.costs
 
@@ -716,10 +798,12 @@ class CostAggregator:
             return 0.0, frozenset()
 
         cost = 0.0
+        charges_before = len(self.catalog_charges)
         for catalog_metric, per_invocation in derived.quantities.items():
             result = self._query_catalog(node, catalog_metric,
                                          invocations * per_invocation, fixed=False)
             if result is None:
+                del self.catalog_charges[charges_before:]
                 return 0.0, frozenset()
             cost += result.total_cost
         return cost, derived.consumed
@@ -733,12 +817,26 @@ class CostAggregator:
         quantity covers, and the catalog applies its tier boundaries to a
         month of usage (#287). The cost that comes back covers the same
         period as the quantity: per second, or per month for a fixed metric.
+
+        Each priced quantity is also kept as a charge, so that ``aggregate``
+        can apply the tiers to the account's total (#294).
         """
-        return self.catalog.query(
+        result = self.catalog.query(
             node.get("provider"), node.get("service", ""), node.get("region"),
             metric, quantity, parameters=self.parameters,
             period_seconds=SECONDS_PER_MONTH if fixed else 1.0,
         )
+        if result is not None and self._pricing_address is not None:
+            months = 1.0 if fixed else SECONDS_PER_MONTH
+            self.catalog_charges.append(_CatalogCharge(
+                node=self._pricing_address,
+                pool=_pool_key(node, metric, result),
+                quantity=quantity * months,
+                cost=result.total_cost * months,
+                fixed=fixed,
+                parameters=self.parameters,
+            ))
+        return result
 
     def _resolve_catalog_metric(self, address: str, node: dict, logical_metric: str):
         """Translate a node's logical usageMetrics key to a catalog usage_metric
@@ -1009,6 +1107,11 @@ class CostEngine:
         all_fixed: dict[str, float] = {}
         all_derived: dict[str, DerivedUsage] = {}
         all_unpriced: list[_Miss] = []
+        # Catalog charges from every workflow, so tiers apply to the account's
+        # total once (#294). Like the fixed cost, a node's fixed charges come
+        # from the last workflow that reaches it.
+        variable_charges: list[_CatalogCharge] = []
+        fixed_charges: dict[str, list[_CatalogCharge]] = {}
 
         for wf in self.workflows:
             wf_params = wf.get("parameters", {})
@@ -1021,10 +1124,18 @@ class CostEngine:
             aggregator.aggregate()
             all_unpriced.extend(aggregator.unpriced)
 
+            wf_fixed_charges: dict[str, list[_CatalogCharge]] = defaultdict(list)
+            for charge in aggregator.catalog_charges:
+                if charge.fixed:
+                    wf_fixed_charges[charge.node].append(charge)
+                else:
+                    variable_charges.append(charge)
+
             for addr, combined in aggregator.costs.items():
                 fixed = aggregator.fixed_costs.get(addr, 0.0)
                 all_variable[addr] += combined - fixed
                 all_fixed[addr] = fixed
+                fixed_charges[addr] = wf_fixed_charges.get(addr, [])
 
             # Merge derived usage (sum invocation counts for shared nodes)
             for addr, du in derived.items():
@@ -1037,6 +1148,15 @@ class CostEngine:
                     all_derived[addr] = du
 
         self.derived_usage = all_derived
+
+        if self.catalog is not None:
+            charges = variable_charges + [
+                c for node_charges in fixed_charges.values() for c in node_charges
+            ]
+            deltas = _price_pooled_charges(self.catalog, charges)
+            for addr, (variable_delta, fixed_delta) in deltas.items():
+                all_variable[addr] += variable_delta
+                all_fixed[addr] = all_fixed.get(addr, 0.0) + fixed_delta
 
         # Convert per-second usage-driven costs to the output period; fixed
         # (always-on) costs are flat monthly totals and scale by 12 for yearly
