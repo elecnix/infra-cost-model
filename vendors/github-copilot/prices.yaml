@@ -1,3 +1,9 @@
+# GitHub Copilot plans, one metric pair per plan.
+# Copilot Business uses the unprefixed Copilot-Seat-Month and Copilot-Credit
+# metrics. Copilot Enterprise uses the same layout with an Enterprise prefix.
+# Both scale the pooled credit allowance with the `seats` parameter.
+# Individual plans (Pro, Pro-Plus, Max) have one subscription row priced per
+# month and a fixed credit allowance.
 - vendor: github
   service: Copilot
   region: global
@@ -5,6 +11,8 @@
   unit: seats
   price_usd: 19.00
   per: seats
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-organizations-and-enterprises
 
 - vendor: github
   service: Copilot
@@ -15,6 +23,8 @@
   start_usage_amount: 0
   end_usage_amount: 1900
   per: seats
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-organizations-and-enterprises
 
 - vendor: github
   service: Copilot
@@ -24,3 +34,128 @@
   price_usd: 0.01
   start_usage_amount: 1900
   per: seats
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-organizations-and-enterprises
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Pro-Month
+  unit: months
+  price_usd: 10.00
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Pro-Credit
+  unit: credits
+  price_usd: 0.00
+  start_usage_amount: 0
+  end_usage_amount: 1500
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Pro-Credit
+  unit: credits
+  price_usd: 0.01
+  start_usage_amount: 1500
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Pro-Plus-Month
+  unit: months
+  price_usd: 39.00
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Pro-Plus-Credit
+  unit: credits
+  price_usd: 0.00
+  start_usage_amount: 0
+  end_usage_amount: 7000
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Pro-Plus-Credit
+  unit: credits
+  price_usd: 0.01
+  start_usage_amount: 7000
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Max-Month
+  unit: months
+  price_usd: 100.00
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Max-Credit
+  unit: credits
+  price_usd: 0.00
+  start_usage_amount: 0
+  end_usage_amount: 20000
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Max-Credit
+  unit: credits
+  price_usd: 0.01
+  start_usage_amount: 20000
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Enterprise-Seat-Month
+  unit: seats
+  price_usd: 39.00
+  per: seats
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-organizations-and-enterprises
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Enterprise-Credit
+  unit: credits
+  price_usd: 0.00
+  start_usage_amount: 0
+  end_usage_amount: 3900
+  per: seats
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-organizations-and-enterprises
+
+- vendor: github
+  service: Copilot
+  region: global
+  usage_metric: Copilot-Enterprise-Credit
+  unit: credits
+  price_usd: 0.01
+  start_usage_amount: 3900
+  per: seats
+  effective_date: 2026-06-01
+  source: https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-organizations-and-enterprises
