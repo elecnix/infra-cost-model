@@ -117,6 +117,10 @@ export interface UsageMetric {
    */
   fixed?: boolean;
   /**
+   * Count only the calls that arrive over edges of this type. A DynamoDB table sets edgeType read on its read-request metric and edgeType write on its write-request metric, so each call is charged once (Issue #313). An edge without a type is an invoke edge, and traffic at the entry node counts as invoke. Without edgeType, the metric counts every call. A fixed metric ignores it.
+   */
+  edgeType?: "read" | "write" | "invoke";
+  /**
    * SaaS pricing shape name (e.g., flat_subscription, per_unit_flat, free_tier, transactional)
    */
   shape?: string;

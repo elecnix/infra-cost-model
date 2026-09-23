@@ -10,6 +10,7 @@ import type {
   CostModel,
   CostNode,
   Edge,
+  EdgeType,
   Frequency,
   MetricValue,
 } from "./types";
@@ -18,12 +19,29 @@ import type {
 export class NodeUsage {
   metrics: Record<
     string,
-    number | { value: number; unit?: string; fixed?: boolean }
+    | number
+    | { value: number; unit?: string; fixed?: boolean; edgeType?: EdgeType }
   > = {};
 
-  /** Add a usage metric. Returns this for chaining. */
-  withMetric(name: string, value: number, unit?: string): this {
-    this.metrics[name] = unit ? { value, unit } : value;
+  /**
+   * Add a usage metric. Returns this for chaining. With `edgeType`, the
+   * metric counts only the calls that arrive over edges of that type (#313).
+   */
+  withMetric(
+    name: string,
+    value: number,
+    unit?: string,
+    edgeType?: EdgeType,
+  ): this {
+    if (!unit && !edgeType) {
+      this.metrics[name] = value;
+      return this;
+    }
+    this.metrics[name] = {
+      value,
+      ...(unit ? { unit } : {}),
+      ...(edgeType ? { edgeType } : {}),
+    };
     return this;
   }
 

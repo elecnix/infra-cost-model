@@ -157,6 +157,11 @@
           "default": false,
           "description": "When true, this metric is a fixed (always-on) monthly total: its value is used directly and is NOT scaled by the derived invocation count. This lets one node carry both a fixed dimension (e.g. NAT gateway hours, ALB-hours) and a usage-driven dimension (e.g. GB processed, LCUs) without splitting into two nodes (Issue #196)."
         },
+        "edgeType": {
+          "type": "string",
+          "enum": ["read", "write", "invoke"],
+          "description": "Count only the calls that arrive over edges of this type. A DynamoDB table sets edgeType read on its read-request metric and edgeType write on its write-request metric, so each call is charged once (Issue #313). An edge without a type is an invoke edge, and traffic at the entry node counts as invoke. Without edgeType, the metric counts every call. A fixed metric ignores it."
+        },
         "shape": {
           "type": "string",
           "pattern": "^[a-z][a-z_]*$",

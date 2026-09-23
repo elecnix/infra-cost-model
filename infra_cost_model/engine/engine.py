@@ -17,6 +17,12 @@ from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
 from infra_cost_model.version_requirement import require_engine
 
 
+# Edge types an edge's ``type`` and a usage metric's ``edgeType`` accept. An
+# edge without a type is an "invoke" edge.
+EDGE_TYPES = ("read", "write", "invoke")
+DEFAULT_EDGE_TYPE = "invoke"
+
+
 @dataclass
 class DerivedUsage:
     """Derived usage metrics for a single node."""
@@ -27,6 +33,28 @@ class DerivedUsage:
     input_tokens: float = 0.0  # Total input tokens received (from upstream edges)
     output_tokens: float = 0.0  # Total output tokens produced (for LLM nodes)
     edge_types: set[str] = field(default_factory=set)  # Edge types feeding this node
+    # Invocations per second that arrive over each edge type. Entry traffic
+    # counts as "invoke", the type of an edge that declares none (#313).
+    invocations_by_edge_type: dict[str, float] = field(default_factory=dict)
+
+    def invocations_for(self, metric_def) -> float:
+        """How many of this node's invocations a usage metric counts.
+
+        A metric that declares ``edgeType`` counts only the calls that arrive
+        over edges of that type, so a DynamoDB table's read metric does not
+        also count its writes (#313). A metric without ``edgeType`` counts
+        every invocation.
+        """
+        edge_type = metric_def.get("edgeType") if isinstance(metric_def, dict) else None
+        if edge_type is None:
+            return self.invocation_count
+        if edge_type not in EDGE_TYPES:
+            raise ValueError(
+                f"Unknown edgeType '{edge_type}' on a usage metric of "
+                f"'{self.resource_address}'. Valid edge types: "
+                f"{', '.join(EDGE_TYPES)}"
+            )
+        return self.invocations_by_edge_type.get(edge_type, 0.0)
 
 
 @dataclass(frozen=True)
@@ -283,6 +311,7 @@ class WorkloadDeriver:
         self.derived_usage[entry_address] = DerivedUsage(
             resource_address=entry_address,
             invocation_count=entry_freq,
+            invocations_by_edge_type={DEFAULT_EDGE_TYPE: entry_freq},
         )
 
         # Topological sort (Kahn's algorithm): start with in-degree-zero nodes
@@ -310,7 +339,7 @@ class WorkloadDeriver:
                 if token_flow:
                     token_input = parent_invocations * call_rate * token_flow.get("input", 0)
 
-                edge_type = edge.get("type", "invoke")
+                edge_type = edge.get("type", DEFAULT_EDGE_TYPE)
 
                 if child in self.derived_usage:
                     self.derived_usage[child].invocation_count += child_invocations
@@ -326,6 +355,8 @@ class WorkloadDeriver:
                     )
                     du.edge_types.add(edge_type)
                     self.derived_usage[child] = du
+                by_type = self.derived_usage[child].invocations_by_edge_type
+                by_type[edge_type] = by_type.get(edge_type, 0.0) + child_invocations
 
                 indegree[child] -= 1
                 # Only enqueue for downstream derivation when ALL incoming
@@ -633,12 +664,12 @@ class CostAggregator:
 
         # Tiered pricing supports per-metric fixed flags like flat pricing.
         if pricing_model == "tiered":
-            return self._compute_tiered_cost(address, node, usage.invocation_count)
+            return self._compute_tiered_cost(address, node, usage)
 
-        return self._compute_flat_cost(address, node, usage.invocation_count)
+        return self._compute_flat_cost(address, node, usage)
 
     def _compute_flat_cost(self, address: str, node: dict,
-                           invocations: float) -> tuple[float, float]:
+                           usage: DerivedUsage) -> tuple[float, float]:
         """Compute (variable, fixed) cost for flat-priced metrics.
 
         Each usageMetrics value is a per-invocation quantity multiplied by the
@@ -659,7 +690,7 @@ class CostAggregator:
             if error is not None:
                 raise ValueError(error)
 
-        variable_cost, consumed = self._price_derived_usage(address, node, invocations)
+        variable_cost, consumed = self._price_derived_usage(address, node, usage)
         fixed_cost = 0.0
         for metric_name, metric_def in node_metrics.items():
             if metric_name in consumed:
@@ -671,9 +702,10 @@ class CostAggregator:
 
             metric_fixed = _metric_is_fixed(metric_def, flat_override)
             # Fixed metrics use their value directly; variable metrics scale by
-            # the derived invocation count.
+            # the invocations they count (all, or one edge type's).
             total_quantity = (
-                per_invocation if metric_fixed else invocations * per_invocation
+                per_invocation if metric_fixed
+                else usage.invocations_for(metric_def) * per_invocation
             )
 
             # SaaS pricing shapes (#241): if the metric declares a ``shape``,
@@ -718,7 +750,8 @@ class CostAggregator:
 
         return (variable_cost, fixed_cost)
 
-    def _compute_tiered_cost(self, address: str, node: dict, invocations: float) -> tuple[float, float]:
+    def _compute_tiered_cost(self, address: str, node: dict,
+                             usage: DerivedUsage) -> tuple[float, float]:
         """Compute tiered pricing cost using the pricing catalog.
 
         Each usage metric represents a dimensional line item (e.g., storage GB,
@@ -744,7 +777,7 @@ class CostAggregator:
             if error is not None:
                 raise ValueError(error)
 
-        variable_cost, consumed = self._price_derived_usage(address, node, invocations)
+        variable_cost, consumed = self._price_derived_usage(address, node, usage)
         fixed_cost = 0.0
 
         for metric_name, metric_def in node_metrics.items():
@@ -757,7 +790,8 @@ class CostAggregator:
 
             metric_fixed = _metric_is_fixed(metric_def, flat_override)
             total_quantity = (
-                per_invocation if metric_fixed else invocations * per_invocation
+                per_invocation if metric_fixed
+                else usage.invocations_for(metric_def) * per_invocation
             )
 
             # SaaS pricing shapes (#241): dispatch to the shape registry before
@@ -795,7 +829,7 @@ class CostAggregator:
         return (variable_cost, fixed_cost)
 
     def _price_derived_usage(self, address: str, node: dict,
-                             invocations: float) -> tuple[float, frozenset]:
+                             derived_usage: DerivedUsage) -> tuple[float, frozenset]:
         """Price the catalog quantities the node's handler derives from
         several usage metrics, such as Lambda GB-seconds.
 
@@ -808,21 +842,29 @@ class CostAggregator:
         Like every other catalog quantity, the derived quantities are priced
         against monthly tier boundaries, so the $0 free tier rows apply
         (#287).
+
+        The handler works per node invocation. A metric that declares
+        ``edgeType`` counts only some of those invocations, so its value is
+        scaled by that share: when ``invocations`` counts only read calls,
+        the requests and GB-seconds cover only those calls (#313).
         """
         from infra_cost_model.resources.registry import ResourceRegistry
 
         resource_address = node.get("resourceAddress") or address
         if self.catalog is None or not resource_address:
             return 0.0, frozenset()
+        invocations = derived_usage.invocation_count
         usage = {}
         for name, metric_def in (node.get("usageMetrics") or {}).items():
             if _metric_is_fixed(metric_def, node.get("flatOverride", False)):
                 continue
+            share = (derived_usage.invocations_for(metric_def) / invocations
+                     if invocations else 1.0)
             if isinstance(metric_def, dict):
                 if metric_def.get("shape") is not None:
                     continue
                 metric_def = metric_def.get("value", 0)
-            usage[name] = self._resolve_param(metric_def)
+            usage[name] = self._resolve_param(metric_def) * share
         derived = ResourceRegistry.derive_catalog_usage(resource_address, usage)
         if derived is None:
             return 0.0, frozenset()
@@ -1228,6 +1270,9 @@ class CostEngine:
                     all_derived[addr].data_in += du.data_in
                     all_derived[addr].input_tokens += du.input_tokens
                     all_derived[addr].edge_types |= du.edge_types
+                    by_type = all_derived[addr].invocations_by_edge_type
+                    for edge_type, count in du.invocations_by_edge_type.items():
+                        by_type[edge_type] = by_type.get(edge_type, 0.0) + count
                 else:
                     all_derived[addr] = du
 
