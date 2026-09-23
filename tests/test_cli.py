@@ -890,7 +890,7 @@ class TestCLIComputeMonthly:
             sys.stdout = old_stdout
 
             # Extract total from each
-            ps_total_match = re.search(r"Total: \$([\d.]+)", per_second_output)
+            ps_total_match = re.search(r"Total Per-Second Cost: \$([\d.]+)", per_second_output)
             mo_total_match = re.search(r"Total Monthly Cost: \$([\d.]+)", monthly_output)
             assert ps_total_match is not None, f"No total in per-second output: {per_second_output}"
             assert mo_total_match is not None, f"No total in monthly output: {monthly_output}"

@@ -482,6 +482,47 @@ def _price_pooled_charges(catalog: PricingCatalog,
     return deltas
 
 
+@dataclass
+class _ShapeCharge:
+    """One usage-driven quantity of a shaped metric that a node pays for.
+
+    ``quantity`` and ``cost`` cover a month. ``cost`` is what the node's
+    usage-driven cost holds for this charge right now.
+    """
+    node: str
+    metric: str
+    params: dict
+    quantity: float
+    cost: float
+
+
+def _price_pooled_shapes(charges: list[_ShapeCharge]) -> dict[str, float]:
+    """Price each node's shaped metric once on a month of use (#305).
+
+    A shape's parameters, such as a free allowance or a subscription rate,
+    describe a month of the node's whole use. When several workflows reach
+    a node, each one adds a charge for the same metric. This sums their
+    monthly quantities, calls the handler once, and returns, per node, the
+    change to its usage-driven cost (per second). A metric with one charge
+    keeps its cost.
+    """
+    from infra_cost_model.saas import SaaSPricingRegistry
+
+    pools: dict[tuple[str, str], list[_ShapeCharge]] = defaultdict(list)
+    for charge in charges:
+        pools[(charge.node, charge.metric)].append(charge)
+
+    deltas: dict[str, float] = defaultdict(float)
+    for (node, _), members in pools.items():
+        if len(members) < 2:
+            continue
+        params = members[0].params
+        quantity = sum(c.quantity for c in members)
+        cost = SaaSPricingRegistry.compute(params["shape"], quantity, params)
+        deltas[node] += (cost - sum(c.cost for c in members)) / SECONDS_PER_MONTH
+    return deltas
+
+
 class CostAggregator:
     """Aggregates costs bottom-up from derived usage + pricing."""
 
@@ -504,6 +545,9 @@ class CostAggregator:
         # Every catalog quantity a node pays for, so that tiers apply to the
         # account's total rather than to each node (#294).
         self.catalog_charges: list[_CatalogCharge] = []
+        # Every usage-driven quantity of a shaped metric, so that a model
+        # with several workflows can price each shape once (#305).
+        self.shape_charges: list[_ShapeCharge] = []
         self._pricing_address: Optional[str] = None
 
     def _record_unpriced(self, address: str, node: dict, metric: str,
@@ -520,8 +564,8 @@ class CostAggregator:
         """Aggregate costs. Returns combined (variable + fixed) node costs.
 
         Variable cost is in per-second internal units; fixed cost is a flat
-        monthly total. The CostEngine scales the variable portion to the output
-        time basis using ``fixed_costs`` to keep fixed totals unscaled.
+        monthly total. The CostEngine converts each portion to the output
+        time basis, using ``fixed_costs`` to tell them apart.
 
         Catalog tiers apply to the total across all nodes: each node first
         gets the cost of its own quantity, then the pooled pricing replaces
@@ -550,7 +594,7 @@ class CostAggregator:
         - variable cost is the usage-driven cost in per-second internal units
           (scaled later to the output time basis), and
         - fixed cost is the frequency-independent cost expressed as a flat
-          monthly total (never scaled by the time basis).
+          monthly total (converted to the time basis by ``CostEngine``).
 
         A usage metric marked ``fixed: true`` — or any metric on a node with
         ``flatOverride: true`` — contributes to the fixed cost using its value
@@ -641,7 +685,8 @@ class CostAggregator:
             # resources that the catalog cannot reach. An unknown shape raises
             # ValueError from the registry rather than falling through to the
             # catalog, so a misspelled shape cannot price at $0.
-            metric_cost = self._price_shape(metric_def, total_quantity, metric_fixed)
+            metric_cost = self._price_shape(metric_name, metric_def,
+                                            total_quantity, metric_fixed)
 
             # Query catalog first (preferred path per Principle 13), else fall
             # back to embedded pricingRates (deprecated per Principle 13).
@@ -717,7 +762,8 @@ class CostAggregator:
 
             # SaaS pricing shapes (#241): dispatch to the shape registry before
             # the catalog path, same as _compute_flat_cost.
-            metric_cost = self._price_shape(metric_def, total_quantity, metric_fixed)
+            metric_cost = self._price_shape(metric_name, metric_def,
+                                            total_quantity, metric_fixed)
 
             if metric_cost is None and self.catalog is not None:
                 result = self._query_catalog(node, metric_name,
@@ -792,7 +838,7 @@ class CostAggregator:
             cost += result.total_cost
         return cost, derived.consumed
 
-    def _price_shape(self, metric_def, quantity: float,
+    def _price_shape(self, metric: str, metric_def, quantity: float,
                      fixed: bool) -> Optional[float]:
         """Price a metric through its SaaS pricing shape, if it has one.
 
@@ -803,14 +849,23 @@ class CostAggregator:
         and its monthly cost is converted back to a cost per second, the way
         catalog tiers are priced (#292, #295). The handler also gets the
         metric's effective ``fixed`` flag, which ``flatOverride`` can set.
+
+        Each usage-driven quantity is also kept as a charge, so that a model
+        with several workflows can price the node's month of use once (#305).
         """
         if not isinstance(metric_def, dict) or metric_def.get("shape") is None:
             return None
         from infra_cost_model.saas import SaaSPricingRegistry
         period = 1.0 if fixed else SECONDS_PER_MONTH
+        params = {**metric_def, "fixed": fixed}
         monthly_cost = SaaSPricingRegistry.compute(
-            metric_def["shape"], quantity * period, {**metric_def, "fixed": fixed}
+            metric_def["shape"], quantity * period, params
         )
+        if not fixed and self._pricing_address is not None:
+            self.shape_charges.append(_ShapeCharge(
+                node=self._pricing_address, metric=metric, params=params,
+                quantity=quantity * period, cost=monthly_cost,
+            ))
         return monthly_cost / period
 
     def _query_catalog(self, node: dict, metric: str, quantity: float,
@@ -1047,6 +1102,19 @@ class CostEngine:
             return SECONDS_PER_MONTH * 12
         return 1.0  # perSecond
 
+    @property
+    def _fixed_multiplier(self) -> float:
+        """Multiplier to convert monthly fixed costs to the output time basis.
+
+        A fixed cost is a monthly total. Per second, it spreads over the
+        seconds in a month, like every other monthly amount (#304).
+        """
+        if self.time_basis == "monthly":
+            return 1.0
+        if self.time_basis == "yearly":
+            return 12.0
+        return 1.0 / SECONDS_PER_MONTH  # perSecond
+
     def compute(self) -> dict[str, float]:
         """Run full cost derivation and aggregation.
 
@@ -1090,8 +1158,8 @@ class CostEngine:
                                      self.catalog, parameters=self.parameters)
         aggregator.aggregate()
 
-        # Convert per-second usage-driven costs to the output period; fixed
-        # (always-on) costs are already flat monthly totals and are not scaled.
+        # Convert per-second usage-driven costs and monthly fixed costs to
+        # the output time basis.
         self.costs = self._finalize_costs(aggregator.costs, aggregator.fixed_costs)
         self._report_unpriced(aggregator.unpriced)
 
@@ -1101,7 +1169,9 @@ class CostEngine:
         """Compute costs for a multi-workflow cost model.
 
         Each workflow is derived independently from its own entry point.
-        Costs for shared nodes are summed across workflows.
+        Costs for shared nodes are summed across workflows. Catalog tiers and
+        usage-driven SaaS shapes then apply to a month of use across all
+        workflows, not to each workflow's share (#294, #305).
         """
         if not self.validator.validate():
             raise ValueError(f"Invalid DAG: {'; '.join(self.validator.errors)}")
@@ -1117,6 +1187,9 @@ class CostEngine:
         # from the last workflow that reaches it.
         variable_charges: list[_CatalogCharge] = []
         fixed_charges: dict[str, list[_CatalogCharge]] = {}
+        # Usage-driven shaped metrics from every workflow, so that each
+        # node's shape prices a month of its whole use once (#305).
+        shape_charges: list[_ShapeCharge] = []
 
         for wf in self.workflows:
             wf_params = wf.get("parameters", {})
@@ -1128,6 +1201,7 @@ class CostEngine:
                                          self.catalog, parameters=wf_params)
             aggregator.aggregate()
             all_unpriced.extend(aggregator.unpriced)
+            shape_charges.extend(aggregator.shape_charges)
 
             wf_fixed_charges: dict[str, list[_CatalogCharge]] = defaultdict(list)
             for charge in aggregator.catalog_charges:
@@ -1163,12 +1237,13 @@ class CostEngine:
                 all_variable[addr] += variable_delta
                 all_fixed[addr] = all_fixed.get(addr, 0.0) + fixed_delta
 
-        # Convert per-second usage-driven costs to the output period; fixed
-        # (always-on) costs are flat monthly totals and scale by 12 for yearly
-        # output. This matches _finalize_costs, so the two workflow paths agree
-        # for a given time basis.
+        for addr, variable_delta in _price_pooled_shapes(shape_charges).items():
+            all_variable[addr] += variable_delta
+
+        # Convert both parts to the output time basis, the same way as
+        # _finalize_costs, so the two workflow paths agree.
         multiplier = self._time_multiplier
-        fixed_multiplier = 12.0 if self.time_basis == "yearly" else 1.0
+        fixed_multiplier = self._fixed_multiplier
         self.costs = {}
         for addr in set(all_variable) | set(all_fixed):
             self.costs[addr] = (
@@ -1195,7 +1270,7 @@ class CostEngine:
                 merged[key].quantity += miss.quantity
 
         multiplier = self._time_multiplier
-        fixed_multiplier = 12.0 if self.time_basis == "yearly" else 1.0
+        fixed_multiplier = self._fixed_multiplier
         self.unpriced_metrics = [
             UnpricedMetric(
                 node=m.node, metric=m.metric, provider=m.provider,
@@ -1210,15 +1285,15 @@ class CostEngine:
 
     def _finalize_costs(self, combined: dict[str, float],
                             fixed: dict[str, float]) -> dict[str, float]:
-        """Combine per-second variable cost with flat monthly fixed cost.
+        """Convert each node's cost to the output time basis.
 
-        ``combined[addr]`` is variable + fixed in per-second internal units
-        (the fixed part already a monthly total). The usage-driven portion is
-        scaled to the output time basis; the fixed portion is also scaled if
-        yearly is requested (Principle 9 / Issue #196).
+        ``combined[addr]`` is the usage-driven cost per second plus the fixed
+        cost ``fixed[addr]``, which is a monthly total. Both parts convert to
+        the output time basis, so the result has one unit: per second, per
+        month or per year (Principle 9, #196, #304).
         """
         multiplier = self._time_multiplier
-        fixed_multiplier = 12.0 if self.time_basis == "yearly" else 1.0
+        fixed_multiplier = self._fixed_multiplier
         final: dict[str, float] = {}
         for addr, total in combined.items():
             fx = fixed.get(addr, 0.0)

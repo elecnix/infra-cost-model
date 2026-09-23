@@ -2565,7 +2565,7 @@ class TestFixedMetrics:
             },
             "pricingRates": {"gatewayHours": 0.045},
         }
-        engine = CostEngine(model)
+        engine = CostEngine(model, time_basis="monthly")
         costs = engine.compute()
 
         assert "nat" in costs
@@ -2681,7 +2681,8 @@ class TestFixedMetrics:
         assert len(dp9_warnings) == 0
 
     def test_fixed_metric_monthly_time_basis(self):
-        """Under monthly basis, the variable part scales but the fixed part stays flat."""
+        """Both parts convert to the time basis: the fixed part is a monthly
+        total, so per second it spreads over the seconds in a month (#304)."""
         from infra_cost_model.engine.engine import SECONDS_PER_MONTH
 
         model = make_valid_cost_model(frequency=100)
@@ -2696,8 +2697,8 @@ class TestFixedMetrics:
         per_second = CostEngine(model, time_basis="perSecond").compute()
         monthly = CostEngine(model, time_basis="monthly").compute()
 
-        # Fixed cost is a monthly total in BOTH bases (not multiplied).
-        assert per_second["nat"] == pytest.approx(730 * 0.045)
+        # Fixed cost is a monthly total, so per second it is divided.
+        assert per_second["nat"] == pytest.approx(730 * 0.045 / SECONDS_PER_MONTH)
         assert monthly["nat"] == pytest.approx(730 * 0.045)
         # A normal node's cost IS multiplied by the month length.
         assert monthly["get_user_fn"] == pytest.approx(
