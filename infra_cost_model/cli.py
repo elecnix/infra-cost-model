@@ -285,6 +285,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     if requirement_error is not None:
         errors = errors + [requirement_error]
 
+    # Report the nodes that `compute` with its default catalog would reject
+    # for a missing provider or region, using the engine's own rule (#273).
+    from infra_cost_model.engine.engine import catalog_location_errors
+    errors = errors + catalog_location_errors(model)
+
     if errors:
         print("Validation errors:")
         for error in errors:
