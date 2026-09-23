@@ -28,7 +28,7 @@ jobs:
           git fetch --no-tags origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
           base="origin/${base_ref}"
 
-          new_vendors=$(git diff --name-only "$base"...HEAD | grep '^vendors/[^/]*/prices.yaml' | sed 's|/prices.yaml||' | sort -u || true)
+          new_vendors=$(git diff --name-only "$base"...HEAD | grep '^infra_cost_model/vendors/[^/]*/prices.yaml' | sed 's|/prices.yaml||' | sort -u || true)
           if [ -z "$new_vendors" ]; then
             echo "vendor-only check passed (this PR adds no vendor)"
             exit 0
@@ -45,9 +45,9 @@ jobs:
             exit 0
           fi
 
-          bad=$(git diff --name-only "$base"...HEAD | grep -v '^vendors/' | grep -v '^\.github/' | grep -v '^sdk/ts/src/types\.generated\.ts' | head || true)
+          bad=$(git diff --name-only "$base"...HEAD | grep -v '^infra_cost_model/vendors/' | grep -v '^\.github/' | grep -v '^sdk/ts/src/types\.generated\.ts' | head || true)
           if [ -n "$bad" ]; then
-            echo "Vendor PR must only touch vendors/*/: $bad"
+            echo "Vendor PR must only touch infra_cost_model/vendors/*/: $bad"
             echo "A PR adding the mechanism rather than a vendor should put 'vendor-check: mechanism' on its own line in a commit message."
             exit 1
           fi

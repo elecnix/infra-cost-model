@@ -1,5 +1,6 @@
 """Conformance tests for vendor price loader."""
 
+import importlib
 import shutil
 import sqlite3
 import subprocess
@@ -9,10 +10,17 @@ from importlib import resources
 from pathlib import Path
 
 import pytest
+import yaml
 from _wheel import build_wheel, unpack_wheel
 
 from infra_cost_model.pricing.cache import Price, PricingCache
-from infra_cost_model.pricing.vendors import VendorPackageError, load_vendor_prices
+from infra_cost_model.pricing.vendors import (
+    VendorPackageError,
+    _read_vendor_prices,
+    load_vendor_prices,
+)
+
+VENDORS_PACKAGE = "infra_cost_model.vendors"
 
 
 def test_vendor_loader_loads_github_copilot_and_skips_template():
@@ -102,7 +110,7 @@ def test_vendor_loader_preserves_rows_when_validation_fails(monkeypatch, tmp_pat
     )
     cache.upsert(sentinel)
 
-    source_vendors = resources.files("vendors")
+    source_vendors = resources.files(VENDORS_PACKAGE)
     broken_vendors = tmp_path / "vendors"
     shutil.copytree(source_vendors, broken_vendors)
     (broken_vendors / "auth0" / "prices.yaml").write_text("- vendor: auth0\n  service: Auth0\n")
@@ -111,10 +119,10 @@ def test_vendor_loader_preserves_rows_when_validation_fails(monkeypatch, tmp_pat
     monkeypatch.setattr(
         resources,
         "files",
-        lambda package: broken_vendors if package == "vendors" else original_files(package),
+        lambda package: broken_vendors if package == VENDORS_PACKAGE else original_files(package),
     )
 
-    with pytest.raises(ValueError, match=r"vendors/auth0/prices.yaml, row 1: 'usage_metric'"):
+    with pytest.raises(ValueError, match=r"infra_cost_model/vendors/auth0/prices.yaml, row 1: 'usage_metric'"):
         load_vendor_prices(cache)
 
     with sqlite3.connect(cache.db_path) as conn:
@@ -124,11 +132,11 @@ def test_vendor_loader_preserves_rows_when_validation_fails(monkeypatch, tmp_pat
 
 
 def _replace_vendors_package(monkeypatch, result):
-    """Make ``resources.files("vendors")`` return *result*, or raise it."""
+    """Make ``resources.files(VENDORS_PACKAGE)`` return *result*, or raise it."""
     original_files = resources.files
 
     def fake_files(package):
-        if package != "vendors":
+        if package != VENDORS_PACKAGE:
             return original_files(package)
         if isinstance(result, BaseException):
             raise result
@@ -137,9 +145,27 @@ def _replace_vendors_package(monkeypatch, result):
     monkeypatch.setattr(resources, "files", fake_files)
 
 
+def test_vendor_data_lives_inside_the_package():
+    """The data is in ``infra_cost_model.vendors``, a name no other project can install (#290)."""
+    package = importlib.import_module(VENDORS_PACKAGE)
+    root = resources.files(package)
+    prices_files = sorted(
+        entry.name
+        for entry in root.iterdir()
+        if entry.is_dir() and not entry.name.startswith("_") and entry.joinpath("prices.yaml").is_file()
+    )
+    assert "github-copilot" in prices_files
+
+    rows_on_disk = sum(
+        len(yaml.safe_load(root.joinpath(name, "prices.yaml").read_text(encoding="utf-8")))
+        for name in prices_files
+    )
+    assert len(_read_vendor_prices()) == rows_on_disk
+
+
 @pytest.mark.parametrize(
     "failure",
-    [ModuleNotFoundError("No module named 'vendors'"), TypeError("not a package")],
+    [ModuleNotFoundError(f"No module named '{VENDORS_PACKAGE}'"), TypeError("not a package")],
 )
 def test_missing_vendors_package_is_an_error(monkeypatch, tmp_path, failure):
     """A broken install must not price every vendor node at $0 without a word."""
@@ -147,46 +173,17 @@ def test_missing_vendors_package_is_an_error(monkeypatch, tmp_path, failure):
 
     with pytest.raises(VendorPackageError, match=r"pip install -e \.") as excinfo:
         PricingCache(db_path=tmp_path / "pricing.db")
-    assert "can't import the 'vendors' package" in str(excinfo.value)
+    assert f"can't import the '{VENDORS_PACKAGE}' package" in str(excinfo.value)
 
 
-def test_foreign_vendors_package_is_an_error(monkeypatch, tmp_path):
-    """An unrelated installed package named ``vendors`` is not used in place of ours."""
-    foreign = tmp_path / "site-packages" / "vendors"
-    (foreign / "acme").mkdir(parents=True)
-    (foreign / "__init__.py").write_text("")
-    (foreign / "acme" / "prices.yaml").write_text(
-        "- vendor: acme\n  service: Acme\n  usage_metric: Acme-Call\n"
-        "  unit: calls\n  price_usd: 1.0\n"
-    )
-    _replace_vendors_package(monkeypatch, foreign)
+def test_vendors_package_without_data_is_an_error(monkeypatch, tmp_path):
+    """An install that left out the price files is an error, not a $0 estimate."""
+    empty = tmp_path / "site-packages" / "infra_cost_model" / "vendors"
+    empty.mkdir(parents=True)
+    (empty / "__init__.py").write_text("")
+    _replace_vendors_package(monkeypatch, empty)
 
-    with pytest.raises(VendorPackageError, match=r"isn't this project's") as excinfo:
+    with pytest.raises(VendorPackageError, match=r"has no vendor price files") as excinfo:
         PricingCache(db_path=tmp_path / "pricing.db")
-    assert str(foreign) in str(excinfo.value)
+    assert str(empty) in str(excinfo.value)
     assert "pip install -e ." in str(excinfo.value)
-
-
-def test_foreign_vendors_package_on_sys_path_is_an_error(tmp_path):
-    """The check also holds when a real foreign package shadows ours on the import path."""
-    foreign = tmp_path / "shadow" / "vendors"
-    foreign.mkdir(parents=True)
-    (foreign / "__init__.py").write_text("")
-    script = (
-        "import sys\n"
-        f"sys.path.insert(0, {str(foreign.parent)!r})\n"
-        "sys.modules.pop('vendors', None)\n"
-        "from infra_cost_model.pricing.cache import PricingCache\n"
-        "from infra_cost_model.pricing.vendors import VendorPackageError\n"
-        "try:\n"
-        f"    PricingCache(db_path={str(tmp_path / 'pricing.db')!r})\n"
-        "except VendorPackageError as exc:\n"
-        "    print(exc)\n"
-        "else:\n"
-        "    raise SystemExit('no error')\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, cwd=tmp_path
-    )
-    assert result.returncode == 0, result.stderr + result.stdout
-    assert "isn't this project's" in result.stdout

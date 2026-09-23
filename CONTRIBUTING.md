@@ -4,12 +4,12 @@
 
 To add a SaaS vendor (for example, Linear, Datadog, or Vercel):
 
-1. Copy `vendors/_template/` to `vendors/<your-vendor>/` (use a lowercase id with hyphens).
+1. Copy `infra_cost_model/vendors/_template/` to `infra_cost_model/vendors/<your-vendor>/` (use a lowercase id with hyphens).
 2. Edit `vendor.yaml`: set `id`, `display_name`, `homepage`, and `pricing_page`.
 3. Edit `prices.yaml`: add normalized price rows as described below.
 4. Run `python3 -m infra_cost_model.cli validate <file>` for every cost model example you add or change.
 5. Run `python3 -m pytest -q` to verify that the vendor loads correctly.
-6. Open a pull request. A vendor-only contribution should touch only `vendors/<your-vendor>/`.
+6. Open a pull request. A vendor-only contribution should touch only `infra_cost_model/vendors/<your-vendor>/`.
 
 Two vendor-only pull requests do not conflict because each changes prices in its own directory.
 

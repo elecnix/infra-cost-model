@@ -1,4 +1,4 @@
-"""Vendor price loading from the bundled ``vendors`` package."""
+"""Vendor price loading from the bundled ``infra_cost_model.vendors`` package."""
 
 from __future__ import annotations
 
@@ -14,16 +14,16 @@ import yaml
 from .cache import Price, PricingCache, _hash_attributes
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from importlib.resources.abc import Traversable
 
-# Every copy of this project's ``vendors`` package ships this file, and the
-# wheel includes it through the ``*/vendor.yaml`` package-data pattern. A
-# package named ``vendors`` without it belongs to some other project.
-_MARKER = ("_template", "vendor.yaml")
+# The price data ships inside this project's own package, so no other
+# installed project can shadow it.
+VENDORS_PACKAGE = "infra_cost_model.vendors"
 
 _REINSTALL_HINT = (
     "Reinstall infra-cost-model (from a checkout: pip install -e .) so that it "
-    "installs its own 'vendors' package."
+    "installs its vendor price files."
 )
 
 _REQUIRED_STRINGS = ("vendor", "service", "usage_metric", "unit")
@@ -31,27 +31,37 @@ _OPTIONAL_NUMBERS = ("start_usage_amount", "end_usage_amount")
 
 
 class VendorPackageError(ValueError):
-    """The bundled ``vendors`` package is missing or isn't this project's."""
+    """The bundled vendor price files are missing from this install."""
 
 
 def _vendors_root() -> Traversable:
-    """Return this project's ``vendors`` package, or raise ``VendorPackageError``.
+    """Return the bundled vendor data directory, or raise ``VendorPackageError``.
 
     Without it, every vendor-priced node would cost $0 with no sign of why.
     """
     try:
-        root = resources.files("vendors")
+        root = resources.files(VENDORS_PACKAGE)
     except (ModuleNotFoundError, TypeError) as exc:
         raise VendorPackageError(
-            f"Vendor prices didn't load: Python can't import the 'vendors' package "
-            f"({exc}). {_REINSTALL_HINT}"
+            f"Vendor prices didn't load: Python can't import the '{VENDORS_PACKAGE}' "
+            f"package ({exc}). {_REINSTALL_HINT}"
         ) from exc
-    if not root.joinpath(_MARKER[0]).joinpath(_MARKER[1]).is_file():
+    if not any(_prices_files(root)):
         raise VendorPackageError(
-            f"Vendor prices didn't load: the 'vendors' package at {root} isn't this "
-            f"project's, because it has no {'/'.join(_MARKER)}. {_REINSTALL_HINT}"
+            f"Vendor prices didn't load: the '{VENDORS_PACKAGE}' package at {root} "
+            f"has no vendor price files. {_REINSTALL_HINT}"
         )
     return root
+
+
+def _prices_files(root: Traversable) -> Iterator[tuple[str, Traversable]]:
+    """Yield each vendor's id and ``prices.yaml``, skipping ``_``-prefixed scaffolding."""
+    for vendor_dir in sorted(root.iterdir(), key=lambda item: item.name):
+        if not vendor_dir.is_dir() or vendor_dir.name.startswith("_"):
+            continue
+        prices_file = vendor_dir.joinpath("prices.yaml")
+        if prices_file.is_file():
+            yield vendor_dir.name, prices_file
 
 
 def _row_error(source: str, index: int, message: str) -> ValueError:
@@ -122,13 +132,8 @@ def _read_vendor_prices() -> list[Price]:
 
     fetched_at = datetime.now().isoformat()
     parsed: list[Price] = []
-    for vendor_dir in sorted(vendors_root.iterdir(), key=lambda item: item.name):
-        if not vendor_dir.is_dir() or vendor_dir.name.startswith("_"):
-            continue
-        prices_file = vendor_dir.joinpath("prices.yaml")
-        if not prices_file.is_file():
-            continue
-        source = f"vendors/{vendor_dir.name}/prices.yaml"
+    for vendor_id, prices_file in _prices_files(vendors_root):
+        source = f"infra_cost_model/vendors/{vendor_id}/prices.yaml"
         try:
             data = yaml.safe_load(prices_file.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, yaml.YAMLError) as exc:

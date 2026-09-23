@@ -39,9 +39,9 @@ version = {attr = "infra_cost_model.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["infra_cost_model*", "vendors"]
+include = ["infra_cost_model*"]
 
 [tool.setuptools.package-data]
-vendors = ["*/vendor.yaml", "*/prices.yaml"]
+"infra_cost_model.vendors" = ["*/vendor.yaml", "*/prices.yaml"]
 "infra_cost_model.schema" = ["*.json"]
 "infra_cost_model.pricing" = ["seed/*.json"]

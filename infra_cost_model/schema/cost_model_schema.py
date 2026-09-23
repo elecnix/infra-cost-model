@@ -24,11 +24,11 @@ _BASE_PROVIDERS = {"aws", "azure", "gcp", "bedrock", "openai", "external"}
 
 def _load_known_providers() -> set[str]:
     """Known provider ids at load time: builtins plus every vendor declared under
-    ``vendors/<id>/vendor.yaml``. To register a new provider, add one such file.
+    ``infra_cost_model/vendors/<id>/vendor.yaml``. To register a new provider, add one such file.
     """
     known = set(_BASE_PROVIDERS)
     try:
-        vendors_dir = resources.files("vendors")
+        vendors_dir = resources.files("infra_cost_model.vendors")
     except (ModuleNotFoundError, TypeError):
         return known
     for vendor_dir in sorted(vendors_dir.iterdir(), key=lambda item: item.name):
@@ -90,7 +90,7 @@ def _provider_errors(model: dict) -> list[str]:
         prefix = f"nodes.{name}.provider: " if isinstance(name, str) else ""
         errors.append(
             f'{prefix}Unknown provider "{provider}". '
-            f'Known providers: {known_list} (add a vendors/<id>/vendor.yaml to register it).'
+            f'Known providers: {known_list} (add an infra_cost_model/vendors/<id>/vendor.yaml to register it).'
         )
     return errors
 
