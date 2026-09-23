@@ -84,8 +84,63 @@ class TieredPrice:
         return total
 
 
+class SeedFileNotFound(RuntimeError):
+    """The seed price file is not at SEED_PRICES_PATH."""
+
+
+def load_seed_rows(services: list[str] | None = None) -> list[Price]:
+    """Read the seed file and return its rows as prices.
+
+    Every caller that reads the seed file goes through this function, so they
+    all read the same path and keep the same fields. It reads
+    ``SEED_PRICES_PATH`` when called, so a test that patches it changes what
+    every caller reads.
+
+    Args:
+        services: Service names to keep. None keeps every row.
+
+    Returns:
+        One Price per row, with the row's ``attributes`` and ``per`` and the
+        source ``"seed"``.
+
+    Raises:
+        SeedFileNotFound: If the seed file doesn't exist.
+        RuntimeError: If the seed file isn't valid JSON.
+    """
+    path = SEED_PRICES_PATH
+    if not path.exists():
+        raise SeedFileNotFound(f"Seed prices file not found at {path}")
+    try:
+        seed_data = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid seed prices JSON: {e}") from e
+
+    now = datetime.now().isoformat()
+    return [
+        Price(
+            vendor=item.get("vendor"),
+            service=item.get("service"),
+            region=item.get("region"),
+            product_family=item.get("product_family", ""),
+            attributes=item.get("attributes", {}),
+            usage_metric=item.get("usage_metric"),
+            unit=item.get("unit"),
+            price_usd=item.get("price_usd", 0),
+            start_usage_amount=item.get("start_usage_amount"),
+            end_usage_amount=item.get("end_usage_amount"),
+            purchase_option=None,
+            effective_date=now,
+            source="seed",
+            fetched_at=now,
+            per=item.get("per"),
+        )
+        for item in seed_data
+        if services is None or item.get("service") in services
+    ]
+
+
 def seed_prices(cache: Optional["PricingCache"] = None) -> int:
-    """Load seed prices into cache. Returns count of prices loaded.
+    """Load every seed price into the cache. Returns count of prices loaded.
 
     Args:
         cache: PricingCache instance (creates default if None)
@@ -94,33 +149,28 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
         Number of prices loaded
 
     Raises:
-        RuntimeError: If seed file not found.
+        SeedFileNotFound: If the seed file doesn't exist.
+        RuntimeError: If the seed file isn't valid JSON.
     """
     if cache is None:
         cache = PricingCache()
 
-    if not SEED_PRICES_PATH.exists():
-        raise RuntimeError(f"Seed prices file not found at {SEED_PRICES_PATH}")
+    rows = load_seed_rows()
 
     conn = sqlite3.connect(cache.db_path)
-    count = 0
-    now = datetime.now().isoformat()
-
-    # Seed loading must be idempotent. SQLite treats NULL as distinct in the
-    # UNIQUE constraint, so seed rows (which carry purchase_option=NULL) would
-    # be re-inserted as duplicates on every load via INSERT OR IGNORE. Delete
-    # ALL existing seed-sourced rows first, then insert a fresh copy from the
-    # seed file. This also flips metrics that gained a $0 free-tier from flat to
-    # tiered pricing without leaving stale flat rows behind (DP#13).
-    conn.execute(
-        "DELETE FROM prices WHERE source IN ('seed', 'seed-initial')"
-    )
-    conn.commit()
-
     try:
-        seed_data = json.loads(SEED_PRICES_PATH.read_text())
-        for item in seed_data:
-            attrs_hash = _hash_attributes(item.get("attributes", {}))
+        # Seed loading must be idempotent. SQLite treats NULL as distinct in
+        # the UNIQUE constraint, so seed rows (which carry
+        # purchase_option=NULL) would be re-inserted as duplicates on every
+        # load via INSERT OR IGNORE. Delete ALL existing seed-sourced rows
+        # first, then insert a fresh copy from the seed file. This also flips
+        # metrics that gained a $0 free-tier from flat to tiered pricing
+        # without leaving stale flat rows behind (DP#13). "seed-initial" is
+        # the label older versions gave rows loaded for a list of services.
+        conn.execute(
+            "DELETE FROM prices WHERE source IN ('seed', 'seed-initial')"
+        )
+        for price in rows:
             conn.execute("""
                 INSERT OR IGNORE INTO prices (
                     vendor, service, region, product_family, attributes,
@@ -129,32 +179,19 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
                     effective_date, source, fetched_at, per
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                item.get("vendor"),
-                item.get("service"),
-                item.get("region"),
-                item.get("product_family", ""),
-                json.dumps(item.get("attributes", {})),
-                attrs_hash,
-                item.get("usage_metric"),
-                item.get("unit"),
-                item.get("price_usd", 0),
-                item.get("start_usage_amount"),
-                item.get("end_usage_amount"),
-                None,
-                now,
-                "seed",
-                now,
-                item.get("per"),
+                price.vendor, price.service, price.region, price.product_family,
+                json.dumps(price.attributes), _hash_attributes(price.attributes),
+                price.usage_metric, price.unit, price.price_usd,
+                price.start_usage_amount, price.end_usage_amount,
+                price.purchase_option, price.effective_date, price.source,
+                price.fetched_at, price.per,
             ))
-            count += 1
         conn.commit()
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Invalid seed prices JSON: {e}") from e
     finally:
         conn.close()
 
     cache._seed_loaded = True
-    return count
+    return len(rows)
 
 
 class PricingCache:

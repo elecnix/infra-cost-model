@@ -5,7 +5,7 @@ from datetime import datetime
 
 import requests
 
-from infra_cost_model.pricing.cache import SEED_PRICES_PATH
+from infra_cost_model.pricing import cache as cache_module
 
 AWS_PRICE_LIST_URL = "https://pricing.us-east-1.amazonaws.com"
 
@@ -57,14 +57,17 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
                         seed_only: bool = False) -> int:
     """Load seed file prices into the cache, then fill gaps from the AWS Price List API.
 
+    Both paths read the seed file through load_seed_rows in
+    infra_cost_model.pricing.cache, so they keep every field of a row and
+    label it with the source "seed".
+
     The live fetch covers only services with an entry in SERVICE_CODES. It
     skips any other service name with a UserWarning that names it, and never
     sends that name to the API.
 
     Args:
         services: AWS service names to sync. None means every service in the
-            seed file, loaded through seed_prices in
-            infra_cost_model.pricing.cache, then a live fetch for each
+            seed file, loaded through seed_prices, then a live fetch for each
             SERVICE_CODES service that still has no cached rows.
         cache: PricingCache instance
         region: AWS region (default: us-east-1)
@@ -75,13 +78,27 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
 
     Raises:
         ValueError: If services is an empty list
-        RuntimeError: If no pricing data could be fetched and seed file unavailable
+        RuntimeError: If seed_only is True and the seed file is missing, or if
+            no pricing data could be loaded. The message says whether the seed
+            file is missing or has no rows for the requested services.
     """
-    from infra_cost_model.pricing.cache import Price, seed_prices
-    import json
+    if services is not None and not services:
+        raise ValueError("services must name at least one AWS service, or be None for all")
+
+    try:
+        if services is None:
+            count = cache_module.seed_prices(cache)
+        else:
+            count, cached = _load_seed_services(services, cache, region)
+        seed_missing = False
+    except cache_module.SeedFileNotFound:
+        if seed_only:
+            raise _no_pricing_error(services, region, seed_missing=True) from None
+        seed_missing = True
+        count = 0
+        cached = _cached_metrics(cache, services, region) if services else {}
 
     if services is None:
-        count = seed_prices(cache) if SEED_PRICES_PATH.exists() else 0
         if seed_only:
             return count
         # Fetch live prices only for known services the seed file didn't cover.
@@ -89,61 +106,8 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
         missing = [s for s in SERVICE_CODES if s not in cached_services]
         count += _fetch_live(missing, cache, region, set(), datetime.now().isoformat())
         if count == 0:
-            raise _no_pricing_error()
+            raise _no_pricing_error(services, region, seed_missing)
         return count
-    elif not services:
-        raise ValueError("services must name at least one AWS service, or be None for all")
-
-    count = 0
-    now = datetime.now().isoformat()
-    seen = set()
-
-    # Skip seed rows the cache already has for the same service, region and
-    # usage metric (e.g., seed_prices loaded them already). Prevents duplicate
-    # tiered entries from two code paths reading the same JSON file. The check
-    # runs per metric, so a cached row for one metric, or a "global" row,
-    # doesn't stop the other seed rows of that service from loading.
-    cached = _cached_metrics(cache, services, region)
-
-    # First, load from seed file if it exists
-    if SEED_PRICES_PATH.exists():
-        try:
-            seed_data = json.loads(SEED_PRICES_PATH.read_text())
-            for item in seed_data:
-                if item.get("vendor") != "aws":
-                    continue
-                if item.get("service") not in services:
-                    continue
-                # Global services such as CloudFront have no AWS region, so
-                # their seed rows use "global" and load for any region.
-                if item.get("region") not in (region, "global"):
-                    continue
-
-                if (item["service"], item["region"], item["usage_metric"]) in cached:
-                    continue
-                key = (item["service"], item["usage_metric"], item["unit"], item["price_usd"])
-                if key in seen:
-                    continue
-                seen.add(key)
-
-                cache.upsert(Price(
-                    vendor=item["vendor"],
-                    service=item["service"],
-                    region=item["region"],
-                    product_family=item.get("product_family", ""),
-                    attributes={},
-                    usage_metric=item["usage_metric"],
-                    unit=item["unit"],
-                    price_usd=item["price_usd"],
-                    start_usage_amount=item.get("start_usage_amount"),
-                    end_usage_amount=item.get("end_usage_amount"),
-                    source="seed-initial",
-                    effective_date=now,
-                    fetched_at=now,
-                ))
-                count += 1
-        except (json.JSONDecodeError, KeyError):
-            pass  # Fall through to API or error
 
     # If we loaded from seed, return count
     if seed_only or count > 0:
@@ -164,12 +128,45 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
             stacklevel=2,
         )
     known = [s for s in missing if s in SERVICE_CODES]
-    count += _fetch_live(known, cache, region, seen, now)
+    count += _fetch_live(known, cache, region, set(), datetime.now().isoformat())
 
     if count == 0:
-        raise _no_pricing_error()
+        raise _no_pricing_error(services, region, seed_missing)
 
     return count
+
+
+def _load_seed_services(services: list[str], cache, region: str) -> tuple[int, dict]:
+    """Load the AWS seed rows of these services that the cache lacks.
+
+    Returns the number of rows loaded and the cached row counts per
+    (service, region, usage metric) from before the load.
+
+    Raises:
+        SeedFileNotFound: If the seed file doesn't exist.
+    """
+    rows = cache_module.load_seed_rows(services)
+
+    # Skip seed rows the cache already has for the same service, region and
+    # usage metric (e.g., seed_prices loaded them already). Prevents duplicate
+    # tiered entries from two code paths reading the same JSON file. The check
+    # runs per metric, so a cached row for one metric, or a "global" row,
+    # doesn't stop the other seed rows of that service from loading.
+    cached = _cached_metrics(cache, services, region)
+
+    count = 0
+    for price in rows:
+        if price.vendor != "aws":
+            continue
+        # Global services such as CloudFront have no AWS region, so their
+        # seed rows use "global" and load for any region.
+        if price.region not in (region, "global"):
+            continue
+        if (price.service, price.region, price.usage_metric) in cached:
+            continue
+        cache.upsert(price)
+        count += 1
+    return count, cached
 
 
 def _cached_metrics(cache, services: list[str], region: str) -> dict:
@@ -226,9 +223,19 @@ def _fetch_live(services: list[str], cache, region: str, seen: set, now: str) ->
     return count
 
 
-def _no_pricing_error() -> RuntimeError:
+def _no_pricing_error(services: list[str] | None, region: str,
+                      seed_missing: bool) -> RuntimeError:
+    """Say why no prices loaded: the seed file is missing, or lacks the services."""
+    path = cache_module.SEED_PRICES_PATH
+    if seed_missing:
+        reason = f"Seed file not found at {path}."
+    elif services is None:
+        reason = f"The seed file at {path} has no rows, and the live fetch found none."
+    else:
+        reason = (f"The seed file at {path} has no rows for {', '.join(services)} "
+                  f"in {region}, and the live fetch found none.")
     return RuntimeError(
-        f"No pricing data available. Seed file not found at {SEED_PRICES_PATH}. "
+        f"No pricing data available. {reason} "
         f"Run 'infra-cost-model seed-pricing' first, or set INFRACOST_API_KEY for live pricing."
     )
 
