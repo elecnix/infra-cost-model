@@ -62,6 +62,7 @@ class TestLLMModel:
         model = load_yaml_model("llm-augmented-api.yaml")
         expected = {
             "aws_apigatewayv2_api.llm_api",
+            "data_transfer.llm_api_egress",
             "aws_lambda_function.orchestrator",
             "aws_bedrock_model.claude_sonnet",
             "aws_s3_bucket.prompt_logs",
@@ -81,9 +82,9 @@ class TestTokenFlowPropagation:
     """Validates token flow propagation through the DAG."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("llm-augmented-api.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_bedrock_input_tokens_from_edge(self, engine):
         """Bedrock receives input tokens via tokenFlow on orchestrator edge."""
@@ -138,9 +139,9 @@ class TestAsymmetricTokenPricing:
     """Validates the 5× cost differential between input and output tokens."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("llm-augmented-api.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_bedrock_cost_is_largest(self, engine):
         """Bedrock (LLM) should dominate total cost."""
@@ -164,7 +165,7 @@ class TestAsymmetricTokenPricing:
         # 0.015 / 0.003 = 5
         assert output_rate / input_rate == pytest.approx(5.0, rel=0.01)
 
-    def test_token_asymmetry_in_cost(self, engine):
+    def test_token_asymmetry_in_cost(self, engine, seed_catalog):
         """Token price asymmetry is reflected in the cost model.
 
         Given the same number of input and output tokens, output should cost 5× more.
@@ -176,7 +177,7 @@ class TestAsymmetricTokenPricing:
         # Modify to use equal token counts
         model["nodes"]["aws_bedrock_model.claude_sonnet"]["usageMetrics"]["outputTokens"]["value"] = 500
 
-        engine_eq = CostEngine(model, time_basis="perSecond")  # per-sec to avoid monthly scaling
+        engine_eq = CostEngine(model, catalog=seed_catalog, time_basis="perSecond")  # per-sec to avoid monthly scaling
         costs = engine_eq.compute()
         bedrock_cost = costs["aws_bedrock_model.claude_sonnet"]
 
@@ -217,15 +218,16 @@ class TestLLMCostDominance:
     """Validates the economic dominance of LLM costs."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("llm-augmented-api.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_infrastructure_cost_is_insignificant(self, engine):
         """Non-LLM infrastructure cost should be modest relative to Bedrock."""
         costs = engine.compute()
         infra_nodes = [
             "aws_apigatewayv2_api.llm_api",
+            "data_transfer.llm_api_egress",
             "aws_lambda_function.orchestrator",
             "aws_lambda_function.processor",
             "aws_dynamodb_table.results",
@@ -238,7 +240,7 @@ class TestLLMCostDominance:
             f"Bedrock ${bedrock_total:.0f} vs infra ${infra_total:.0f}"
         )
 
-    def test_bedrock_cost_scale_with_frequency(self, engine):
+    def test_bedrock_cost_scale_with_frequency(self, engine, seed_catalog):
         """Bedrock cost should scale linearly with frequency."""
         base_costs = engine.compute()
         base_bedrock = base_costs["aws_bedrock_model.claude_sonnet"]
@@ -246,18 +248,18 @@ class TestLLMCostDominance:
         # 10× frequency
         model = load_yaml_model("llm-augmented-api.yaml")
         model["workflow"]["frequency"]["value"] = 1000
-        engine_10x = CostEngine(model, time_basis="monthly")
+        engine_10x = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         costs_10x = engine_10x.compute()
 
         # Should scale ~10×
         assert costs_10x["aws_bedrock_model.claude_sonnet"] == pytest.approx(base_bedrock * 10, rel=0.01)
 
-    def test_frequency_change_what_if(self, engine):
+    def test_frequency_change_what_if(self, engine, seed_catalog):
         """What-if analysis on token cost with varying frequency."""
         from infra_cost_model.engine.engine import ParametricSensitivityAnalyzer
 
         model = load_yaml_model("llm-augmented-api.yaml")
-        analyzer = ParametricSensitivityAnalyzer(model)
+        analyzer = ParametricSensitivityAnalyzer(model, seed_catalog)
 
         # Frequency has high impact on total cost
         deriv = analyzer.partial_derivative("frequency")

@@ -75,6 +75,7 @@ class TestEcommerceModel:
         model = load_yaml_model("ecommerce-microservices.yaml")
         expected = {
             "aws_apigatewayv2_api.ecommerce_api",
+            "data_transfer.ecommerce_api_egress",
             "aws_lambda_function.auth",
             "aws_lambda_function.get_products",
             "aws_lambda_function.create_order",
@@ -99,9 +100,9 @@ class TestSharedNodeAccumulation:
     """Validates multi-path accumulation on shared DynamoDB orders table."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("ecommerce-microservices.yaml")
-        return CostEngine(model)
+        return CostEngine(model, catalog=seed_catalog)
 
     def test_orders_has_writes_from_both_paths(self, engine):
         """DynamoDB orders receives writes from create_order AND fulfill_order."""
@@ -201,9 +202,9 @@ class TestStripePercentagePricing:
     """Validates Stripe external pricing (2.9% + $0.30)."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("ecommerce-microservices.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_stripe_cost_is_percentage_based(self, engine):
         """Stripe cost uses percentage model."""
@@ -255,9 +256,9 @@ class TestCostBreakdown:
     """Validates cost computation and structure."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("ecommerce-microservices.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_total_cost_positive(self, engine):
         assert engine.total_cost() > 0
@@ -274,11 +275,11 @@ class TestCostBreakdown:
         assert costs["aws_dynamodb_table.orders"] > 0
 
     def test_sqs_cost(self, engine):
-        """SQS incurs per-message cost."""
+        """175,320 messages a month are inside the SQS free tier of 1M requests."""
         costs = engine.compute()
-        assert costs["aws_sqs_queue.order_queue"] > 0
+        assert costs["aws_sqs_queue.order_queue"] == 0
 
     def test_sns_cost(self, engine):
-        """SNS incurs per-notification cost."""
+        """166,554 publishes a month are inside the SNS free tier of 1M requests."""
         costs = engine.compute()
-        assert costs["aws_sns_topic.notifications"] > 0
+        assert costs["aws_sns_topic.notifications"] == 0

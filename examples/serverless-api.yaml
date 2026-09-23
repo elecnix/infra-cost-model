@@ -19,13 +19,20 @@ nodes:
     resourceAddress: aws_apigatewayv2_api.items_api
     provider: aws
     region: us-east-1
-    service: ApiGatewayV2
+    service: AmazonAPIGatewayHTTP
     usageMetrics:
-      requests: { unit: requests, value: 1 }
-      dataOutGb: { unit: GB, value: 0.00005 }    # 50KB per request
-    pricingRates:
-      requests: 1.00e-6
-      dataOutGb: 0.09
+      APIGateway-HTTP-Request: { unit: requests, value: 1 }
+
+  # An HTTP API has no egress price of its own. AWS bills the response bytes
+  # as data transfer out to the internet.
+  data_transfer.items_api_egress:
+    nodeType: external
+    resourceAddress: data_transfer.items_api_egress
+    provider: aws
+    region: us-east-1
+    service: AWSDataTransfer
+    usageMetrics:
+      internetOutGb: { unit: GB, value: 0.00005 }   # 50KB per request
 
   aws_lambda_function.get_items:
     nodeType: compute
@@ -35,10 +42,8 @@ nodes:
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.0125 }   # 50ms × 256MB = 0.0125 GB-sec
-    pricingRates:
-      invocations: 0.20e-6
-      gb_seconds: 0.0000166667
+      avgDurationMs: { unit: ms, value: 50 }
+      memoryMb: { unit: MB, value: 256 }
 
   aws_lambda_function.create_item:
     nodeType: compute
@@ -48,10 +53,8 @@ nodes:
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.1 }      # 200ms × 512MB = 0.1 GB-sec
-    pricingRates:
-      invocations: 0.20e-6
-      gb_seconds: 0.0000166667
+      avgDurationMs: { unit: ms, value: 200 }
+      memoryMb: { unit: MB, value: 512 }
 
   aws_dynamodb_table.items:
     nodeType: storage
@@ -60,13 +63,15 @@ nodes:
     region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
-      readRequests: { unit: requests, value: 1 }
-      writeRequests: { unit: requests, value: 1 }
-    pricingRates:
-      readRequests: 0.25e-6      # $0.25 per million read requests
-      writeRequests: 1.25e-6     # $1.25 per million write requests
+      Dynamo-ReadRequest: { unit: requests, value: 1 }
+      Dynamo-WriteRequest: { unit: requests, value: 1 }
 
 edges:
+  # Every response leaves AWS as data transfer out
+  - from: aws_apigatewayv2_api.items_api
+    to: data_transfer.items_api_egress
+    rate: 1
+
   # Entry branching: 70% reads, 30% writes
   - from: aws_apigatewayv2_api.items_api
     to: aws_lambda_function.get_items

@@ -27,22 +27,17 @@ nodes:
     region: us-east-1
     service: AmazonS3
     usageMetrics:
-      putRequests: { unit: requests, value: 1 }
-      storageGb: { unit: GB-Mo, value: 1500, fixed: true }
-    pricingRates:
-      putRequests: 0.005e-3       # $0.005 per 1K PUT requests
-      storageGb: 0.023            # $0.023 per GB-month
+      S3-PutRequest: { unit: requests, value: 1 }
+      S3-Storage: { unit: GB-Mo, value: 1500, fixed: true }
 
   aws_eventbridge_rule.upload_trigger:
     nodeType: routing
     resourceAddress: aws_eventbridge_rule.upload_trigger
     provider: aws
     region: us-east-1
-    service: EventBridge
+    service: AmazonEventBridge
     usageMetrics:
-      events: { unit: events, value: 1 }
-    pricingRates:
-      events: 1.0e-6              # $1.00 per million events
+      EventBridge-CustomEvent: { unit: events, value: 1 }
 
   aws_lambda_function.extractor:
     nodeType: compute
@@ -52,10 +47,8 @@ nodes:
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.42667 }   # 5000ms × 512MB = 2.56 GB-sec / 6 (per-sec internal)
-    pricingRates:
-      invocations: 0.20e-6        # $0.20 per million requests
-      gb_seconds: 0.0000166667    # $0.0000166667 per GB-second
+      avgDurationMs: { unit: ms, value: 5000 }
+      memoryMb: { unit: MB, value: 512 }
 
   aws_lambda_function.transformer:
     nodeType: compute
@@ -65,10 +58,8 @@ nodes:
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.34133 }   # 2000ms × 1024MB = 2.048 GB-sec
-    pricingRates:
-      invocations: 0.20e-6
-      gb_seconds: 0.0000166667
+      avgDurationMs: { unit: ms, value: 2000 }
+      memoryMb: { unit: MB, value: 1024 }
 
   aws_dynamodb_table.data:
     nodeType: storage
@@ -77,22 +68,17 @@ nodes:
     region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
-      writeRequests: { unit: requests, value: 1 }
-      storageGb: { unit: GB-Mo, value: 3, fixed: true }    # 3GB data stored
-    pricingRates:
-      writeRequests: 1.25e-6       # $1.25 per million write requests
-      storageGb: 0.25              # $0.25 per GB-month
+      Dynamo-WriteRequest: { unit: requests, value: 1 }
+      Dynamo-Storage: { unit: GB-Mo, value: 3, fixed: true }    # 3GB data stored
 
   aws_eventbridge_rule.daily_schedule:
     nodeType: routing
     resourceAddress: aws_eventbridge_rule.daily_schedule
     provider: aws
     region: us-east-1
-    service: EventBridge
+    service: AmazonEventBridge
     usageMetrics:
-      events: { unit: events, value: 1 }
-    pricingRates:
-      events: 1.0e-6
+      EventBridge-Schedule: { unit: invocations, value: 1 }
 
   aws_lambda_function.aggregator:
     nodeType: compute
@@ -102,10 +88,8 @@ nodes:
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 10.24 }  # 300s × 2048MB = 614.4 GB-sec
-    pricingRates:
-      invocations: 0.20e-6
-      gb_seconds: 0.0000166667
+      avgDurationMs: { unit: ms, value: 300000 }
+      memoryMb: { unit: MB, value: 2048 }
 
   aws_db_instance.analytics:
     nodeType: storage
@@ -115,9 +99,7 @@ nodes:
     service: AmazonRDS
     flatOverride: true              # RDS is provisioned — flat monthly cost
     usageMetrics:
-      instanceHours: { unit: hours, value: 730 }    # 730 hours/month
-    pricingRates:
-      instanceHours: 0.021         # ~$0.021/hour for db.t3.micro
+      RDS-Instance-Hour-db.t3.micro: { unit: hours, value: 730 }    # 730 hours/month
 
   aws_s3_bucket.reports:
     nodeType: storage
@@ -126,11 +108,8 @@ nodes:
     region: us-east-1
     service: AmazonS3
     usageMetrics:
-      putRequests: { unit: requests, value: 1 }
-      storageGb: { unit: GB-Mo, value: 0.3, fixed: true }    # 300MB reports
-    pricingRates:
-      putRequests: 0.005e-3
-      storageGb: 0.023
+      S3-PutRequest: { unit: requests, value: 1 }
+      S3-Storage: { unit: GB-Mo, value: 0.3, fixed: true }    # 300MB reports
 
 edges:
   # -- data-pipeline edges --

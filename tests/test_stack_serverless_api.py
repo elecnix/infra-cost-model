@@ -54,23 +54,30 @@ class TestServerlessModel:
         get_items = model["nodes"]["aws_lambda_function.get_items"]
         create_item = model["nodes"]["aws_lambda_function.create_item"]
 
-        assert get_items["usageMetrics"]["gb_seconds"]["value"] == 0.0125   # 50ms × 256MB
-        assert create_item["usageMetrics"]["gb_seconds"]["value"] == 0.1    # 200ms × 512MB
+        assert get_items["usageMetrics"]["avgDurationMs"]["value"] == 50
+        assert get_items["usageMetrics"]["memoryMb"]["value"] == 256
+        assert create_item["usageMetrics"]["avgDurationMs"]["value"] == 200
+        assert create_item["usageMetrics"]["memoryMb"]["value"] == 512
 
-    def test_dynamodb_read_write_differentiation(self):
+    def test_dynamodb_read_write_differentiation(self, seed_catalog):
         """DynamoDB has different pricing for reads vs writes."""
         model = load_yaml_model("serverless-api.yaml")
         ddb = model["nodes"]["aws_dynamodb_table.items"]
-        assert ddb["pricingRates"]["readRequests"] == 0.25e-6
-        assert ddb["pricingRates"]["writeRequests"] == 1.25e-6
+        assert "pricingRates" not in ddb
+
+        def price(metric):
+            assert metric in ddb["usageMetrics"]
+            return seed_catalog.query("aws", ddb["service"], ddb["region"], metric).price_usd
+
         # Writes are 5× more expensive than reads
-        ratio = ddb["pricingRates"]["writeRequests"] / ddb["pricingRates"]["readRequests"]
+        ratio = price("Dynamo-WriteRequest") / price("Dynamo-ReadRequest")
         assert ratio == pytest.approx(5.0)
 
     def test_all_nodes_defined(self):
         model = load_yaml_model("serverless-api.yaml")
         expected = {
             "aws_apigatewayv2_api.items_api",
+            "data_transfer.items_api_egress",
             "aws_lambda_function.get_items",
             "aws_lambda_function.create_item",
             "aws_dynamodb_table.items",
@@ -88,9 +95,9 @@ class TestDerivedUsage:
     """Validates derived usage computation."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("serverless-api.yaml")
-        return CostEngine(model)
+        return CostEngine(model, catalog=seed_catalog)
 
     def test_entry_frequency(self, engine):
         """1000/min converts to per-second correctly."""
@@ -160,9 +167,9 @@ class TestCostComputation:
     """Validates cost computation for the serverless API."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("serverless-api.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_total_cost_positive(self, engine):
         assert engine.total_cost() > 0
@@ -189,23 +196,29 @@ class TestCostComputation:
         ddb_cost = costs["aws_dynamodb_table.items"]
         assert ddb_cost > 0
 
-    def test_sensitivity_on_frequency(self, engine):
-        """Doubling frequency doubles cost (all linear)."""
+    def test_sensitivity_on_frequency(self, engine, seed_catalog):
+        """Doubling frequency doubles cost, plus at most the Lambda free tiers.
+
+        The free tiers are a fixed allowance, so at twice the traffic less of
+        the bill is free. Each of the two functions has at most 1M requests at
+        $0.20/M and 400,000 GB-seconds at $0.0000166667 free.
+        """
         base_cost = engine.total_cost()
 
         model = load_yaml_model("serverless-api.yaml")
         model["workflow"]["frequency"]["value"] = 2000
-        engine_2x = CostEngine(model, time_basis="monthly")
+        engine_2x = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         cost_2x = engine_2x.total_cost()
 
-        assert cost_2x == pytest.approx(base_cost * 2, rel=0.01)
+        free_tiers = 2 * (1_000_000 * 0.20e-6 + 400_000 * 0.0000166667)
+        assert base_cost * 2 <= cost_2x <= base_cost * 2 + free_tiers
 
-    def test_frequency_change_what_if(self, engine):
+    def test_frequency_change_what_if(self, engine, seed_catalog):
         """What-if analysis on read/write ratio."""
         from infra_cost_model.engine.engine import ParametricSensitivityAnalyzer
 
         model = load_yaml_model("serverless-api.yaml")
-        analyzer = ParametricSensitivityAnalyzer(model)
+        analyzer = ParametricSensitivityAnalyzer(model, seed_catalog)
 
         # Frequency has positive derivative
         deriv = analyzer.partial_derivative("frequency")

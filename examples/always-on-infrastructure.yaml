@@ -26,14 +26,13 @@ nodes:
     nodeType: routing
     resourceAddress: aws_lb.main
     provider: aws
-    service: ElasticLoadBalancing
+    service: AmazonALB
     region: us-east-1
     usageMetrics:
-      albHours: { unit: hours, value: 730, fixed: true }   # always-on, $/month
-      lcus: { unit: LCU, value: 0.0001 }                    # scales with traffic
-    pricingRates:
-      albHours: 0.0225            # $0.0225 per ALB-hour
-      lcus: 0.008                 # $0.008 per LCU consumed per request (illustrative)
+      ALB-Hour: { unit: hours, value: 730, fixed: true }   # always-on, $/month
+      # One LCU-hour covers 25 new connections a second for an hour, or
+      # 90,000 connections. One request opens one connection: 1/90,000.
+      ALB-LCU-NewConnections: { unit: LCU-hours, value: 0.0000111111 }
 
   aws_lambda_function.api:
     nodeType: compute
@@ -43,10 +42,8 @@ nodes:
     region: us-east-1
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.125 }
-    pricingRates:
-      invocations: 0.20e-6        # $0.20 per million requests
-      gb_seconds: 0.0000166667    # $0.0000166667 per GB-second
+      avgDurationMs: { unit: ms, value: 500 }
+      memoryMb: { unit: MB, value: 256 }
 
   aws_dynamodb_table.data:
     nodeType: storage
@@ -55,9 +52,7 @@ nodes:
     service: AmazonDynamoDB
     region: us-east-1
     usageMetrics:
-      readRequests: { unit: requests, value: 1 }
-    pricingRates:
-      readRequests: 0.25e-6       # $0.25 per million read request units
+      Dynamo-ReadRequest: { unit: requests, value: 1 }
 
   # NAT gateway: mixed — fixed gateway-hours plus usage-driven GB processed.
   # It DOES receive an edge (egress flows through it), and because only one of
@@ -69,11 +64,10 @@ nodes:
     service: AmazonVPC
     region: us-east-1
     usageMetrics:
-      gatewayHours: { unit: hours, value: 730, fixed: true }   # always-on, $/month
-      gbProcessed: { unit: GB, value: 0.00005 }                 # ~50KB/req, scales with traffic
-    pricingRates:
-      gatewayHours: 0.045         # $0.045 per NAT gateway-hour
-      gbProcessed: 0.045          # $0.045 per GB processed
+      # The NAT gateway handler maps these names to the catalog metrics
+      # NAT-Gateway-Hour and NAT-Gateway-DataProcessed.
+      natHours: { unit: hours, value: 730, fixed: true }       # always-on, $/month
+      dataProcessedGb: { unit: GB, value: 0.00005 }            # ~50KB/req, scales with traffic
 
   # Secrets Manager secret: a purely fixed, always-on resource. It has NO
   # incoming edge — it is costed anyway and emits no unreachable warning.
@@ -84,9 +78,8 @@ nodes:
     service: AWSSecretsManager
     region: us-east-1
     usageMetrics:
-      secretMonths: { unit: secret-month, value: 1, fixed: true }
-    pricingRates:
-      secretMonths: 0.40          # $0.40 per secret per month
+      # The handler maps secretsCount to the catalog metric SecretsManager-Secret.
+      secretsCount: { unit: secrets, value: 1, fixed: true }
 
 edges:
   - { from: aws_lb.main, to: aws_lambda_function.api, rate: 1.0 }

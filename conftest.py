@@ -47,3 +47,16 @@ def isolated_home():
     assert os.environ["HOME"] == str(_test_home)
     assert Path(os.environ["HOME"]).name.startswith("test-home-")
     yield
+
+
+@pytest.fixture(scope="session")
+def seed_catalog(tmp_path_factory):
+    """A catalog with every seed row and the bundled vendor rows.
+
+    It has a database of its own, so tests that price the examples don't
+    depend on what `seed-pricing` loads (#293) or on other tests' rows.
+    """
+    from infra_cost_model.pricing.catalog import PricingCatalog
+
+    return PricingCatalog(db_path=tmp_path_factory.mktemp("seed-catalog") / "pricing.db",
+                          seed=True)

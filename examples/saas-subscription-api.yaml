@@ -24,14 +24,21 @@ nodes:
     nodeType: routing
     resourceAddress: aws_apigatewayv2_api.public_api
     provider: aws
-    service: ApiGatewayV2
+    service: AmazonAPIGatewayHTTP
     region: us-east-1
     usageMetrics:
-      requests: { unit: requests, value: 1 }
-      dataOutGb: { unit: GB, value: 0.00002 }   # 20KB per request
-    pricingRates:
-      requests: 1.00e-6
-      dataOutGb: 0.09
+      APIGateway-HTTP-Request: { unit: requests, value: 1 }
+
+  # An HTTP API has no egress price of its own. AWS bills the response bytes
+  # as data transfer out to the internet.
+  data_transfer.public_api_egress:
+    nodeType: external
+    resourceAddress: data_transfer.public_api_egress
+    provider: aws
+    service: AWSDataTransfer
+    region: us-east-1
+    usageMetrics:
+      internetOutGb: { unit: GB, value: 0.00002 }   # 20KB per request
 
   aws_lambda_function.api:
     nodeType: compute
@@ -41,10 +48,8 @@ nodes:
     region: us-east-1
     usageMetrics:
       invocations: { unit: requests, value: 1 }
-      gb_seconds: { unit: GB-seconds, value: 0.05 }   # 200ms x 256MB
-    pricingRates:
-      invocations: 0.20e-6
-      gb_seconds: 0.0000166667
+      avgDurationMs: { unit: ms, value: 200 }
+      memoryMb: { unit: MB, value: 256 }
 
   # WorkOS: identity, priced per connection and per organization. These are
   # counts, not traffic, so they carry `fixed: true` and their value is a flat
@@ -82,13 +87,15 @@ nodes:
     service: AmazonDynamoDB
     region: us-east-1
     usageMetrics:
-      readRequests: { unit: requests, value: 1 }
-      writeRequests: { unit: requests, value: 1 }
-    pricingRates:
-      readRequests: 0.25e-6
-      writeRequests: 1.25e-6
+      Dynamo-ReadRequest: { unit: requests, value: 1 }
+      Dynamo-WriteRequest: { unit: requests, value: 1 }
 
 edges:
+  # Every response leaves AWS as data transfer out
+  - from: aws_apigatewayv2_api.public_api
+    to: data_transfer.public_api_egress
+    rate: 1
+
   - from: aws_apigatewayv2_api.public_api
     to: aws_lambda_function.api
     rate: 1

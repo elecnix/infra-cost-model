@@ -72,7 +72,7 @@ class TestDataPipelineModel:
         model = load_yaml_model("data-pipeline.yaml")
         rds = model["nodes"]["aws_db_instance.analytics"]
         assert rds["flatOverride"] is True
-        assert rds["usageMetrics"]["instanceHours"]["value"] == 730
+        assert rds["usageMetrics"]["RDS-Instance-Hour-db.t3.micro"]["value"] == 730
 
     def test_dag_no_cycles(self):
         """DAG is acyclic."""
@@ -86,9 +86,9 @@ class TestMultiWorkflowEngine:
     """Integration tests for multi-workflow cost computation."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("data-pipeline.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     @pytest.fixture
     def costs(self, engine):
@@ -159,34 +159,34 @@ class TestMultiWorkflowEngine:
         costs = engine.compute()
         rds_cost = costs["aws_db_instance.analytics"]
 
-        # 730 hours × $0.021/hour = $15.33/month
-        expected = 730 * 0.021
+        # 730 hours × $0.034/hour (the seed row for db.t3.micro) = $24.82/month
+        expected = 730 * 0.034
         assert rds_cost == pytest.approx(expected, rel=0.01)
 
-    def test_rds_cost_unchanged_with_frequency(self):
+    def test_rds_cost_unchanged_with_frequency(self, seed_catalog):
         """RDS flatOverride means cost doesn't change with frequency."""
         model = load_yaml_model("data-pipeline.yaml")
-        engine_base = CostEngine(model, time_basis="monthly")
+        engine_base = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         base_cost = engine_base.compute()["aws_db_instance.analytics"]
 
         # Modify frequency — RDS cost should stay the same
         model["workflows"][1]["frequency"]["value"] = 100  # 100/day instead of 1
-        engine_mod = CostEngine(model, time_basis="monthly")
+        engine_mod = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         mod_cost = engine_mod.compute()["aws_db_instance.analytics"]
 
         assert base_cost == pytest.approx(mod_cost)
 
-    def test_sensitivity_on_data_pipeline_frequency(self):
+    def test_sensitivity_on_data_pipeline_frequency(self, seed_catalog):
         """What-if: 10× uploads increases data pipeline costs proportionally."""
         model = load_yaml_model("data-pipeline.yaml")
         from infra_cost_model.engine.engine import ParametricSensitivityAnalyzer
 
-        engine_base = CostEngine(model, time_basis="monthly")
+        engine_base = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         base_total = engine_base.total_cost()
 
         # 10× frequency
         model["workflows"][0]["frequency"]["value"] = 10_000
-        engine_10x = CostEngine(model, time_basis="monthly")
+        engine_10x = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         total_10x = engine_10x.total_cost()
 
         # Data pipeline costs should scale roughly 10× (minus fixed RDS cost)
@@ -200,11 +200,11 @@ class TestMultiWorkflowEngine:
         engine.compute()
         assert True
 
-    def test_scenario_edge_case_zero_frequency(self):
+    def test_scenario_edge_case_zero_frequency(self, seed_catalog):
         """Edge case: with zero frequency only the stored data costs anything."""
         model = load_yaml_model("data-pipeline.yaml")
         model["workflows"][0]["frequency"]["value"] = 0
-        engine = CostEngine(model, time_basis="monthly")
+        engine = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         costs = engine.compute()
         # No uploads means no PUT requests. The 1,500 GB already stored is a
         # fixed monthly charge that does not depend on traffic.
@@ -215,9 +215,9 @@ class TestDataVolumeMetrics:
     """Validates data volume propagation through edges."""
 
     @pytest.fixture
-    def engine(self):
+    def engine(self, seed_catalog):
         model = load_yaml_model("data-pipeline.yaml")
-        return CostEngine(model, time_basis="monthly")
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly")
 
     def test_data_in_accumulates_on_transformer(self, engine):
         """Transformer Lambda receives data from extractor via dataSize."""
