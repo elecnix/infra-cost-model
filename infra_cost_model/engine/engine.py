@@ -449,20 +449,18 @@ class CostAggregator:
             # its shape handler (flat_subscription, per_unit_flat, free_tier,
             # transactional, or a plugin-registered shape) using the metric's
             # inline parameters — this is the first-class path for non-IaC SaaS
-            # resources that the catalog cannot reach. If the shape is unknown
-            # to the registry, fall through to the catalog / embedded path
-            # (backward-compatible).
+            # resources that the catalog cannot reach. An unknown shape raises
+            # ValueError from the registry rather than falling through to the
+            # catalog, so a misspelled shape cannot price at $0.
             metric_cost = None
             shape = None
             if isinstance(metric_def, dict):
                 shape = metric_def.get("shape")
             if shape is not None:
                 from infra_cost_model.saas import SaaSPricingRegistry
-                shaped = SaaSPricingRegistry.compute(
+                metric_cost = SaaSPricingRegistry.compute(
                     shape, total_quantity, metric_def if isinstance(metric_def, dict) else {}
                 )
-                if shaped is not None:
-                    metric_cost = shaped
 
             # Query catalog first (preferred path per Principle 13), else fall
             # back to embedded pricingRates (deprecated per Principle 13).
@@ -558,11 +556,9 @@ class CostAggregator:
                 shape = metric_def.get("shape")
             if shape is not None:
                 from infra_cost_model.saas import SaaSPricingRegistry
-                shaped = SaaSPricingRegistry.compute(
+                metric_cost = SaaSPricingRegistry.compute(
                     shape, total_quantity, metric_def if isinstance(metric_def, dict) else {}
                 )
-                if shaped is not None:
-                    metric_cost = shaped
 
             if metric_cost is None and self.catalog is not None:
                 result = self.catalog.query(
