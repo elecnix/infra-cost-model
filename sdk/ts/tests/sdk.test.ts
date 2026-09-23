@@ -5,6 +5,8 @@
  * as the Python and YAML surfaces (Principle 11 — three surfaces, one schema).
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   Workflow,
@@ -355,7 +357,123 @@ calls:
 
   it("throws on missing workflow section", () => {
     const yaml = 'version: "1.0"\nnodes: {}';
-    expect(() => parseYamlDsl(yaml)).toThrow("workflow");
+    expect(() => parseYamlDsl(yaml)).toThrow(
+      "YAML must have a 'workflow' or 'workflows' section",
+    );
+  });
+
+  it("throws on an empty workflows array", () => {
+    const yaml = 'version: "1.0"\nworkflows: []\nnodes: {}';
+    expect(() => parseYamlDsl(yaml)).toThrow("workflows");
+  });
+
+  it.each([
+    ["an empty workflow section", 'version: "1.0"\nworkflow:\nnodes: {}'],
+    ["a workflow that is not a mapping", 'version: "1.0"\nworkflow: 3\nnodes: {}'],
+    ["a null entry in workflows", 'version: "1.0"\nworkflows:\n  -\nnodes: {}'],
+    ["a scalar document", "hello"],
+    ["an empty document", ""],
+  ])("throws a clear error on %s", (_label, yaml) => {
+    expect(() => parseYamlDsl(yaml)).toThrow(
+      "YAML must have a 'workflow' or 'workflows' section",
+    );
+  });
+
+  it("parses a workflows array and expands each shorthand frequency", () => {
+    const yaml = `
+version: "1.0"
+workflows:
+  - name: ingest
+    entry: gw
+    frequency: "1000/day"
+  - name: report
+    entry: gw
+    frequency:
+      unit: perHour
+      value: 2
+nodes:
+  gw:
+    nodeType: routing
+    resourceAddress: gw
+`;
+
+    const model = parseYamlDsl(yaml);
+    expect(model.workflow).toBeUndefined();
+    expect(model.workflows).toEqual([
+      { name: "ingest", entry: "gw", frequency: { value: 1000, unit: "perDay" } },
+      { name: "report", entry: "gw", frequency: { unit: "perHour", value: 2 } },
+    ]);
+  });
+
+  it("parses the ASCII arrow in the calls section", () => {
+    const yaml = `
+version: "1.0"
+workflow:
+  name: dsl-test
+  entry: gw
+  frequency: "1/sec"
+nodes: {}
+calls:
+  gw:
+    -> lambda_func: 2
+`;
+
+    const model = parseYamlDsl(yaml);
+    expect(model.edges).toEqual([{ from: "gw", to: "lambda_func", rate: 2 }]);
+  });
+
+  it("carries the requiresEngine pin across", () => {
+    const yaml = `
+version: "1.0"
+requiresEngine: ">=0.2.0"
+workflow:
+  name: pinned
+  entry: gw
+  frequency: "1/sec"
+nodes: {}
+`;
+
+    expect(parseYamlDsl(yaml).requiresEngine).toBe(">=0.2.0");
+  });
+
+  it("leaves requiresEngine out when the model has no pin", () => {
+    const yaml = 'version: "1.0"\nworkflow:\n  name: w\n  entry: gw\n  frequency: "1/sec"\nnodes: {}';
+    expect(parseYamlDsl(yaml)).not.toHaveProperty("requiresEngine");
+  });
+});
+
+// ── Bundled examples ─────────────────────────────────────────────────────────
+// The Python test suite parses the same files with parse_yaml_dsl
+// (tests/test_sdk.py), so both parsers must accept every example.
+
+const EXAMPLES_DIR = resolve(__dirname, "../../../examples");
+const EXAMPLES = readdirSync(EXAMPLES_DIR).filter((f) => f.endsWith(".yaml"));
+
+describe("parseYamlDsl on the bundled examples", () => {
+  it("finds the examples", () => {
+    expect(EXAMPLES.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it.each(EXAMPLES)("parses %s", (file) => {
+    const model = parseYamlDsl(readFileSync(join(EXAMPLES_DIR, file), "utf8"));
+    const workflows = model.workflows ?? [model.workflow!];
+    expect(workflows.length).toBeGreaterThan(0);
+    for (const wf of workflows) {
+      expect(typeof wf.frequency.value).toBe("number");
+    }
+    expect(Object.keys(model.nodes).length).toBeGreaterThan(0);
+  });
+
+  it("parses the two workflows in data-pipeline.yaml", () => {
+    const model = parseYamlDsl(
+      readFileSync(join(EXAMPLES_DIR, "data-pipeline.yaml"), "utf8"),
+    );
+    expect(model.workflows!.map((wf) => wf.name)).toEqual([
+      "data-pipeline",
+      "daily-analytics",
+    ]);
+    expect(model.workflows![0]!.entry).toBe("aws_s3_bucket.uploads");
+    expect(model.workflows![1]!.frequency).toEqual({ unit: "perDay", value: 1 });
   });
 });
 

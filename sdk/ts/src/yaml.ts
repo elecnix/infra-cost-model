@@ -8,10 +8,24 @@
 import * as yaml from "js-yaml";
 import type { CostModel, Edge, FrequencyUnit } from "./types";
 
+const UNIT_MAP: Record<string, FrequencyUnit> = {
+  sec: "perSecond",
+  min: "perMinute",
+  hr: "perHour",
+  day: "perDay",
+  week: "perWeek",
+  month: "perMonth",
+};
+
+/** The key that pins the engine versions a model needs (see version_requirement.py). */
+const ENGINE_REQUIREMENT_KEY = "requiresEngine";
+
 /**
  * Parse a YAML DSL string into a CostModel representation.
  *
- * Supports the arrow syntax format:
+ * Accepts one `workflow` or a `workflows` array of independent workflows
+ * that share the nodes, as the schema does. Supports the arrow syntax
+ * format, with the Unicode arrow or the ASCII `->`:
  *
  * ```yaml
  * calls:
@@ -21,30 +35,29 @@ import type { CostModel, Edge, FrequencyUnit } from "./types";
  * ```
  */
 export function parseYamlDsl(yamlContent: string): CostModel {
-  const data = yaml.load(yamlContent) as Record<string, unknown>;
+  const loaded: unknown = yaml.load(yamlContent);
+  const isMapping = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  const data: Record<string, unknown> = isMapping(loaded) ? loaded : {};
 
-  if (!data.workflow || typeof data.workflow !== "object") {
-    throw new Error("YAML must have 'workflow' section");
+  let workflows: unknown[] = [];
+  if ("workflow" in data) {
+    workflows = [data.workflow];
+  } else if (Array.isArray(data.workflows)) {
+    workflows = data.workflows;
+  }
+  if (workflows.length === 0 || !workflows.every(isMapping)) {
+    throw new Error("YAML must have a 'workflow' or 'workflows' section");
   }
 
-  const workflow = data.workflow as Record<string, unknown>;
-
   // Handle shorthand frequency notation (e.g., "1000/min")
-  let freq = workflow.frequency;
-  if (typeof freq === "string") {
-    const parts = freq.split("/");
-    if (parts.length === 2) {
-      const unitMap: Record<string, FrequencyUnit> = {
-        sec: "perSecond",
-        min: "perMinute",
-        hr: "perHour",
-        day: "perDay",
-        week: "perWeek",
-        month: "perMonth",
-      };
+  for (const workflow of workflows as Record<string, unknown>[]) {
+    const freq = workflow.frequency;
+    if (typeof freq === "string" && freq.includes("/")) {
+      const [value, unit] = freq.split("/");
       workflow.frequency = {
-        value: parseFloat(parts[0]!),
-        unit: unitMap[parts[1]!] ?? "perMinute",
+        value: parseFloat(value!),
+        unit: UNIT_MAP[unit!] ?? "perMinute",
       };
     }
   }
@@ -60,30 +73,50 @@ export function parseYamlDsl(yamlContent: string): CostModel {
       if (typeof callDefs !== "object" || callDefs === null) continue;
 
       for (const [key, value] of Object.entries(callDefs)) {
-        // Arrow syntax: "→ aws_lambda_function.foo: 1"
-        if (key.startsWith("\u2192 ") || key.startsWith("→ ")) {
-          const targetAddr = key.slice(2);
-          if (typeof value === "number") {
-            edges.push({ from: sourceAddr, to: targetAddr, rate: value });
-          } else if (typeof value === "object" && value !== null) {
-            const v = value as Record<string, unknown>;
-            edges.push({
-              from: sourceAddr,
-              to: targetAddr,
-              rate: (v.rate as number) ?? 1.0,
-              type: v.type as Edge["type"],
-              dataSize: (v.dataSize ?? v.data_size) as Edge["dataSize"],
-            });
+        // Arrow syntax: "→ aws_lambda_function.foo: 1" or "-> aws_lambda_function.foo: 1"
+        let targetAddr: string;
+        if (key.startsWith("\u2192 ")) {
+          targetAddr = key.slice(2);
+        } else if (key.startsWith("-> ")) {
+          targetAddr = key.slice(3);
+        } else {
+          continue;
+        }
+        if (typeof value === "number") {
+          edges.push({ from: sourceAddr, to: targetAddr, rate: value });
+        } else if (typeof value === "object" && value !== null) {
+          const v = value as Record<string, unknown>;
+          const edge: Edge = {
+            from: sourceAddr,
+            to: targetAddr,
+            rate: (v.rate as number) ?? 1.0,
+          };
+          if ("type" in v) edge.type = v.type as Edge["type"];
+          if ("dataSize" in v || "data_size" in v) {
+            edge.dataSize = (v.dataSize ?? v.data_size) as Edge["dataSize"];
           }
+          edges.push(edge);
         }
       }
     }
   }
 
-  return {
-    version: "1.0",
-    workflow: workflow as unknown as CostModel["workflow"],
-    nodes: nodes as unknown as CostModel["nodes"],
-    edges,
-  };
+  const model: Record<string, unknown> = { version: "1.0" };
+  if ("workflow" in data) {
+    model.workflow = workflows[0];
+  } else {
+    model.workflows = workflows;
+  }
+  model.nodes = nodes;
+  model.edges = edges;
+
+  // Carry the model's engine requirement across. This function rebuilds the
+  // model from the fields it knows, so a key it does not copy would be
+  // dropped before anything can check it.
+  const requirement = data[ENGINE_REQUIREMENT_KEY];
+  if (requirement !== undefined && requirement !== null) {
+    model[ENGINE_REQUIREMENT_KEY] = requirement;
+  }
+
+  return model as unknown as CostModel;
 }
