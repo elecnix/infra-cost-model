@@ -117,8 +117,8 @@ def test_external_no_infrastructure_extraction():
 
 def test_stripe_standard_cost():
     """Test Stripe standard pricing."""
-    # 10,000 transactions, $500,000 volume
-    cost = _stripe_cost(10_000, 500_000)
+    # 10,000 transactions of $50 each: volume is one transaction's value (#288).
+    cost = _stripe_cost(10_000, 50)
 
     expected = 500_000 * 0.029 + 10_000 * 0.30
     assert cost == pytest.approx(expected)
@@ -127,7 +127,7 @@ def test_stripe_standard_cost():
 def test_stripe_international_cost():
     """Test Stripe international card pricing. Currency conversion fee
     is queried from the pricing catalog per DP#13."""
-    cost = _stripe_cost(10_000, 500_000, international=True)
+    cost = _stripe_cost(10_000, 50, international=True)
 
     # Standard + 1% currency conversion
     expected = 500_000 * 0.039 + 10_000 * 0.30 + 500_000 * 0.01
@@ -139,7 +139,7 @@ def test_stripe_international_catalog_fee():
     from infra_cost_model.pricing.catalog import PricingCatalog
     catalog = PricingCatalog(seed=True)
 
-    cost = _stripe_cost(10_000, 500_000, international=True, catalog=catalog)
+    cost = _stripe_cost(10_000, 50, international=True, catalog=catalog)
 
     # Verify catalog was used - query the fee directly
     result = catalog.query("external", "ExternalAPI", "global", "currency_conversion_fee")

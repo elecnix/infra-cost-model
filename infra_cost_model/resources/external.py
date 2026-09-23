@@ -158,9 +158,11 @@ STRIPE_INTERNATIONAL = {"percentage_rate": 0.039, "fixed_per_transaction": 0.30}
 def _stripe_cost(transactions: float, volume: float, international: bool = False, catalog=None) -> float:
     """Calculate Stripe cost.
 
+    ``volume`` is the value of one charge, as in ``_external_cost`` (#288).
+
     Args:
         transactions: Number of charges
-        volume: Transaction volume in USD
+        volume: Value of one charge in USD
         international: Whether cards are international (+1% fee)
         catalog: Optional PricingCatalog for querying fees (DP#13)
 
@@ -169,7 +171,8 @@ def _stripe_cost(transactions: float, volume: float, international: bool = False
     """
     config = STRIPE_INTERNATIONAL if international else STRIPE_STANDARD
 
-    base_cost = volume * config["percentage_rate"] + transactions * config["fixed_per_transaction"]
+    total_volume = transactions * volume
+    base_cost = total_volume * config["percentage_rate"] + transactions * config["fixed_per_transaction"]
 
     if international:
         if catalog is None:
@@ -181,7 +184,7 @@ def _stripe_cost(transactions: float, volume: float, international: bool = False
         conversion_rate = 0.01
         if conversion_result is not None and hasattr(conversion_result, 'price_usd'):
             conversion_rate = conversion_result.price_usd
-        base_cost += volume * conversion_rate
+        base_cost += total_volume * conversion_rate
 
     return base_cost
 
