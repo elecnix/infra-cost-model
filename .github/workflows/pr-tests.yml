@@ -74,6 +74,38 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 
+  test-files-alone:
+    # Every test file must pass when it runs alone. In the full run, a test
+    # that prices from the default catalog can pass only because an earlier
+    # file loaded seed rows into the shared test home (#320). This job runs
+    # each file in its own session, so such a test fails on the pull request
+    # that adds it. Running the suite in random order would cost no extra job,
+    # but it would catch the problem only on the runs whose order happens to
+    # expose it, often on a later, unrelated pull request.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run each test file alone
+        run: |
+          failed=""
+          for f in tests/test_*.py; do
+            python -m pytest -q -p no:cacheprovider "$f" || failed="$failed $f"
+          done
+          if [ -n "$failed" ]; then
+            echo "These test files fail when run alone:$failed" >&2
+            exit 1
+          fi
+
   wheel-install:
     # The test job imports the package from the source tree, where every data
     # file is present whatever the packaging says. This job installs the built

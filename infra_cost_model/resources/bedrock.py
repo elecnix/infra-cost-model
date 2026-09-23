@@ -41,14 +41,18 @@ class BedrockModel(ComputeResource):
 
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
-        """Extract from Terraform bedrock_model resource (logical - no direct resource)."""
+        """Extract from Terraform bedrock_model resource (logical - no direct resource).
+
+        The node uses the vendor and service of the AmazonBedrock seed rows, so
+        it finds its token prices (#320). The model id stays in the config.
+        """
         values = resource.get("values", {})
 
         return ResourceExtract(
             resource_address=resource.get("address", ""),
             node_type="compute",
-            provider="bedrock",
-            service="Claude",  # or other model
+            provider="aws",
+            service="AmazonBedrock",
             region=values.get("region"),
             config={
                 "modelId": values.get("model_id"),
@@ -63,8 +67,8 @@ class BedrockModel(ComputeResource):
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="compute",
-            provider="bedrock",
-            service="Claude",
+            provider="aws",
+            service="AmazonBedrock",
             region=inputs.get("region"),
             config={
                 "modelId": inputs.get("modelId"),
@@ -79,13 +83,20 @@ class BedrockModel(ComputeResource):
         return ResourceExtract(
             resource_address=resource.get("LogicalId", ""),
             node_type="compute",
-            provider="bedrock",
-            service="Claude",
+            provider="aws",
+            service="AmazonBedrock",
             region=None,
             config={
                 "modelId": properties.get("ModelId"),
             }
         )
+
+
+# The helpers query the same catalog rows as the engine (#320).
+_METRICS = BedrockModel().catalog_metrics
+_INPUT_TOKEN = _METRICS["inputTokens"]
+_CACHED_INPUT_TOKEN = _METRICS["cachedReadTokens"]
+_OUTPUT_TOKEN = _METRICS["outputTokens"]
 
 
 def _bedrock_cost(input_tokens: float, output_tokens: float, model: str = "claude-3-5-sonnet", *,
@@ -121,14 +132,14 @@ def _cached_prompt_bedrock_cost(input_tokens: float, cached_input_tokens: float,
     cached_cost = 0.0
     if cached_input_tokens > 0:
         cached_result = catalog.query(provider, "AmazonBedrock", region,
-                                      "Bedrock-Cached-Input-Token", cached_input_tokens)
+                                      _CACHED_INPUT_TOKEN, cached_input_tokens)
         if cached_result and hasattr(cached_result, 'total_cost'):
             cached_cost = cached_result.total_cost
 
     uncached_result = catalog.query(provider, "AmazonBedrock", region,
-                                    "Bedrock-Input-Token", uncached_input_tokens)
+                                    _INPUT_TOKEN, uncached_input_tokens)
     output_result = catalog.query(provider, "AmazonBedrock", region,
-                                  "Bedrock-Output-Token", output_tokens)
+                                  _OUTPUT_TOKEN, output_tokens)
 
     total = cached_cost
     for result in [uncached_result, output_result]:
@@ -156,17 +167,17 @@ def _bedrock_token_cost(uncached_input_tokens: float, cached_input_tokens: float
     output_cost = 0.0
 
     result = catalog.query(provider, "AmazonBedrock", region,
-                          "Bedrock-Input-Token", uncached_input_tokens)
+                          _INPUT_TOKEN, uncached_input_tokens)
     if result and hasattr(result, 'total_cost'):
         input_cost = result.total_cost
 
     result = catalog.query(provider, "AmazonBedrock", region,
-                          "Bedrock-Cached-Input-Token", cached_input_tokens)
+                          _CACHED_INPUT_TOKEN, cached_input_tokens)
     if result and hasattr(result, 'total_cost'):
         cached_cost = result.total_cost
 
     result = catalog.query(provider, "AmazonBedrock", region,
-                          "Bedrock-Output-Token", output_tokens)
+                          _OUTPUT_TOKEN, output_tokens)
     if result and hasattr(result, 'total_cost'):
         output_cost = result.total_cost
 
@@ -191,9 +202,9 @@ def _model_cost_comparison(input_tokens: float, output_tokens: float, *, provide
         ("claude-3-opus", ""),
     ]:
         input_result = catalog.query(provider, "AmazonBedrock", region,
-                                      "Bedrock-Input-Token", input_tokens)
+                                      _INPUT_TOKEN, input_tokens)
         output_result = catalog.query(provider, "AmazonBedrock", region,
-                                      "Bedrock-Output-Token", output_tokens)
+                                      _OUTPUT_TOKEN, output_tokens)
 
         total = 0.0
         if input_result and hasattr(input_result, 'total_cost'):
