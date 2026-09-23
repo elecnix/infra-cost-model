@@ -9,6 +9,7 @@ from importlib import resources
 from pathlib import Path
 
 import pytest
+from _wheel import build_wheel, unpack_wheel
 
 from infra_cost_model.pricing.cache import Price, PricingCache
 from infra_cost_model.pricing.vendors import VendorPackageError, load_vendor_prices
@@ -63,37 +64,9 @@ def test_vendor_loader_loads_github_copilot_and_skips_template():
 
 def test_vendor_data_loads_from_an_installed_wheel(tmp_path):
     """Bundled prices work without access to the repository checkout."""
-    wheel_dir = tmp_path / "wheel"
-    wheel_dir.mkdir()
-    source_dir = tmp_path / "source"
-    shutil.copytree(
-        Path(__file__).parents[1],
-        source_dir,
-        ignore=shutil.ignore_patterns(".git", "build", "*.egg-info", "__pycache__"),
-    )
-    subprocess.run(
-        [sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "-w", str(wheel_dir)],
-        check=True,
-        cwd=source_dir,
-        capture_output=True,
-        text=True,
-    )
+    wheel = build_wheel(tmp_path)
     install_dir = tmp_path / "installed"
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--target",
-            str(install_dir),
-            str(next(wheel_dir.glob("*.whl"))),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    unpack_wheel(wheel, install_dir)
     script = """
 from pathlib import Path
 from infra_cost_model.pricing.cache import PricingCache
