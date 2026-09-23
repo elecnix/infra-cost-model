@@ -6,15 +6,17 @@ Uses argparse for standardized argument parsing, --help, and error handling.
 """
 
 import argparse
+import contextlib
 import sys
 import json
+import warnings
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
 from infra_cost_model.schema import validate_cost_model
-from infra_cost_model.engine import CostEngine, SensitivityAnalyzer
+from infra_cost_model.engine import CostEngine, SensitivityAnalyzer, UnpricedMetricWarning
 from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.version_requirement import check_engine_requirement
 
@@ -58,6 +60,8 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="Compute on a monthly time basis (deprecated: use --time-basis monthly)")
     p_compute.add_argument("--budget", type=float, metavar="<usd>",
                            help="Exit with code 1 if total cost exceeds this USD threshold")
+    p_compute.add_argument("--exit-on-unpriced", action="store_true",
+                           help="Exit with code 1 if any usage metric has no price")
     p_compute.set_defaults(func=cmd_compute)
 
     # analyze
@@ -66,6 +70,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_analyze.add_argument("--json", action="store_true", help="Output in JSON format")
     p_analyze.add_argument("--budget", type=float, metavar="<usd>",
                            help="Exit with code 1 if total cost exceeds this USD threshold")
+    p_analyze.add_argument("--exit-on-unpriced", action="store_true",
+                           help="Exit with code 1 if any usage metric has no price")
     p_analyze.set_defaults(func=cmd_analyze)
 
     # extract
@@ -188,6 +194,38 @@ def _raise_cli_error(code: int = 1) -> None:
     raise _CLIError(code)
 
 
+@contextlib.contextmanager
+def _report_unpriced_metrics():
+    """Print one stderr warning per metric the engine could not price.
+
+    Commands that sweep a parameter run the engine many times, so the engine
+    emits the same UnpricedMetricWarning once per run. This collects them and
+    prints each (node, metric) pair once, after the command's own output.
+    Other warnings pass through unchanged.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", UnpricedMetricWarning)
+        yield
+
+    seen: dict[tuple[str, str], str] = {}
+    for w in caught:
+        if issubclass(w.category, UnpricedMetricWarning):
+            unpriced = w.message.unpriced
+            seen.setdefault((unpriced.node, unpriced.metric), unpriced.describe())
+        else:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+
+    if seen:
+        sys.stdout.flush()
+    for description in seen.values():
+        _print_stderr(f"Warning: {description}")
+    if seen:
+        _print_stderr(
+            f"Warning: {len(seen)} usage metric(s) have no price, and the "
+            f"reported costs leave them out."
+        )
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Main CLI entry point."""
     parser = _build_parser()
@@ -208,7 +246,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.print_help()
             return 0
 
-        return args.func(args)
+        with _report_unpriced_metrics():
+            return args.func(args)
 
     except _CLIError as e:
         return e.code
@@ -309,6 +348,8 @@ def cmd_compute(args: argparse.Namespace) -> int:
             label = "Total"
 
         print(f"{label}: ${total:.6f}")
+        if args.exit_on_unpriced and engine.unpriced_metrics:
+            return 1
         return 0
     except ValueError as e:
         _print_stderr(f"Error: {e}")
@@ -353,6 +394,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             },
             "costs": costs,
             "total_cost": total,
+            "unpriced_metrics": [u.to_dict() for u in engine.unpriced_metrics],
         }
 
         if args.json:
@@ -372,6 +414,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print("-" * 50)
             print(f"Total Monthly Cost: ${total:.6f}")
 
+        if args.exit_on_unpriced and engine.unpriced_metrics:
+            return 1
         return 0
     except ValueError as e:
         _print_stderr(f"Error: {e}")

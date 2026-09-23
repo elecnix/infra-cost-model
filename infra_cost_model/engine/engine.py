@@ -10,7 +10,7 @@ This module implements Principles 1, 2, 3, 5:
 
 import warnings
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from infra_cost_model.pricing.catalog import PricingCatalog
@@ -27,6 +27,65 @@ class DerivedUsage:
     input_tokens: float = 0.0  # Total input tokens received (from upstream edges)
     output_tokens: float = 0.0  # Total output tokens produced (for LLM nodes)
     edge_types: set[str] = field(default_factory=set)  # Edge types feeding this node
+
+
+@dataclass(frozen=True)
+class UnpricedMetric:
+    """A usage metric the engine found no price for.
+
+    The node's cost leaves this metric out. ``quantity`` is the amount the
+    engine tried to price, in ``time_basis`` units (per second, per month or
+    per year).
+    """
+    node: str
+    metric: str
+    provider: Optional[str]
+    service: str
+    region: Optional[str]
+    quantity: float
+    time_basis: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def describe(self) -> str:
+        period = {"perSecond": "second", "monthly": "month", "yearly": "year"}.get(
+            self.time_basis, self.time_basis
+        )
+        return (
+            f"Node '{self.node}': no price for metric '{self.metric}' "
+            f"(provider {self.provider}, service {self.service or '-'}, "
+            f"region {self.region}). The total leaves out "
+            f"{self.quantity:g} units per {period}. Add a catalog row, a "
+            f"pricingRates entry, or a shape for this metric."
+        )
+
+
+class UnpricedMetricWarning(UserWarning):
+    """Emitted once per metric the engine could not price.
+
+    ``unpriced`` carries the ``UnpricedMetric`` record.
+    """
+
+    def __init__(self, unpriced: UnpricedMetric):
+        super().__init__(
+            f"Node '{unpriced.node}': no price for metric '{unpriced.metric}' "
+            f"(provider {unpriced.provider}, service {unpriced.service or '-'}, "
+            f"region {unpriced.region}). The total leaves it out."
+        )
+        self.unpriced = unpriced
+
+
+@dataclass
+class _Miss:
+    """A metric the aggregator could not price, before time-basis scaling."""
+    node: str
+    metric: str
+    provider: Optional[str]
+    service: str
+    region: Optional[str]
+    quantity: float  # per second when variable, per month when fixed
+    fixed: bool
 
 
 def _metric_is_fixed(metric_def, flat_override: bool) -> bool:
@@ -326,6 +385,19 @@ class CostAggregator:
         # monthly total. Tracked separately so the time-basis conversion scales
         # only the usage-driven portion of each node (Issue #196).
         self.fixed_costs: dict[str, float] = {}
+        # Metrics with a non-zero quantity that no shape, catalog row or
+        # pricingRates entry could price. Their cost is left out of the node.
+        self.unpriced: list[_Miss] = []
+
+    def _record_unpriced(self, address: str, node: dict, metric: str,
+                         quantity: float, fixed: bool) -> None:
+        if quantity == 0:
+            return
+        self.unpriced.append(_Miss(
+            node=address, metric=metric, provider=node.get("provider"),
+            service=node.get("service", ""), region=node.get("region"),
+            quantity=quantity, fixed=fixed,
+        ))
 
     def aggregate(self) -> dict[str, float]:
         """Aggregate costs. Returns combined (variable + fixed) node costs.
@@ -487,6 +559,8 @@ class CostAggregator:
                 metric_cost = total_quantity * pricing_rates[metric_name]
 
             if metric_cost is None:
+                self._record_unpriced(address, node, metric_name,
+                                      total_quantity, metric_fixed)
                 continue
             if metric_fixed:
                 fixed_cost += metric_cost
@@ -584,6 +658,8 @@ class CostAggregator:
                 metric_cost = total_quantity * pricing_rates[metric_name]
 
             if metric_cost is None:
+                self._record_unpriced(address, node, metric_name,
+                                      total_quantity, metric_fixed)
                 continue
             if metric_fixed:
                 fixed_cost += metric_cost
@@ -722,6 +798,9 @@ class CostAggregator:
                     continue
             if token_name in pricing_rates:
                 total_cost += total_tokens * pricing_rates[token_name]
+            else:
+                self._record_unpriced(address, node, token_name, total_tokens,
+                                      node.get("flatOverride", False))
 
         return total_cost
 
@@ -780,6 +859,9 @@ class CostEngine:
         self.validator = DAGValidator(self.nodes, self.edges)
         self.derived_usage: dict[str, DerivedUsage] = {}
         self.costs: dict[str, float] = {}
+        # Metrics left out of ``costs`` because nothing could price them.
+        # Filled by ``compute``; each one also emits an UnpricedMetricWarning.
+        self.unpriced_metrics: list[UnpricedMetric] = []
 
     @property
     def _time_multiplier(self) -> float:
@@ -836,6 +918,7 @@ class CostEngine:
         # Convert per-second usage-driven costs to the output period; fixed
         # (always-on) costs are already flat monthly totals and are not scaled.
         self.costs = self._finalize_costs(aggregator.costs, aggregator.fixed_costs)
+        self._report_unpriced(aggregator.unpriced)
 
         return self.costs
 
@@ -853,6 +936,7 @@ class CostEngine:
         all_variable: dict[str, float] = defaultdict(float)
         all_fixed: dict[str, float] = {}
         all_derived: dict[str, DerivedUsage] = {}
+        all_unpriced: list[_Miss] = []
 
         for wf in self.workflows:
             wf_params = wf.get("parameters", {})
@@ -863,6 +947,7 @@ class CostEngine:
             aggregator = CostAggregator(self.nodes, derived, self.edges,
                                          self.catalog, parameters=wf_params)
             aggregator.aggregate()
+            all_unpriced.extend(aggregator.unpriced)
 
             for addr, combined in aggregator.costs.items():
                 fixed = aggregator.fixed_costs.get(addr, 0.0)
@@ -893,8 +978,38 @@ class CostEngine:
                 all_variable[addr] * multiplier
                 + all_fixed.get(addr, 0.0) * fixed_multiplier
             )
+        self._report_unpriced(all_unpriced)
 
         return self.costs
+
+    def _report_unpriced(self, misses: list["_Miss"]) -> None:
+        """Store and warn about metrics that no price source covered.
+
+        A metric is reported once per node, even when several workflows reach
+        the node. Usage-driven quantities add up across workflows, and a fixed
+        quantity counts once, matching how the costs combine.
+        """
+        merged: dict[tuple[str, str], _Miss] = {}
+        for miss in misses:
+            key = (miss.node, miss.metric)
+            if key not in merged:
+                merged[key] = _Miss(**asdict(miss))
+            elif not miss.fixed:
+                merged[key].quantity += miss.quantity
+
+        multiplier = self._time_multiplier
+        fixed_multiplier = 12.0 if self.time_basis == "yearly" else 1.0
+        self.unpriced_metrics = [
+            UnpricedMetric(
+                node=m.node, metric=m.metric, provider=m.provider,
+                service=m.service, region=m.region,
+                quantity=m.quantity * (fixed_multiplier if m.fixed else multiplier),
+                time_basis=self.time_basis,
+            )
+            for m in merged.values()
+        ]
+        for unpriced in self.unpriced_metrics:
+            warnings.warn(UnpricedMetricWarning(unpriced), stacklevel=4)
 
     def _finalize_costs(self, combined: dict[str, float],
                             fixed: dict[str, float]) -> dict[str, float]:
