@@ -561,7 +561,11 @@ class TestCostAggregator:
         assert costs["test_fn"] == pytest.approx(expected)
 
     def test_percentage_pricing_cost(self):
-        """Test percentage-based pricing (e.g., Stripe 2.9% + $0.30)."""
+        """Test percentage-based pricing (e.g., Stripe 2.9% + $0.30).
+
+        transactionVolume is the value of one transaction (Principle 4), so
+        each transaction pays volume × percentageRate + fixedPerTransaction.
+        """
         nodes = {
             "stripe": {
                 "nodeType": "external",
@@ -572,19 +576,38 @@ class TestCostAggregator:
                     "fixedPerTransaction": 0.30,
                 },
                 "usageMetrics": {
-                    "transactionVolume": {"value": 10000},
+                    "transactionVolume": {"value": 100},
                 }
             }
         }
 
-        # 100 transactions, $10000 volume
+        # 100 transactions of $100 each
         derived = {"stripe": DerivedUsage("stripe", 100.0)}
 
         aggregator = CostAggregator(nodes, derived, [])
         costs = aggregator.aggregate()
 
-        # Expected: $10000 * 0.029 + 100 * 0.30 = $290 + $30 = $320
+        # Expected: 100 × ($100 × 0.029 + $0.30) = 100 × $3.20 = $320
         assert costs["stripe"] == pytest.approx(320.0)
+
+    def test_percentage_pricing_scales_with_transactions(self):
+        """Twice the transactions cost twice as much, percentage part included."""
+        nodes = {
+            "stripe": {
+                "nodeType": "external",
+                "resourceAddress": "external.stripe_payments",
+                "pricingModel": "percentage",
+                "pricingRates": {"percentageRate": 0.029},
+                "usageMetrics": {"transactionVolume": {"value": 50}},
+            }
+        }
+
+        def cost(transactions):
+            derived = {"stripe": DerivedUsage("stripe", transactions)}
+            return CostAggregator(nodes, derived, []).aggregate()["stripe"]
+
+        assert cost(10.0) == pytest.approx(10 * 50 * 0.029)
+        assert cost(20.0) == pytest.approx(2 * cost(10.0))
 
     def test_tiered_pricing_with_catalog(self):
         """Test tiered pricing uses catalog when available."""
