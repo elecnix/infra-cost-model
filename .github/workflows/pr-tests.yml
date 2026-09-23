@@ -1,8 +1,13 @@
 name: PR Tests
 
 on:
+  # Every pull request runs these jobs, whatever its base branch. A
+  # repository ruleset requires them before a merge into main. A stacked PR
+  # keeps its head commit when GitHub moves its base to main, so runs from
+  # while it targeted another branch still count. With a `branches: [main]`
+  # filter, that PR would have no runs and would wait until someone closed
+  # and reopened it.
   pull_request:
-    branches: [main]
 
 jobs:
   vendor-check:
