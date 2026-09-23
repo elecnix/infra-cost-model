@@ -334,8 +334,10 @@ class PricingCache:
             for row in rows
         ]
 
-        # Live prices supersede every offline fallback source (seed, seed-initial,
-        # aws-pricelist). Those fixtures are not a second pricing schedule: mixing
+        # Live prices supersede every offline fallback source: seed,
+        # aws-pricelist, and seed-initial. Older versions wrote seed-initial
+        # rows; a cache built by one keeps them until the next seed load
+        # deletes them (#309). Those fixtures are not a second pricing schedule: mixing
         # a fallback row (start_usage_amount=None) with a live row
         # (start_usage_amount=0.0) for the same metric yields a spurious 2-tier
         # TieredPrice whose open-ended tiers each charge the full quantity --
