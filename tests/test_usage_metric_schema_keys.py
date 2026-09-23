@@ -115,3 +115,25 @@ class TestKnownParamsValidate:
         metric = {"unit": "u", "value": 1, "shape": "per_unit_flat", "rat": 125}
         errors = validate_cost_model(model_with_metric(metric))
         assert any("rat" in e for e in errors)
+
+
+def test_shape_description_examples_are_registered_shapes():
+    """The schema's ``shape`` description gives only shapes the engine knows.
+
+    An author who copies an example name from the description, or from the
+    TypeScript types generated from it, must get a shape that prices. An
+    unknown shape raises an error at compute time.
+    """
+    import json
+
+    from infra_cost_model.saas import SaaSPricingRegistry
+
+    schema = json.loads(SCHEMA_PATH.read_text())
+    description = schema["definitions"]["usageMetric"]["properties"]["shape"]["description"]
+    match = re.search(r"\(e\.g\.,\s*([^)]*)\)", description)
+    assert match, f"shape description lists no examples: {description!r}"
+    examples = {name.strip() for name in match.group(1).split(",")}
+    unknown = examples - SaaSPricingRegistry.known_shapes()
+    assert not unknown, (
+        f"shape description gives unregistered shapes as examples: {sorted(unknown)}"
+    )
