@@ -6,16 +6,10 @@ goes further: it installs the wheel into a clean virtual environment and runs
 the command-line tool.
 """
 
-import importlib.util
-import shutil
-import subprocess
-import sys
 import zipfile
-from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from _wheel import REPO_ROOT, build_wheel
 
 # The directories setuptools packages. Every JSON and YAML file under them is
 # data some code path loads: the schema, the seed prices, the vendor rows.
@@ -34,25 +28,7 @@ def _data_files() -> set[str]:
 
 @pytest.fixture(scope="module")
 def wheel_names(tmp_path_factory) -> set[str]:
-    # Build from a fresh copy. setuptools reuses a `build/` directory left in
-    # the source tree, and stale files there can put a file in the wheel that
-    # the packaging config no longer includes.
-    src = tmp_path_factory.mktemp("src") / "repo"
-    shutil.copytree(
-        REPO_ROOT,
-        src,
-        ignore=shutil.ignore_patterns(
-            ".git", ".venv", "node_modules", "build", "__pycache__", "*.egg-info"
-        ),
-    )
-    out = tmp_path_factory.mktemp("wheel")
-    cmd = [sys.executable, "-m", "pip", "wheel", "--no-deps", "--quiet", "-w", str(out), str(src)]
-    # Reuse the running interpreter's setuptools when it has one, so the test
-    # doesn't need network access to build.
-    if importlib.util.find_spec("setuptools") is not None:
-        cmd.insert(4, "--no-build-isolation")
-    subprocess.run(cmd, check=True, cwd=out)
-    (wheel,) = out.glob("infra_cost_model-*.whl")
+    wheel = build_wheel(tmp_path_factory.mktemp("wheel"))
     with zipfile.ZipFile(wheel) as zf:
         return set(zf.namelist())
 
