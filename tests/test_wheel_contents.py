@@ -6,6 +6,8 @@ goes further: it installs the wheel into a clean virtual environment and runs
 the command-line tool.
 """
 
+import email
+import email.message
 import fnmatch
 import zipfile
 
@@ -28,10 +30,22 @@ def _data_files() -> set[str]:
 
 
 @pytest.fixture(scope="module")
-def wheel_names(tmp_path_factory) -> set[str]:
-    wheel = build_wheel(tmp_path_factory.mktemp("wheel"))
-    with zipfile.ZipFile(wheel) as zf:
+def wheel_path(tmp_path_factory):
+    return build_wheel(tmp_path_factory.mktemp("wheel"))
+
+
+@pytest.fixture(scope="module")
+def wheel_names(wheel_path) -> set[str]:
+    with zipfile.ZipFile(wheel_path) as zf:
         return set(zf.namelist())
+
+
+@pytest.fixture(scope="module")
+def wheel_metadata(wheel_path) -> email.message.Message:
+    """The wheel's METADATA file, parsed as the email-style headers it holds."""
+    with zipfile.ZipFile(wheel_path) as zf:
+        (name,) = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]
+        return email.message_from_bytes(zf.read(name))
 
 
 def test_data_files_found():
@@ -54,3 +68,20 @@ def test_wheel_puts_vendor_data_inside_the_package(wheel_names):
     assert "infra_cost_model/vendors/__init__.py" in wheel_names
     top_level = sorted(n for n in wheel_names if n.startswith("vendors/"))
     assert not top_level, f"the wheel still installs a top-level vendors package: {top_level}"
+
+
+def test_wheel_declares_the_mit_license(wheel_metadata):
+    """PyPI shows the license from the SPDX expression in METADATA (#243)."""
+    assert wheel_metadata["License-Expression"] == "MIT"
+    assert wheel_metadata.get_all("License-File") == ["LICENSE"]
+
+
+def test_wheel_ships_the_license_file(wheel_names):
+    licenses = [n for n in wheel_names if n.endswith(".dist-info/licenses/LICENSE")]
+    assert licenses, "the wheel has no .dist-info/licenses/LICENSE"
+
+
+def test_wheel_metadata_links_to_the_repository(wheel_metadata):
+    urls = wheel_metadata.get_all("Project-URL") or []
+    assert "Repository, https://github.com/elecnix/infra-cost-model" in urls
+    assert wheel_metadata["Description-Content-Type"] == "text/markdown"

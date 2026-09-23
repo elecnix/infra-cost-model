@@ -47,3 +47,15 @@ A vendor directory and its `vendor.yaml` manifest define the canonical vendor id
 - **Core documentation:**
   - [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md)
   - [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md)
+
+## Releasing
+
+Publishing a GitHub release starts `.github/workflows/publish.yml`, which builds the package and uploads it to PyPI.
+
+1. Set the new version in `infra_cost_model/__init__.py` (`__version__`) and in `sdk/ts/package.json` in the same PR. `tests/test_sdk_version.py` fails when the two differ.
+2. After that PR merges, create a GitHub release on `main` with the tag `vX.Y.Z`, where `X.Y.Z` matches `__version__`. If they differ, the workflow stops before it builds anything.
+
+PyPI accepts the upload through trusted publishing, so the repository doesn't store a PyPI token. Before the first release, the repository owner sets this up once:
+
+1. On pypi.org, add a trusted publisher for the `infra-cost-model` project (a "pending publisher" until the first upload creates the project). Use owner `elecnix`, repository `infra-cost-model`, workflow `publish.yml`, and environment `pypi`.
+2. In the GitHub repository settings, under Environments, create an environment called `pypi`. You can add required reviewers there to approve each upload.

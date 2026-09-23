@@ -19,7 +19,13 @@ This project specifies a model where usage flows through the graph: a frontend r
 
 ## Install
 
-The package isn't on PyPI. Install it from this repository:
+Install a release from PyPI:
+
+```bash
+pip install infra-cost-model
+```
+
+The first PyPI release is still pending. Until it's out, or to try code that isn't released yet, install from this repository:
 
 ```bash
 pip install "git+https://github.com/elecnix/infra-cost-model"
