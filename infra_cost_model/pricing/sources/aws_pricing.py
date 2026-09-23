@@ -58,7 +58,9 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
 
     Args:
         services: AWS service names to sync. None means every service in
-            SERVICE_CODES.
+            SERVICE_CODES, the services the live AWS Price List fetch knows.
+            It doesn't mean every service in the seed file: to load the whole
+            seed file, use seed_prices in infra_cost_model.pricing.cache.
         cache: PricingCache instance
         region: AWS region (default: us-east-1)
         seed_only: If True, only use seed file (don't query API)
