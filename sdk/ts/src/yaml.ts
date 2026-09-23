@@ -35,10 +35,10 @@ const ENGINE_REQUIREMENT_KEY = "requiresEngine";
  * ```
  */
 export function parseYamlDsl(yamlContent: string): CostModel {
-  const data = yaml.load(yamlContent) as Record<string, unknown>;
-
+  const loaded: unknown = yaml.load(yamlContent);
   const isMapping = (v: unknown): v is Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v);
+  const data: Record<string, unknown> = isMapping(loaded) ? loaded : {};
 
   let workflows: unknown[] = [];
   if ("workflow" in data) {

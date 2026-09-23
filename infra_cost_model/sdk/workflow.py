@@ -90,6 +90,8 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
         Cost model representation dict.
     """
     data = yaml.safe_load(yaml_content)
+    if not isinstance(data, dict):
+        data = {}
 
     # The schema accepts one `workflow` or a `workflows` array of independent
     # workflows that share the nodes; the engine prices both.

@@ -919,6 +919,8 @@ def test_parse_yaml_dsl_parses_the_two_workflows_in_data_pipeline():
     'version: "1.0"\nworkflow:\nnodes: {}',
     'version: "1.0"\nworkflow: 3\nnodes: {}',
     'version: "1.0"\nworkflows:\n  -\nnodes: {}',
+    "hello",
+    "",
 ])
 def test_parse_yaml_dsl_rejects_a_workflow_that_is_not_a_mapping(yaml_content):
     with pytest.raises(ValueError, match="'workflow' or 'workflows' section"):

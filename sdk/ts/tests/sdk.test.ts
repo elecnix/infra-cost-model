@@ -371,6 +371,8 @@ calls:
     ["an empty workflow section", 'version: "1.0"\nworkflow:\nnodes: {}'],
     ["a workflow that is not a mapping", 'version: "1.0"\nworkflow: 3\nnodes: {}'],
     ["a null entry in workflows", 'version: "1.0"\nworkflows:\n  -\nnodes: {}'],
+    ["a scalar document", "hello"],
+    ["an empty document", ""],
   ])("throws a clear error on %s", (_label, yaml) => {
     expect(() => parseYamlDsl(yaml)).toThrow(
       "YAML must have a 'workflow' or 'workflows' section",
