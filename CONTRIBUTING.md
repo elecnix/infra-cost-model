@@ -37,6 +37,8 @@ State `start_usage_amount` and `end_usage_amount` as a quantity per month, the w
 
 The boundaries apply once to the whole account. The engine adds up the monthly quantity of each metric across all nodes and workflows that share a provider, service and region, prices that total, and splits the cost across the nodes by quantity ([#294](https://github.com/elecnix/infra-cost-model/issues/294)). A pair of queues with 1,000,000 requests each shares one free allowance of 1,000,000 requests.
 
+Some providers give a free allowance once to the whole account, across all regions. AWS does this for the first 100 GB of data transfer out and for the Lambda, SQS and SNS free requests. `ACCOUNT_WIDE_FREE_TIERS` in `infra_cost_model/pricing/free_tiers.py` lists these metrics by vendor, service and `usage_metric`. For a listed metric, the engine applies the allowance once to the total of all regions and gives each region a part in proportion to its quantity. Each region pays its own rate for the rest ([#336](https://github.com/elecnix/infra-cost-model/issues/336)). A metric missing from the list gets one allowance per region. The list, not a price row field, marks an allowance as account-wide, so rows from the seed file, the vendor files and live sources get the same treatment.
+
 A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. References in examples, provider registration, and price rows must use that identity consistently. `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
 
 ## Development

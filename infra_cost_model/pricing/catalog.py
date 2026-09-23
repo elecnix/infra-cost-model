@@ -97,6 +97,11 @@ class _CostResult:
             return self.parameters[tier.per]
         return 1.0
 
+    @property
+    def free_allowance(self) -> float:
+        """The free quantity for one tier boundary period, or 0 if none (#336)."""
+        return self._free_tier_end()
+
     def _free_tier_end(self) -> float:
         """Where the leading run of $0 tiers ends, or 0 if there is none."""
         end = 0.0
