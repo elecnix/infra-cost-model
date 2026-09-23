@@ -82,7 +82,7 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
         conn = sqlite3.connect(cache.db_path)
         placeholders = ','.join(['?'] * len(services))
         existing = conn.execute(
-            f"SELECT COUNT(*) FROM prices WHERE vendor='aws' AND region=? "
+            f"SELECT COUNT(*) FROM prices WHERE vendor='aws' AND region IN (?, 'global') "
             f"AND service IN ({placeholders})",
             [region] + list(services)
         ).fetchone()[0]
@@ -99,7 +99,9 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
                     continue
                 if services and item.get("service") not in services:
                     continue
-                if item.get("region") != region:
+                # Global services such as CloudFront have no AWS region, so
+                # their seed rows use "global" and load for any region.
+                if item.get("region") not in (region, "global"):
                     continue
 
                 key = (item["service"], item["usage_metric"], item["unit"], item["price_usd"])
