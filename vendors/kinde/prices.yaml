@@ -1,0 +1,24 @@
+- vendor: kinde
+  service: Kinde
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.0
+  start_usage_amount: 0
+  end_usage_amount: 10500
+
+- vendor: kinde
+  service: Kinde
+  region: global
+  usage_metric: MAU
+  unit: users
+  price_usd: 0.01
+  start_usage_amount: 10500
+
+- vendor: kinde
+  service: Kinde
+  region: global
+  usage_metric: SSO-Connection
+  unit: connections
+  price_usd: 25.0
+  start_usage_amount: 5
