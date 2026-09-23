@@ -1,7 +1,7 @@
 """Every priced band the identity-provider module carried is still priced.
 
 The Python module `infra_cost_model/pricing/identity_providers.py` held a
-price band per vendor, and the port to `vendors/<id>/prices.yaml` had to carry
+price band per vendor, and the port to `infra_cost_model/vendors/<id>/prices.yaml` had to carry
 each one across. Two bands were dropped: Frontegg's MAU overage above 10,000
 and Kinde's above 10,500. Both vendors kept their free band and gained an SSO
 row in the same hunk, so the files looked populated while the overage priced
