@@ -6,6 +6,7 @@ goes further: it installs the wheel into a clean virtual environment and runs
 the command-line tool.
 """
 
+import fnmatch
 import zipfile
 
 import pytest
@@ -13,7 +14,7 @@ from _wheel import REPO_ROOT, build_wheel
 
 # The directories setuptools packages. Every JSON and YAML file under them is
 # data some code path loads: the schema, the seed prices, the vendor rows.
-PACKAGED_DIRS = ("infra_cost_model", "vendors")
+PACKAGED_DIRS = ("infra_cost_model",)
 
 
 def _data_files() -> set[str]:
@@ -38,9 +39,18 @@ def test_data_files_found():
     files = _data_files()
     assert "infra_cost_model/schema/cost-model.schema.json" in files
     assert "infra_cost_model/pricing/seed/aws_pricelist_seed.json" in files
-    assert any(f.startswith("vendors/") for f in files)
+    assert "infra_cost_model/vendors/github-copilot/prices.yaml" in files
 
 
 def test_wheel_contains_every_data_file(wheel_names):
     missing = sorted(_data_files() - wheel_names)
     assert not missing, f"the wheel leaves out data files: {missing}"
+
+
+def test_wheel_puts_vendor_data_inside_the_package(wheel_names):
+    """Vendor rows ship under ``infra_cost_model/vendors/``, not a top-level ``vendors`` (#290)."""
+    prices = [n for n in wheel_names if fnmatch.fnmatch(n, "infra_cost_model/vendors/*/prices.yaml")]
+    assert prices, "the wheel has no infra_cost_model/vendors/*/prices.yaml"
+    assert "infra_cost_model/vendors/__init__.py" in wheel_names
+    top_level = sorted(n for n in wheel_names if n.startswith("vendors/"))
+    assert not top_level, f"the wheel still installs a top-level vendors package: {top_level}"

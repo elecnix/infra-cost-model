@@ -74,7 +74,7 @@ nodes:
   datadog_observability:
     nodeType: external
     resourceAddress: datadog_observability
-    provider: external   # no vendors/datadog price rows; the shape carries the rate
+    provider: external   # no infra_cost_model/vendors/datadog price rows; the shape carries the rate
     service: Datadog
     region: global
     usageMetrics:

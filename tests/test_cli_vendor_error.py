@@ -1,8 +1,9 @@
-"""The CLI reports a missing or foreign ``vendors`` package on one line (#289).
+"""The CLI reports missing vendor price data on one line (#289).
 
-Each test puts a ``vendors`` package that isn't this project's first on the
-import path, then runs the installed ``infra-cost-model`` script in a
-subprocess, so the package is the one the CLI really imports.
+Each test runs the installed ``infra-cost-model`` script in a subprocess. A
+``sitecustomize`` module on the import path makes
+``resources.files("infra_cost_model.vendors")`` return an empty directory, as
+an install that left out the price files would (#290).
 """
 
 import os
@@ -27,14 +28,35 @@ def _cli_script() -> str:
     return found
 
 
+_SITECUSTOMIZE = """
+from importlib import resources
+from pathlib import Path
+
+_EMPTY = Path({empty!r})
+_original_files = resources.files
+
+
+def _files(package):
+    if package == "infra_cost_model.vendors":
+        return _EMPTY
+    return _original_files(package)
+
+
+resources.files = _files
+"""
+
+
 @pytest.fixture
-def foreign_vendors(tmp_path):
-    """Return an environment whose import path starts with a foreign ``vendors``."""
-    (tmp_path / "vendors").mkdir()
-    (tmp_path / "vendors" / "__init__.py").write_text("")
+def missing_vendor_data(tmp_path):
+    """Return an environment where the vendor package has no price files."""
+    empty = tmp_path / "empty_vendors"
+    empty.mkdir()
+    hook_dir = tmp_path / "hook"
+    hook_dir.mkdir()
+    (hook_dir / "sitecustomize.py").write_text(_SITECUSTOMIZE.format(empty=str(empty)))
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
-        p for p in (str(tmp_path), env.get("PYTHONPATH")) if p
+        p for p in (str(hook_dir), env.get("PYTHONPATH")) if p
     )
     return env
 
@@ -47,10 +69,10 @@ def foreign_vendors(tmp_path):
     ["sync-pricing"],
     ["seed-pricing"],
 ], ids=lambda args: args[0])
-def test_foreign_vendors_package_prints_one_error_line(args, foreign_vendors):
+def test_missing_vendor_data_prints_one_error_line(args, missing_vendor_data):
     result = subprocess.run(
         [_cli_script(), *args],
-        env=foreign_vendors, cwd=REPO_ROOT,
+        env=missing_vendor_data, cwd=REPO_ROOT,
         capture_output=True, text=True, timeout=120,
     )
 

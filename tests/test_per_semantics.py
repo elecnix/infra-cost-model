@@ -109,7 +109,7 @@ class TestPerMustNotBeTheQuantitysOwnUnit:
         import pathlib
 
         offenders = []
-        for path in sorted(pathlib.Path("vendors").glob("*/prices.yaml")):
+        for path in sorted(pathlib.Path("infra_cost_model/vendors").glob("*/prices.yaml")):
             for block in re.split(r"\n(?=- vendor:)", path.read_text()):
                 m = re.search(r"per:\s*(\S+)", block)
                 if not m or m.group(1).startswith("<"):
