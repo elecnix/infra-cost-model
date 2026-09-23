@@ -888,3 +888,28 @@ class TestResourceCostModelSeparation:
 
         assert model["nodes"]["lambda"]["nodeType"] == "compute"
         assert "usageMetrics" in model["nodes"]["lambda"]
+
+# The TypeScript suite parses the same files with parseYamlDsl
+# (sdk/ts/tests/sdk.test.ts), so both parsers must accept every example.
+_EXAMPLES_DIR = os.path.join(os.path.dirname(__file__), "..", "examples")
+_EXAMPLES = sorted(f for f in os.listdir(_EXAMPLES_DIR) if f.endswith(".yaml"))
+
+
+@pytest.mark.parametrize("name", _EXAMPLES)
+def test_parse_yaml_dsl_parses_bundled_example(name):
+    with open(os.path.join(_EXAMPLES_DIR, name)) as f:
+        model = parse_yaml_dsl(f.read())
+    workflows = model.get("workflows") or [model["workflow"]]
+    assert workflows
+    for workflow in workflows:
+        assert isinstance(workflow["frequency"]["value"], (int, float))
+    assert model["nodes"]
+
+
+def test_parse_yaml_dsl_parses_the_two_workflows_in_data_pipeline():
+    with open(os.path.join(_EXAMPLES_DIR, "data-pipeline.yaml")) as f:
+        model = parse_yaml_dsl(f.read())
+    assert "workflow" not in model
+    assert [wf["name"] for wf in model["workflows"]] == ["data-pipeline", "daily-analytics"]
+    assert model["workflows"][0]["entry"] == "aws_s3_bucket.uploads"
+    assert model["workflows"][1]["frequency"] == {"unit": "perDay", "value": 1}
