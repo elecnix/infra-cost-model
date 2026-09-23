@@ -35,6 +35,8 @@ Each entry in `prices.yaml` represents one flat price or one tier. Fields use th
 
 State `start_usage_amount` and `end_usage_amount` as a quantity per month, the way providers publish their allowances. The engine derives usage per second, so it scales a month of usage against the boundaries and then converts the cost to the output time basis ([#287](https://github.com/elecnix/infra-cost-model/issues/287)).
 
+The boundaries apply once to the whole account. The engine adds up the monthly quantity of each metric across all nodes and workflows that share a provider, service and region, prices that total, and splits the cost across the nodes by quantity ([#294](https://github.com/elecnix/infra-cost-model/issues/294)). A pair of queues with 1,000,000 requests each shares one free allowance of 1,000,000 requests.
+
 A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. References in examples, provider registration, and price rows must use that identity consistently. `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
 
 ## Development
