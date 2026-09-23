@@ -9,9 +9,11 @@ version: "1.0"
 workflow:
   name: ecommerce-api
   entry: aws_apigatewayv2_api.ecommerce_api
+  # A mid-size store: 10 API requests a minute, 40% of which create an order.
+  # That is about 175,000 orders a month, or $8.8M of sales at $50 each.
   frequency:
     unit: perMinute
-    value: 2000
+    value: 10
 
 nodes:
   aws_apigatewayv2_api.ecommerce_api:
@@ -136,7 +138,7 @@ nodes:
       percentageRate: 0.029     # 2.9% per transaction
       fixedPerTransaction: 0.30 # $0.30 per transaction
     usageMetrics:
-      transactionVolume: { unit: USD, value: 50 }  # $50 average order value
+      transactionVolume: { unit: USD, value: 50 }  # $50 per order (average order value)
 
   aws_sns_topic.notifications:
     nodeType: routing

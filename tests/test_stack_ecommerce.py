@@ -31,11 +31,11 @@ class TestEcommerceModel:
         assert model["version"] == "1.0"
         assert model["workflow"]["name"] == "ecommerce-api"
 
-    def test_frequency_2000_per_minute(self):
+    def test_frequency_10_per_minute(self):
         model = load_yaml_model("ecommerce-microservices.yaml")
         freq = model["workflow"]["frequency"]
         assert freq["unit"] == "perMinute"
-        assert freq["value"] == 2000
+        assert freq["value"] == 10
 
     def test_stripe_percentage_pricing(self):
         model = load_yaml_model("ecommerce-microservices.yaml")
@@ -212,25 +212,24 @@ class TestStripePercentagePricing:
         assert costs["external_api.stripe"] > 0
 
     def test_stripe_cost_formula(self, engine):
-        """Manual validation: volume × 2.9% + transactions/sec × $0.30 × seconds/month.
+        """Manual check: transactions × ($50 × 2.9% + $0.30) × seconds/month.
 
-        The engine's percentage pricing treats transactionVolume as a flat total
-        (not per-invocation), and fixedPerTransaction is multiplied by the
-        per-second invocation count.
+        transactionVolume is the value of one order (Principle 4), so both the
+        percentage fee and the fixed fee apply to every transaction.
         """
-        engine.compute()
-        derived = engine.derived_usage
-
-        stripe_usage = derived["external_api.stripe"]
-        invocations_per_sec = stripe_usage.invocation_count
-
-        # Per the engine formula: volume * pct_rate + invocations_per_sec * fixed_per_tx
-        # volume=50 (flat), pct_rate=0.029, fixed=0.30, invocations=13.33/sec
-        cost_per_sec = 50 * 0.029 + invocations_per_sec * 0.30
-        expected_monthly = cost_per_sec * 2629800
-
         costs = engine.compute()
+        invocations_per_sec = engine.derived_usage["external_api.stripe"].invocation_count
+
+        expected_monthly = invocations_per_sec * (50 * 0.029 + 0.30) * 2629800
+
         assert costs["external_api.stripe"] == pytest.approx(expected_monthly, rel=0.01)
+
+    def test_stripe_monthly_cost_is_plausible(self, engine):
+        """10 req/min × 40% = 4 orders/min, about 175,000 orders a month.
+        At $1.75 each, Stripe costs about $307,000 a month."""
+        costs = engine.compute()
+        assert costs["external_api.stripe"] == pytest.approx(
+            10 / 60 * 0.4 * 1.75 * 2629800, rel=0.001)
 
     def test_stripe_transaction_count(self, engine):
         """Stripe receives one call per payment."""
@@ -244,16 +243,12 @@ class TestStripePercentagePricing:
         assert stripe.invocation_count == pytest.approx(process_payment.invocation_count)
 
     def test_stripe_monthly_volume(self, engine):
-        """At 2000 req/min, ~17.5M monthly payments = $30.75M Stripe cost."""
+        """At 10 req/min with 40% creating an order, about 175,000 payments a month."""
         engine.compute()
-        derived = engine.derived_usage
-
-        stripe = derived["external_api.stripe"]
+        stripe = engine.derived_usage["external_api.stripe"]
         monthly_txns = stripe.invocation_count * 2629800
 
-        # 2000/min * 60 * 24 * 30.4375 * 0.4 = ~35M auth/month → ~14M payment attempts
-        # But the actual depends on the exact calc
-        assert monthly_txns > 10_000_000  # Should be millions
+        assert monthly_txns == pytest.approx(10 / 60 * 0.4 * 2629800)
 
 
 class TestCostBreakdown:

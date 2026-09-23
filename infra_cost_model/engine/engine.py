@@ -831,8 +831,10 @@ class CostAggregator:
     def _compute_percentage_cost(self, address: str, node: dict, invocations: float) -> float:
         """Compute percentage-based cost for external services.
 
-        For services like Stripe: 2.9% + $0.30 per transaction.
-        Uses catalog query if available, otherwise uses pricingRates.
+        For services like Stripe: 2.9% + $0.30 per transaction. The
+        transactionVolume metric is the value of one transaction (Principle 4),
+        so the cost is invocations × (volume × percentageRate +
+        fixedPerTransaction).
 
         Args:
             address: Resource address
@@ -848,18 +850,18 @@ class CostAggregator:
         percentage_rate = pricing_rates.get("percentageRate", 0.0)
         fixed_per_tx = pricing_rates.get("fixedPerTransaction", 0.0)
 
-        # External services need transaction volume - use value from usageMetrics
+        # Value of one transaction, from usageMetrics
         volume = 0.0
         usage_metrics = node.get("usageMetrics", {})
         for metric_name, metric_def in usage_metrics.items():
             if "volume" in metric_name.lower() or "transaction" in metric_name.lower():
                 if isinstance(metric_def, dict):
-                    volume = metric_def.get("value", 0)
+                    volume = self._resolve_param(metric_def.get("value", 0))
                 else:
-                    volume = metric_def
+                    volume = self._resolve_param(metric_def)
                 break
 
-        return (volume * percentage_rate) + (invocations * fixed_per_tx)
+        return invocations * (volume * percentage_rate + fixed_per_tx)
 
 
 # Canonical time conversion: seconds in an average month (365.25 days / 12)
