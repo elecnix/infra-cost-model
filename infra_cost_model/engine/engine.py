@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from infra_cost_model.pricing.catalog import PricingCatalog
+from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
 from infra_cost_model.version_requirement import require_engine
 
 
@@ -525,9 +525,6 @@ class CostAggregator:
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
         flat_override = node.get("flatOverride", False)
-        provider = node.get("provider")
-        service = node.get("service", "")
-        region = node.get("region")
 
         # A catalog lookup needs provider and region (DP#6). The rule is
         # shared with `validate` so both report the same nodes (#273).
@@ -575,10 +572,8 @@ class CostAggregator:
             # Query catalog first (preferred path per Principle 13), else fall
             # back to embedded pricingRates (deprecated per Principle 13).
             if metric_cost is None and self.catalog is not None:
-                result = self.catalog.query(
-                    provider, service, region, metric_name, total_quantity,
-                    parameters=self.parameters
-                )
+                result = self._query_catalog(node, metric_name,
+                                             total_quantity, metric_fixed)
                 if result is None:
                     # The node used a logical metric name (e.g. "natHours"); map it
                     # to the catalog usage_metric ("NAT-Gateway-Hour") via the
@@ -586,10 +581,8 @@ class CostAggregator:
                     # reached instead of falling back to embedded pricingRates.
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
-                        result = self.catalog.query(
-                            provider, service, region, mapped, total_quantity,
-                            parameters=self.parameters
-                        )
+                        result = self._query_catalog(node, mapped,
+                                                     total_quantity, metric_fixed)
                 if result is not None:
                     metric_cost = result.total_cost
             if metric_cost is None and metric_name in pricing_rates:
@@ -624,9 +617,6 @@ class CostAggregator:
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
         flat_override = node.get("flatOverride", False)
-        provider = node.get("provider")
-        service = node.get("service", "")
-        region = node.get("region")
 
         # A catalog lookup needs provider and region (DP#6). The rule is
         # shared with `validate` so both report the same nodes (#273).
@@ -664,10 +654,8 @@ class CostAggregator:
                 )
 
             if metric_cost is None and self.catalog is not None:
-                result = self.catalog.query(
-                    provider, service, region, metric_name, total_quantity,
-                    parameters=self.parameters
-                )
+                result = self._query_catalog(node, metric_name,
+                                             total_quantity, metric_fixed)
                 if result is None:
                     # The node used a logical metric name (e.g. "natHours"); map it
                     # to the catalog usage_metric ("NAT-Gateway-Hour") via the
@@ -675,10 +663,8 @@ class CostAggregator:
                     # reached instead of falling back to embedded pricingRates.
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
-                        result = self.catalog.query(
-                            provider, service, region, mapped, total_quantity,
-                            parameters=self.parameters
-                        )
+                        result = self._query_catalog(node, mapped,
+                                                     total_quantity, metric_fixed)
                 if result is not None:
                     metric_cost = result.total_cost
             # Fallback: flat pricingRates
@@ -707,9 +693,9 @@ class CostAggregator:
         catalog, the handler derives nothing, or the catalog lacks a row for a
         derived quantity. The metrics then go through the per-metric path.
 
-        The engine prices per-second quantities, while a $0 free tier row is a
-        monthly allowance for a whole account. So the free tier is left out
-        and each unit is priced at the paid rate.
+        Like every other catalog quantity, the derived quantities are priced
+        against monthly tier boundaries, so the $0 free tier rows apply
+        (#287).
         """
         from infra_cost_model.resources.registry import ResourceRegistry
 
@@ -731,15 +717,28 @@ class CostAggregator:
 
         cost = 0.0
         for catalog_metric, per_invocation in derived.quantities.items():
-            result = self.catalog.query(
-                node.get("provider"), node.get("service", ""), node.get("region"),
-                catalog_metric, invocations * per_invocation,
-                parameters=self.parameters, include_free_tier=False,
-            )
+            result = self._query_catalog(node, catalog_metric,
+                                         invocations * per_invocation, fixed=False)
             if result is None:
                 return 0.0, frozenset()
             cost += result.total_cost
         return cost, derived.consumed
+
+    def _query_catalog(self, node: dict, metric: str, quantity: float,
+                       fixed: bool):
+        """Query the catalog for the cost of ``quantity`` of ``metric``.
+
+        A usage-driven quantity is a rate per second, and a fixed quantity is
+        a monthly total. The engine tells the catalog which period the
+        quantity covers, and the catalog applies its tier boundaries to a
+        month of usage (#287). The cost that comes back covers the same
+        period as the quantity: per second, or per month for a fixed metric.
+        """
+        return self.catalog.query(
+            node.get("provider"), node.get("service", ""), node.get("region"),
+            metric, quantity, parameters=self.parameters,
+            period_seconds=SECONDS_PER_MONTH if fixed else 1.0,
+        )
 
     def _resolve_catalog_metric(self, address: str, node: dict, logical_metric: str):
         """Translate a node's logical usageMetrics key to a catalog usage_metric
@@ -802,9 +801,6 @@ class CostAggregator:
         """
         node_metrics = node.get("usageMetrics", {})
         pricing_rates = node.get("pricingRates", {})
-        provider = node.get("provider")
-        service = node.get("service", "")
-        region = node.get("region")
 
         # Recognized token metric keys (Issue #194, #195)
         _RECOGNIZED_KEYS = {
@@ -863,8 +859,9 @@ class CostAggregator:
             if total_tokens <= 0:
                 continue
             if self.catalog is not None:
-                result = self.catalog.query(
-                    provider, service, region, token_name, total_tokens
+                result = self._query_catalog(
+                    node, token_name, total_tokens,
+                    fixed=node.get("flatOverride", False),
                 )
                 if result is not None:
                     total_cost += result.total_cost
@@ -913,8 +910,8 @@ class CostAggregator:
         return invocations * (volume * percentage_rate + fixed_per_tx)
 
 
-# Canonical time conversion: seconds in an average month (365.25 days / 12)
-SECONDS_PER_MONTH = 86400 * 365.25 / 12  # = 2629800.0
+# SECONDS_PER_MONTH, the canonical time conversion, is imported from the
+# pricing catalog, which also uses it as the tier boundary period (#287).
 
 
 class CostEngine:

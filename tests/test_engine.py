@@ -5,8 +5,12 @@ import warnings
 import pytest
 from infra_cost_model.engine.engine import (
     DAGValidator, WorkloadDeriver, CostAggregator, CostEngine, DerivedUsage,
-    SensitivityAnalyzer, ParametricSensitivityAnalyzer,
+    SensitivityAnalyzer, ParametricSensitivityAnalyzer, SECONDS_PER_MONTH,
 )
+
+# One invocation a month, as the per-second rate the aggregator takes. Catalog
+# tier boundaries are monthly, so tiered tests derive a month of usage (#287).
+ONCE_A_MONTH = 1 / SECONDS_PER_MONTH
 
 
 def make_valid_cost_model(entry="api_gateway", frequency=100):
@@ -685,13 +689,13 @@ class TestCostAggregator:
                 }
             }
 
-            # 1000 GB storage, 1 invocation
-            derived = {"s3_bucket": DerivedUsage("s3_bucket", 1.0)}
+            # 1000 GB storage, 1 invocation a month
+            derived = {"s3_bucket": DerivedUsage("s3_bucket", ONCE_A_MONTH)}
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
 
             # 1000 GB should all be in first tier: 1000 * $0.023 = $23.00
-            assert costs["s3_bucket"] == pytest.approx(1000 * 0.023)
+            assert costs["s3_bucket"] * SECONDS_PER_MONTH == pytest.approx(1000 * 0.023)
 
     def test_tiered_pricing_crosses_tiers(self):
         """Test tiered pricing correctly handles crossing tier boundaries."""
@@ -751,11 +755,11 @@ class TestCostAggregator:
             }
 
             # 25 units: 10 * $1.00 + 15 * $0.50 = $10 + $7.50 = $17.50
-            derived = {"svc": DerivedUsage("svc", 1.0)}
+            derived = {"svc": DerivedUsage("svc", ONCE_A_MONTH)}
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
 
-            assert costs["svc"] == pytest.approx(17.50)
+            assert costs["svc"] * SECONDS_PER_MONTH == pytest.approx(17.50)
 
     def test_tiered_pricing_fallback_to_flat(self):
         """Test tiered pricing falls back to flat pricingRates when no catalog."""
@@ -830,7 +834,7 @@ class TestCostAggregator:
             }
 
             # 3 requests, all in free tier: $0
-            derived = {"svc": DerivedUsage("svc", 1.0)}
+            derived = {"svc": DerivedUsage("svc", ONCE_A_MONTH)}
             aggregator = CostAggregator(nodes, derived, [], catalog)
             costs = aggregator.aggregate()
 
@@ -838,11 +842,11 @@ class TestCostAggregator:
 
             # Now with 8 requests: 5 free + 3 * $0.10 = $0.30
             nodes["svc"]["usageMetrics"]["requests"]["value"] = 8
-            derived2 = {"svc": DerivedUsage("svc", 1.0)}
+            derived2 = {"svc": DerivedUsage("svc", ONCE_A_MONTH)}
             aggregator2 = CostAggregator(nodes, derived2, [], catalog)
             costs2 = aggregator2.aggregate()
 
-            assert costs2["svc"] == pytest.approx(0.30)
+            assert costs2["svc"] * SECONDS_PER_MONTH == pytest.approx(0.30)
 
     def test_tiered_pricing_multiple_metrics(self):
         """Test tiered pricing with multiple metrics per node."""
