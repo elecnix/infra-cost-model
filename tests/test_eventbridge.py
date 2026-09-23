@@ -39,24 +39,24 @@ class TestEventBridgePricing:
     def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_custom_event_pricing(self):
         cost = _eventbridge_cost(events_published=3_000_000, catalog=self.catalog, region="us-east-1")
-        assert cost == pytest.approx(2.00, rel=0.01)
+        assert cost == pytest.approx(3.00, rel=0.01)
     def test_schedule_pricing_no_free_tier(self):
         cost = _eventbridge_cost(schedule_invocations=1_000_000, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(1.00, rel=0.01)
     def test_event_vs_schedule_difference(self):
-        assert _eventbridge_cost(events_published=500_000, catalog=self.catalog, region="us-east-1") == 0.0
+        assert _eventbridge_cost(events_published=500_000, catalog=self.catalog, region="us-east-1") == pytest.approx(0.50, rel=0.01)
         assert _eventbridge_cost(schedule_invocations=500_000, catalog=self.catalog, region="us-east-1") == pytest.approx(0.50, rel=0.01)
     def test_fan_out_multiple_rules(self):
         cost = _eventbridge_cost(events_published=3_000_000, events_matched=6_000_000, catalog=self.catalog, region="us-east-1")
-        assert cost == pytest.approx(7.00, rel=0.01)
+        assert cost == pytest.approx(9.00, rel=0.01)
     def test_archive_replay(self):
         cost = _eventbridge_cost(archive_replay_events=5_000_000, catalog=self.catalog, region="us-east-1")
-        assert cost == pytest.approx(1.00, rel=0.02)
+        assert cost == pytest.approx(5.00, rel=0.02)
     def test_content_filtering_reduces_cost(self):
         cost = _eventbridge_cost(events_published=2_000_000, events_matched=200_000, catalog=self.catalog, region="us-east-1")
-        assert cost == pytest.approx(1.00, rel=0.01)
-    def test_within_free_tier(self):
-        assert _eventbridge_cost(events_published=500_000, events_matched=500_000, catalog=self.catalog, region="us-east-1") == 0.0
+        assert cost == pytest.approx(2.20, rel=0.01)
+    def test_custom_events_have_no_free_tier(self):
+        assert _eventbridge_cost(events_published=500_000, events_matched=500_000, catalog=self.catalog, region="us-east-1") == pytest.approx(1.00, rel=0.01)
     def test_zero_usage(self):
         assert _eventbridge_cost(catalog=self.catalog, region="us-east-1") == 0.0
 

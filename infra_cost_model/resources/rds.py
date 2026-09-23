@@ -1,9 +1,9 @@
 """Amazon RDS Instance resource model.
 
 RDS is a core storage node with fixed hourly cost.
-Pricing: instance hours vary by class (db.t3.micro $0.034/hr),
+Pricing: instance hours vary by class (db.t3.micro $0.017/hr, Single-AZ),
 Storage gp3 $0.115/GB-month, Backup $0.095/GB-month.
-Multi-AZ doubles instance cost.
+Multi-AZ (one standby) doubles the Single-AZ instance cost.
 """
 
 from typing import Optional

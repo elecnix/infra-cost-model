@@ -159,8 +159,8 @@ class TestMultiWorkflowEngine:
         costs = engine.compute()
         rds_cost = costs["aws_db_instance.analytics"]
 
-        # 730 hours × $0.034/hour (the seed row for db.t3.micro) = $24.82/month
-        expected = 730 * 0.034
+        # 730 hours × $0.017/hour (the Single-AZ seed row for db.t3.micro) = $12.41/month
+        expected = 730 * 0.017
         assert rds_cost == pytest.approx(expected, rel=0.01)
 
     def test_rds_cost_unchanged_with_frequency(self, seed_catalog):

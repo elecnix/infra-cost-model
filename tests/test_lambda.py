@@ -175,7 +175,7 @@ def test_provisioned_concurrency_cost(seed_catalog):
     )
 
     rate_result = seed_catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-ProvisionedConcurrency-GB-Second")
-    rate = rate_result.price_usd if rate_result else 0.000003606
+    rate = rate_result.price_usd if rate_result else 0.0000041667
     fixed = 10 * (256 / 1024) * 24 * 3600 * rate
     requests = 5_000 * 0.20e-6
 
