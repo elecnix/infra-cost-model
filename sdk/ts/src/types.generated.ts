@@ -117,7 +117,7 @@ export interface UsageMetric {
    */
   fixed?: boolean;
   /**
-   * SaaS pricing shape name (e.g., flat_subscription, free_tier, credit_pool, transactional)
+   * SaaS pricing shape name (e.g., flat_subscription, per_unit_flat, free_tier, transactional)
    */
   shape?: string;
   /**

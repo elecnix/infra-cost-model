@@ -160,7 +160,7 @@
         "shape": {
           "type": "string",
           "pattern": "^[a-z][a-z_]*$",
-          "description": "SaaS pricing shape name (e.g., flat_subscription, free_tier, credit_pool, transactional)"
+          "description": "SaaS pricing shape name (e.g., flat_subscription, per_unit_flat, free_tier, transactional)"
         },
         "rate": {
           "type": "number",
