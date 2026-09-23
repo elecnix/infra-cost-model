@@ -501,9 +501,11 @@ class CostAggregator:
                     f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
                 )
 
-        variable_cost = 0.0
+        variable_cost, consumed = self._price_derived_usage(address, node, invocations)
         fixed_cost = 0.0
         for metric_name, metric_def in node_metrics.items():
+            if metric_name in consumed:
+                continue
             if isinstance(metric_def, dict):
                 per_invocation = self._resolve_param(metric_def.get("value", 0))
             else:
@@ -609,10 +611,12 @@ class CostAggregator:
                     f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
                 )
 
-        variable_cost = 0.0
+        variable_cost, consumed = self._price_derived_usage(address, node, invocations)
         fixed_cost = 0.0
 
         for metric_name, metric_def in node_metrics.items():
+            if metric_name in consumed:
+                continue
             if isinstance(metric_def, dict):
                 per_invocation = self._resolve_param(metric_def.get("value", 0))
             else:
@@ -667,6 +671,51 @@ class CostAggregator:
                 variable_cost += metric_cost
 
         return (variable_cost, fixed_cost)
+
+    def _price_derived_usage(self, address: str, node: dict,
+                             invocations: float) -> tuple[float, frozenset]:
+        """Price the catalog quantities the node's handler derives from
+        several usage metrics, such as Lambda GB-seconds.
+
+        Only usage-driven metrics without a ``shape`` feed the handler. Returns
+        the usage-driven cost and the logical metrics it covers, which the
+        caller then skips. Returns ``(0.0, frozenset())`` when there is no
+        catalog, the handler derives nothing, or the catalog lacks a row for a
+        derived quantity. The metrics then go through the per-metric path.
+
+        The engine prices per-second quantities, while a $0 free tier row is a
+        monthly allowance for a whole account. So the free tier is left out
+        and each unit is priced at the paid rate.
+        """
+        from infra_cost_model.resources.registry import ResourceRegistry
+
+        resource_address = node.get("resourceAddress") or address
+        if self.catalog is None or not resource_address:
+            return 0.0, frozenset()
+        usage = {}
+        for name, metric_def in (node.get("usageMetrics") or {}).items():
+            if _metric_is_fixed(metric_def, node.get("flatOverride", False)):
+                continue
+            if isinstance(metric_def, dict):
+                if metric_def.get("shape") is not None:
+                    continue
+                metric_def = metric_def.get("value", 0)
+            usage[name] = self._resolve_param(metric_def)
+        derived = ResourceRegistry.derive_catalog_usage(resource_address, usage)
+        if derived is None:
+            return 0.0, frozenset()
+
+        cost = 0.0
+        for catalog_metric, per_invocation in derived.quantities.items():
+            result = self.catalog.query(
+                node.get("provider"), node.get("service", ""), node.get("region"),
+                catalog_metric, invocations * per_invocation,
+                parameters=self.parameters, include_free_tier=False,
+            )
+            if result is None:
+                return 0.0, frozenset()
+            cost += result.total_cost
+        return cost, derived.consumed
 
     def _resolve_catalog_metric(self, address: str, node: dict, logical_metric: str):
         """Translate a node's logical usageMetrics key to a catalog usage_metric

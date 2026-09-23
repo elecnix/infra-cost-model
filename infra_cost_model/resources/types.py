@@ -18,6 +18,19 @@ class ResourceExtract:
     config: dict
 
 
+@dataclass(frozen=True)
+class DerivedCatalogUsage:
+    """Catalog quantities a handler derives from several usage metrics.
+
+    ``consumed`` names the node's logical usageMetrics keys that feed the
+    derivation. ``quantities`` maps catalog usage_metric names to a quantity
+    per invocation of the node. It carries usage only, never prices
+    (Principle 6).
+    """
+    consumed: frozenset[str]
+    quantities: dict[str, float]
+
+
 @dataclass
 class UsageParams:
     """Usage parameters for a specific resource."""
@@ -53,6 +66,16 @@ class ResourceType(ABC):
         vs VPC Endpoint).
         """
         return {}
+
+    def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+        """Derive catalog quantities that depend on more than one usage metric.
+
+        ``usage`` maps the node's logical usageMetrics keys to their values per
+        invocation. ``None`` by default, and when an input is missing. A handler
+        overrides this when the provider bills a quantity that combines
+        several metrics, such as Lambda GB-seconds from duration and memory.
+        """
+        return None
 
     @classmethod
     @abstractmethod

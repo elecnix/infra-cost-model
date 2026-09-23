@@ -8,7 +8,7 @@ Provides multi-cloud provider dispatch (DP#6).
 import warnings
 from typing import Optional, Type, Dict as DictType
 
-from .types import ResourceType
+from .types import DerivedCatalogUsage, ResourceType
 from .lambda_func import LambdaFunction
 from .dynamodb import DynamoDBTable
 from .apigw import APIGatewayHTTP
@@ -134,6 +134,18 @@ class ResourceRegistry:
         if handler is None:
             return None
         return handler().catalog_metrics.get(logical_metric)
+
+    @classmethod
+    def derive_catalog_usage(cls, resource_address: str,
+                             usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+        """Ask the handler that owns ``resource_address`` for derived catalog
+        quantities. Returns ``None`` when no handler matches or the handler
+        derives nothing from ``usage``.
+        """
+        handler = cls.from_address(resource_address)
+        if handler is None:
+            return None
+        return handler().derive_catalog_usage(usage)
 
     @classmethod
     def known_prefixes(cls) -> set[str]:
