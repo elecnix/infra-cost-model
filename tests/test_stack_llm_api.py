@@ -45,7 +45,10 @@ class TestLLMModel:
         model = load_yaml_model("llm-augmented-api.yaml")
         bedrock = model["nodes"]["aws_bedrock_model.claude_sonnet"]
         assert bedrock["pricingModel"] == "token_based"
-        assert bedrock["provider"] == "bedrock"
+        # The seed catalog files the Bedrock token rows under AWS (#312).
+        assert bedrock["provider"] == "aws"
+        assert bedrock["service"] == "AmazonBedrock"
+        assert "pricingRates" not in bedrock
 
     def test_token_flow_on_orchestrator_edge(self):
         model = load_yaml_model("llm-augmented-api.yaml")
@@ -152,15 +155,15 @@ class TestAsymmetricTokenPricing:
         # Bedrock should be > 90% of total cost
         assert bedrock_cost / total > 0.9
 
-    def test_output_tokens_cost_5x_input(self, engine):
-        """Output tokens cost 5× more than input tokens."""
-        cost_model = load_yaml_model("llm-augmented-api.yaml")
-        bedrock_config = cost_model["nodes"]["aws_bedrock_model.claude_sonnet"]
-        rates = bedrock_config["pricingRates"]
+    def test_output_tokens_cost_5x_input(self, engine, seed_catalog):
+        """Output tokens cost 5× more than input tokens in the seed catalog."""
+        def rate(metric):
+            return seed_catalog.query("aws", "AmazonBedrock", "us-east-1",
+                                      metric, 1).total_cost
 
         # Output: $0.015/1K tokens, Input: $0.003/1K tokens
-        output_rate = rates["outputTokens"]
-        input_rate = rates["inputTokens"]
+        output_rate = rate("Bedrock-Output-Token")
+        input_rate = rate("Bedrock-Input-Token")
 
         # 0.015 / 0.003 = 5
         assert output_rate / input_rate == pytest.approx(5.0, rel=0.01)

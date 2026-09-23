@@ -17,10 +17,23 @@ class BedrockModel(ComputeResource):
     def valid_metrics(self) -> list[str]:
         return ["invocations", "inputTokens", "outputTokens"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        """Token names in the model map to the AmazonBedrock catalog rows (#312).
+
+        ``cacheWriteTokens`` has no seed row, so it keeps its ``pricingRates``
+        fallback.
+        """
+        return {
+            "inputTokens": "Bedrock-Input-Token",
+            "cachedReadTokens": "Bedrock-Cached-Input-Token",
+            "outputTokens": "Bedrock-Output-Token",
+        }
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["BedrockModel"]:
         """Parse resource address to determine if it's a Bedrock model."""
-        if resource_address.startswith("bedrock_model.") or \
+        if resource_address.startswith(("bedrock_model.", "aws_bedrock_model.")) or \
            resource_address.startswith("aws.bedrock.Model:") or \
            "Bedrock::Model:" in resource_address:
             return cls()
