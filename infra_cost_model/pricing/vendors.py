@@ -7,14 +7,51 @@ import math
 import sqlite3
 from datetime import datetime
 from importlib import resources
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from .cache import Price, PricingCache, _hash_attributes
 
+if TYPE_CHECKING:
+    from importlib.resources.abc import Traversable
+
+# Every copy of this project's ``vendors`` package ships this file, and the
+# wheel includes it through the ``*/vendor.yaml`` package-data pattern. A
+# package named ``vendors`` without it belongs to some other project.
+_MARKER = ("_template", "vendor.yaml")
+
+_REINSTALL_HINT = (
+    "Reinstall infra-cost-model (from a checkout: pip install -e .) so that it "
+    "installs its own 'vendors' package."
+)
+
 _REQUIRED_STRINGS = ("vendor", "service", "usage_metric", "unit")
 _OPTIONAL_NUMBERS = ("start_usage_amount", "end_usage_amount")
+
+
+class VendorPackageError(ValueError):
+    """The bundled ``vendors`` package is missing or isn't this project's."""
+
+
+def _vendors_root() -> Traversable:
+    """Return this project's ``vendors`` package, or raise ``VendorPackageError``.
+
+    Without it, every vendor-priced node would cost $0 with no sign of why.
+    """
+    try:
+        root = resources.files("vendors")
+    except (ModuleNotFoundError, TypeError) as exc:
+        raise VendorPackageError(
+            f"Vendor prices didn't load: Python can't import the 'vendors' package "
+            f"({exc}). {_REINSTALL_HINT}"
+        ) from exc
+    if not root.joinpath(_MARKER[0]).joinpath(_MARKER[1]).is_file():
+        raise VendorPackageError(
+            f"Vendor prices didn't load: the 'vendors' package at {root} isn't this "
+            f"project's, because it has no {'/'.join(_MARKER)}. {_REINSTALL_HINT}"
+        )
+    return root
 
 
 def _row_error(source: str, index: int, message: str) -> ValueError:
@@ -81,10 +118,7 @@ def _parse_row(row: Any, source: str, index: int, fetched_at: str) -> Price:
 
 
 def _read_vendor_prices() -> list[Price]:
-    try:
-        vendors_root = resources.files("vendors")
-    except (ModuleNotFoundError, TypeError):
-        return []
+    vendors_root = _vendors_root()
 
     fetched_at = datetime.now().isoformat()
     parsed: list[Price] = []

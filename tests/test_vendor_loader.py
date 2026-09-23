@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from infra_cost_model.pricing.cache import Price, PricingCache
-from infra_cost_model.pricing.vendors import load_vendor_prices
+from infra_cost_model.pricing.vendors import VendorPackageError, load_vendor_prices
 
 
 def test_vendor_loader_loads_github_copilot_and_skips_template():
@@ -148,3 +148,72 @@ def test_vendor_loader_preserves_rows_when_validation_fails(monkeypatch, tmp_pat
         assert conn.execute(
             "SELECT price_usd FROM prices WHERE vendor = 'sentinel' AND source = 'vendor'"
         ).fetchone() == (7.0,)
+
+
+def _replace_vendors_package(monkeypatch, result):
+    """Make ``resources.files("vendors")`` return *result*, or raise it."""
+    original_files = resources.files
+
+    def fake_files(package):
+        if package != "vendors":
+            return original_files(package)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(resources, "files", fake_files)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [ModuleNotFoundError("No module named 'vendors'"), TypeError("not a package")],
+)
+def test_missing_vendors_package_is_an_error(monkeypatch, tmp_path, failure):
+    """A broken install must not price every vendor node at $0 without a word."""
+    _replace_vendors_package(monkeypatch, failure)
+
+    with pytest.raises(VendorPackageError, match=r"pip install -e \.") as excinfo:
+        PricingCache(db_path=tmp_path / "pricing.db")
+    assert "can't import the 'vendors' package" in str(excinfo.value)
+
+
+def test_foreign_vendors_package_is_an_error(monkeypatch, tmp_path):
+    """An unrelated installed package named ``vendors`` is not used in place of ours."""
+    foreign = tmp_path / "site-packages" / "vendors"
+    (foreign / "acme").mkdir(parents=True)
+    (foreign / "__init__.py").write_text("")
+    (foreign / "acme" / "prices.yaml").write_text(
+        "- vendor: acme\n  service: Acme\n  usage_metric: Acme-Call\n"
+        "  unit: calls\n  price_usd: 1.0\n"
+    )
+    _replace_vendors_package(monkeypatch, foreign)
+
+    with pytest.raises(VendorPackageError, match=r"isn't this project's") as excinfo:
+        PricingCache(db_path=tmp_path / "pricing.db")
+    assert str(foreign) in str(excinfo.value)
+    assert "pip install -e ." in str(excinfo.value)
+
+
+def test_foreign_vendors_package_on_sys_path_is_an_error(tmp_path):
+    """The check also holds when a real foreign package shadows ours on the import path."""
+    foreign = tmp_path / "shadow" / "vendors"
+    foreign.mkdir(parents=True)
+    (foreign / "__init__.py").write_text("")
+    script = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(foreign.parent)!r})\n"
+        "sys.modules.pop('vendors', None)\n"
+        "from infra_cost_model.pricing.cache import PricingCache\n"
+        "from infra_cost_model.pricing.vendors import VendorPackageError\n"
+        "try:\n"
+        f"    PricingCache(db_path={str(tmp_path / 'pricing.db')!r})\n"
+        "except VendorPackageError as exc:\n"
+        "    print(exc)\n"
+        "else:\n"
+        "    raise SystemExit('no error')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, cwd=tmp_path
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "isn't this project's" in result.stdout
