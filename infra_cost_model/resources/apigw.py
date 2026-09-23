@@ -111,13 +111,11 @@ def _request_cost(requests: float, *, catalog=None, provider: str = "aws", regio
 
 
 def _egress_cost(data_out_gb: float, *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Calculate API Gateway egress cost with tiered pricing.
+    """Calculate the cost of an HTTP API's response bytes.
 
-    Tiered egress (first 10TB at $0.09/GB):
-    - 1-10 TB: $0.09/GB
-    - Next 40 TB: $0.085/GB
-    - Next 100 TB: $0.07/GB
-    - Next 350 TB: $0.05/GB
+    API Gateway has no egress price of its own. AWS bills the bytes as data
+    transfer out to the internet, so this reads the tiered
+    ``DataTransfer-Internet-Out-GB`` rows of ``AWSDataTransfer`` (#311).
     """
     if data_out_gb <= 0:
         return 0.0
@@ -125,8 +123,8 @@ def _egress_cost(data_out_gb: float, *, catalog=None, provider: str = "aws", reg
     if catalog is None:
         catalog = PricingCatalog()
 
-    result = catalog.query(provider, "AmazonAPIGateway", region,
-                           "APIGateway-Egress", data_out_gb)
+    result = catalog.query(provider, "AWSDataTransfer", region,
+                           "DataTransfer-Internet-Out-GB", data_out_gb)
     return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
 
 

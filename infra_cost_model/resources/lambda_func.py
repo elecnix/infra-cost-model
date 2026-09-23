@@ -213,7 +213,7 @@ def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
         catalog = PricingCatalog()
 
     rate_result = catalog.query(provider, "AWSLambda", region, "Lambda-ProvisionedConcurrency-GB-Second")
-    rate = 0.000003606
+    rate = 0.0000041667
     if rate_result is not None and hasattr(rate_result, "price_usd"):
         rate = rate_result.price_usd
     fixed_cost = provisioned_concurrency * gb * hours * 3600 * rate

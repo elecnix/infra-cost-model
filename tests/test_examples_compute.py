@@ -89,33 +89,35 @@ def test_example_validates(path):
 MONTHLY_TOTALS = {
     # ALB 730 h x $0.0225 + 487 LCU-h x $0.008 = $20.32; Lambda 42.83M paid
     # requests x $0.20/M + 5,078,750 paid GB-s x $0.0000166667 = $93.21;
-    # DynamoDB 43.83M reads x $1.25/M = $54.79; NAT 730 h x $0.045 + 2,191.5
+    # DynamoDB 43.83M reads x $0.125/M = $5.48; NAT 730 h x $0.045 + 2,191.5
     # GB x $0.045 = $131.47; one secret $0.40.
-    "always-on-infrastructure.yaml": (300.19, 307.05),
+    "always-on-infrastructure.yaml": (250.87, 257.75),
     # S3 1,500 GB x $0.023 + 30,437.5 puts x $5/M = $34.65; DynamoDB 3 GB x
-    # $0.25 + 30,437.5 writes x $6.25/M = $0.94; RDS 730 h x $0.034 = $24.82;
-    # reports $0.01. Every Lambda and EventBridge quantity is in a free tier.
-    "data-pipeline.yaml": (60.42, 63.05),
+    # $0.25 + 30,437.5 writes x $0.625/M = $0.77; RDS 730 h x $0.017
+    # (Single-AZ) = $12.41; EventBridge 30,437.5 custom events x $1/M = $0.03
+    # (no free tier); reports $0.01. Every Lambda quantity is in a free tier.
+    "data-pipeline.yaml": (47.86, 50.47),
     # Stripe 175,320 orders x (2.9% of $50 + $0.30) = $306,810.00; API 438,300
     # requests x $1/M + 8.77 GB x $0.09 = $1.23; DynamoDB 788,940 reads x
-    # $1.25/M + 341,874 writes x $6.25/M = $3.12. Lambda, SQS and SNS are free.
-    "ecommerce-microservices.yaml": (306814.35, 306815.74),
+    # $0.125/M + 341,874 writes x $0.625/M = $0.31; Lambda $0.04. SQS and SNS
+    # are free.
+    "ecommerce-microservices.yaml": (306811.58, 306812.93),
     # The analyzer Lambda dominates: 10.96M calls x 5 GB-s, less 400,000 free,
-    # is 54,387,500 GB-s x $0.0000166667 = $906.46, plus $1.99 of requests.
-    # DynamoDB 35.06M writes x $6.25/M = $219.15; S3 10.96M puts x $5/M =
-    # $54.79; API and egress $41.64; the rest $91.17.
-    "event-driven-fanout.yaml": (1315.20, 1342.77),
-    # Bedrock 4.383M calls x (500 x $3/M + 1,000 x $15/M) = $72,319.50; API,
-    # egress, Lambda, S3 and DynamoDB $60.12.
-    "llm-augmented-api.yaml": (72379.62, 72393.35),
+    # is 54,387,500 GB-s x $0.0000166667 = $906.46, plus $2.56 of requests.
+    # DynamoDB 35.06M writes x $0.625/M = $21.92; S3 10.96M puts x $5/M =
+    # $54.79; API and egress $41.64; the rest $110.41.
+    "event-driven-fanout.yaml": (1137.76, 1145.54),
+    # Bedrock 4.383M calls x (500 x $3/M + 1,000 x $15/M) = $72,319.50;
+    # DynamoDB $2.74; API, egress, Lambda and S3 $39.59.
+    "llm-augmented-api.yaml": (72361.83, 72368.70),
     # WorkOS $250 + $15 + $99 and Datadog 6 x $23 = $502; DynamoDB 21.915M
-    # reads x $1.25/M = $27.39, and no writes because no write edge reaches
+    # reads x $0.125/M = $2.74, and no writes because no write edge reaches
     # the table (#313); API $21.92 + egress $39.45; Lambda $15.78.
-    "saas-subscription-api.yaml": (606.53, 613.40),
+    "saas-subscription-api.yaml": (581.87, 588.75),
     # API 43.83M x $1/M = $43.83; egress 2,191.5 GB x $0.09 = $197.24;
-    # DynamoDB 30.681M reads x $1.25/M + 13.149M writes x $6.25/M = $120.53
-    # (#313); Lambda $23.61.
-    "serverless-api.yaml": (385.21, 398.67),
+    # DynamoDB 30.681M reads x $0.125/M + 13.149M writes x $0.625/M = $12.05
+    # (#313); Lambda $30.21.
+    "serverless-api.yaml": (283.32, 290.19),
 }
 
 

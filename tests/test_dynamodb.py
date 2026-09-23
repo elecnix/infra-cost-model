@@ -75,8 +75,8 @@ def test_dynamodb_on_demand_cost(seed_catalog):
     """Test on-demand cost calculation."""
     cost = _on_demand_cost(1_000_000, 1_000_000, 10.0, catalog=seed_catalog, region="us-east-1")
 
-    # 1M reads = $1.25, 1M writes = $6.25, 10GB = $2.50
-    expected = 1.25 + 6.25 + 2.50  # $10.00
+    # 1M reads = $0.125, 1M writes = $0.625, 10GB = $2.50
+    expected = 0.125 + 0.625 + 2.50  # $3.25
 
     assert cost == pytest.approx(expected, rel=0.01)
 
@@ -133,8 +133,8 @@ def test_dynamodb_gsi_on_demand_cost(seed_catalog):
     )
 
     expected = (
-        1_500_000 * 1.25e-6
-        + 1_250_000 * 6.25e-6
+        1_500_000 * 0.125e-6
+        + 1_250_000 * 0.625e-6
         + 10 * 0.25
     )
 
