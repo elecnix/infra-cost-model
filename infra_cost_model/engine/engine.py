@@ -533,9 +533,10 @@ def _price_account_wide_pools(catalog: PricingCatalog,
     The pricing layer says which metrics are account-wide.
     """
     accounts: dict[tuple, list[tuple]] = defaultdict(list)
-    for key in pools:
+    for key, members in pools.items():
         provider, service, _, metric, scaling = key
-        if free_tier_scope(provider, service, metric) == ACCOUNT:
+        if (free_tier_scope(provider, service, metric) == ACCOUNT
+                and sum(c.quantity for c in members) > 0):
             accounts[(provider, service, metric, scaling)].append(key)
 
     costs: dict[tuple, float] = {}
@@ -544,8 +545,6 @@ def _price_account_wide_pools(catalog: PricingCatalog,
             continue
         quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
         total = sum(quantities.values())
-        if total <= 0:
-            continue
         results = {
             k: catalog.query(k[0], k[1], k[2], k[3], quantities[k],
                              parameters=pools[k][0].parameters,

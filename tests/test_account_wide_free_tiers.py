@@ -171,3 +171,10 @@ def test_shared_allowance_total_is_the_same_in_every_time_basis(catalog):
     yearly = sum(compute(catalog, nodes, "yearly").values())
     assert monthly == pytest.approx(10 * 0.09 + 10 * 0.10, rel=1e-9)
     assert yearly == pytest.approx(12 * monthly, rel=1e-9)
+
+
+def test_region_with_zero_quantity_leaves_the_allowance_to_the_others(catalog):
+    costs = compute(catalog, {"us": node("us-east-1", 120),
+                              "eu": node("eu-west-1", 0)})
+    assert costs["us"] == pytest.approx(20 * 0.09, rel=1e-9)
+    assert costs["eu"] == pytest.approx(0.0, abs=1e-12)
