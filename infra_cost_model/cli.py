@@ -374,7 +374,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
         elif time_basis == "yearly":
             label = "Total Yearly Cost"
         else:
-            label = "Total"
+            label = "Total Per-Second Cost"
 
         print(f"{label}: ${total:.6f}")
         if args.exit_on_unpriced and engine.unpriced_metrics:
@@ -674,7 +674,7 @@ def cmd_whatif(args: argparse.Namespace) -> int:
         new_cost = analyzer.what_if(args.parameter, args.value)
         delta = new_cost - baseline
 
-        label = " (monthly)" if args.monthly else ""
+        label = " (monthly)" if args.monthly else " (per second)"
         print(f"What-if: {model['workflow']['name']}{label}")
         print(f"Parameter: {args.parameter} = {args.value}")
         print(f"Baseline cost: ${baseline:.6f}")
@@ -720,7 +720,7 @@ def cmd_sensitivity(args: argparse.Namespace) -> int:
         baseline = baseline_engine.total_cost()
         results = analyzer.sensitivity(args.parameter, args.steps)
 
-        label = " (monthly)" if args.monthly else ""
+        label = " (monthly)" if args.monthly else " (per second)"
         print(f"Sensitivity: {model['workflow']['name']}{label}")
         print(f"Parameter: {args.parameter}")
         print(f"Baseline: ${baseline:.6f}")
