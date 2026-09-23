@@ -74,21 +74,25 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
     now = datetime.now().isoformat()
     seen = set()
 
-    # Skip seed file loading if the cache already has entries for these
-    # services (e.g., seed_prices loaded them already). Prevents duplicate
-    # tiered entries from two code paths reading the same JSON file.
+    # Skip seed rows the cache already has for the same service, region and
+    # usage metric (e.g., seed_prices loaded them already). Prevents duplicate
+    # tiered entries from two code paths reading the same JSON file. The check
+    # runs per metric, so a cached row for one metric, or a "global" row,
+    # doesn't stop the other seed rows of that service from loading.
+    cached: dict[tuple, int] = {}
     if services:
         import sqlite3
         conn = sqlite3.connect(cache.db_path)
         placeholders = ','.join(['?'] * len(services))
-        existing = conn.execute(
-            f"SELECT COUNT(*) FROM prices WHERE vendor='aws' AND region=? "
-            f"AND service IN ({placeholders})",
+        rows = conn.execute(
+            f"SELECT service, region, usage_metric, COUNT(*) FROM prices "
+            f"WHERE vendor='aws' AND region IN (?, 'global') "
+            f"AND service IN ({placeholders}) "
+            f"GROUP BY service, region, usage_metric",
             [region] + list(services)
-        ).fetchone()[0]
+        ).fetchall()
         conn.close()
-        if existing > 0:
-            return existing  # Already seeded, nothing to do
+        cached = {(svc, reg, metric): n for svc, reg, metric, n in rows}
 
     # First, load from seed file if it exists
     if SEED_PRICES_PATH.exists():
@@ -99,9 +103,13 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
                     continue
                 if services and item.get("service") not in services:
                     continue
-                if item.get("region") != region:
+                # Global services such as CloudFront have no AWS region, so
+                # their seed rows use "global" and load for any region.
+                if item.get("region") not in (region, "global"):
                     continue
 
+                if (item["service"], item["region"], item["usage_metric"]) in cached:
+                    continue
                 key = (item["service"], item["usage_metric"], item["unit"], item["price_usd"])
                 if key in seen:
                     continue
@@ -128,7 +136,13 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
 
     # If we loaded from seed, return count
     if seed_only or count > 0:
-        return count
+        return count or sum(cached.values())
+
+    # Fetch from the API only the services the cache has no rows for.
+    cached_services = {svc for svc, _, _ in cached}
+    if cached_services and cached_services >= set(services):
+        return sum(cached.values())  # Already seeded, nothing to do
+    services = [s for s in services if s not in cached_services]
 
     for service in services:
         synced_metrics = set()
