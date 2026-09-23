@@ -133,6 +133,53 @@ def _node_is_fully_fixed(node: dict) -> bool:
     )
 
 
+def catalog_location_error(address: str, node: dict) -> Optional[str]:
+    """Why a catalog lookup for this node cannot run, or None if it can.
+
+    Pricing is a layer separate from the graph (Principle 6), so the engine
+    never guesses a node's provider or region (#164). A catalog lookup needs
+    both. Only flat and tiered nodes query the catalog, and only for metrics
+    without a SaaS ``shape``: a shape handler prices its metric from inline
+    parameters. A node whose metrics all have a shape needs neither field
+    (#273). ``compute`` with a catalog raises this message and ``validate``
+    reports it, so the two always agree.
+    """
+    if node.get("pricingModel", "flat") not in ("flat", "tiered"):
+        return None
+    metrics = node.get("usageMetrics") or {}
+    if all(isinstance(m, dict) and m.get("shape") is not None
+           for m in metrics.values()):
+        return None
+    if node.get("provider") is None:
+        return (
+            f"Node '{address}' is missing required 'provider' field. "
+            f"Per Principle 6, the cost engine is provider-agnostic: "
+            f"provider must be specified explicitly on each node "
+            f"(e.g., 'aws', 'gcp', 'azure')."
+        )
+    if node.get("region") is None:
+        return (
+            f"Node '{address}' is missing required 'region' field. "
+            f"Region must be specified explicitly on each node "
+            f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
+        )
+    return None
+
+
+def catalog_location_errors(model: dict) -> list[str]:
+    """``catalog_location_error`` for every node of a model."""
+    nodes = model.get("nodes") if isinstance(model, dict) else None
+    if not isinstance(nodes, dict):
+        return []
+    errors = []
+    for address, node in nodes.items():
+        if isinstance(node, dict):
+            error = catalog_location_error(address, node)
+            if error is not None:
+                errors.append(error)
+    return errors
+
+
 class DAGValidator:
     """Validates DAG structure for cost model."""
 
@@ -482,24 +529,12 @@ class CostAggregator:
         service = node.get("service", "")
         region = node.get("region")
 
-        # Validate provider/region when a catalog query path is possible (DP#6).
-        # The engine must not silently assume a specific provider or region.
-        # Validation only fires when a catalog is available and would be queried;
-        # embedded pricingRates (flat fallback) do not depend on provider/region.
-        if self.catalog is not None and node_metrics:
-            if provider is None:
-                raise ValueError(
-                    f"Node '{address}' is missing required 'provider' field. "
-                    f"Per Principle 6, the cost engine is provider-agnostic: "
-                    f"provider must be specified explicitly on each node "
-                    f"(e.g., 'aws', 'gcp', 'azure')."
-                )
-            if region is None:
-                raise ValueError(
-                    f"Node '{address}' is missing required 'region' field. "
-                    f"Region must be specified explicitly on each node "
-                    f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
-                )
+        # A catalog lookup needs provider and region (DP#6). The rule is
+        # shared with `validate` so both report the same nodes (#273).
+        if self.catalog is not None:
+            error = catalog_location_error(address, node)
+            if error is not None:
+                raise ValueError(error)
 
         variable_cost = 0.0
         fixed_cost = 0.0
@@ -591,23 +626,12 @@ class CostAggregator:
         service = node.get("service", "")
         region = node.get("region")
 
-        # Validate provider/region when a catalog query path is possible (DP#6).
-        # Validation only fires when a catalog is available and would be queried;
-        # embedded pricingRates (flat fallback) do not depend on provider/region.
-        if self.catalog is not None and node_metrics:
-            if provider is None:
-                raise ValueError(
-                    f"Node '{address}' is missing required 'provider' field. "
-                    f"Per Principle 6, the cost engine is provider-agnostic: "
-                    f"provider must be specified explicitly on each node "
-                    f"(e.g., 'aws', 'gcp', 'azure')."
-                )
-            if region is None:
-                raise ValueError(
-                    f"Node '{address}' is missing required 'region' field. "
-                    f"Region must be specified explicitly on each node "
-                    f"(e.g., 'us-east-1', 'eu-west-1', 'us-central1')."
-                )
+        # A catalog lookup needs provider and region (DP#6). The rule is
+        # shared with `validate` so both report the same nodes (#273).
+        if self.catalog is not None:
+            error = catalog_location_error(address, node)
+            if error is not None:
+                raise ValueError(error)
 
         variable_cost = 0.0
         fixed_cost = 0.0
