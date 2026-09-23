@@ -111,7 +111,7 @@ def test_gb_seconds_zero_invocations():
 def test_free_tier_application():
     """Test free tier deduction."""
     # 2M invocations
-    billed = apply_free_tier(2_000_000, 500_000)
+    billed = apply_free_tier(2_000_000, 500_000, region="us-east-1")
 
     assert billed[0] == 1_000_000  # 2M - 1M free
     assert billed[1] == 100_000  # 500K - 400K free
@@ -119,7 +119,7 @@ def test_free_tier_application():
 
 def test_free_tier_below_threshold():
     """Test free tier when usage is below threshold."""
-    billed = apply_free_tier(500_000, 100_000)
+    billed = apply_free_tier(500_000, 100_000, region="us-east-1")
 
     assert billed[0] == 0
     assert billed[1] == 0
@@ -152,7 +152,7 @@ def test_get_lambda_free_tier_limits():
     from infra_cost_model.pricing.catalog import PricingCatalog
 
     catalog = PricingCatalog(seed=True)
-    limits = get_lambda_free_tier_limits(catalog)
+    limits = get_lambda_free_tier_limits(catalog=catalog, region="us-east-1")
 
     assert limits is not None, "Free tier limits should be available from seed data"
     assert limits["requests"] == 1_000_000
@@ -164,7 +164,7 @@ def test_apply_free_tier_with_catalog():
     from infra_cost_model.pricing.catalog import PricingCatalog
 
     catalog = PricingCatalog(seed=True)
-    billed = apply_free_tier(2_000_000, 500_000, catalog=catalog)
+    billed = apply_free_tier(2_000_000, 500_000, catalog=catalog, region="us-east-1")
 
     assert billed[0] == 1_000_000  # 2M - 1M free (from catalog)
     assert billed[1] == 100_000  # 500K - 400K free (from catalog)

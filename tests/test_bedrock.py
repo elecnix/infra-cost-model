@@ -64,7 +64,7 @@ def test_bedrock_asymmetric_pricing():
 
 def test_model_cost_comparison():
     """Test comparing costs across models."""
-    results = _model_cost_comparison(1_000_000, 2_000_000)
+    results = _model_cost_comparison(1_000_000, 2_000_000, region="us-east-1")
 
     assert "claude-3-5-sonnet" in results
     assert "claude-3-5-haiku" in results

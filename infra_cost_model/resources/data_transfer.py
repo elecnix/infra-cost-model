@@ -93,7 +93,7 @@ class DataTransferNode(ExternalResource):
 
 def _data_transfer_cost(inter_region_gb=0, internet_out_gb=0, inter_az_gb=0, *,
                         catalog=None, provider: str = "aws",
-                        region: str = "us-east-1") -> float:
+                        region: str) -> float:
     """Calculate monthly data transfer cost in USD.
 
     Args:
@@ -102,7 +102,7 @@ def _data_transfer_cost(inter_region_gb=0, internet_out_gb=0, inter_az_gb=0, *,
         inter_az_gb: GB transferred between AZs within a region.
         catalog: Optional PricingCatalog; created if not provided.
         provider: Cloud provider (default "aws").
-        region: Region for the pricing lookup (default "us-east-1").
+        region: Region for the pricing lookup, from the node metadata.
 
     Returns:
         Total monthly data transfer cost in USD. Ingress is free.

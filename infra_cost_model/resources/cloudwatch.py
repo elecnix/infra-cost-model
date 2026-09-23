@@ -153,7 +153,7 @@ class CloudWatchMetricAlarm(StorageResource):
 
 def _cloudwatch_log_cost(ingested_gb=0.0, stored_gb=0.0, *,
                          catalog=None, provider: str = "aws",
-                         region: str = "us-east-1") -> float:
+                         region: str) -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
@@ -173,7 +173,7 @@ def _cloudwatch_log_cost(ingested_gb=0.0, stored_gb=0.0, *,
 def _cloudwatch_metric_cost(custom_metrics_count=0, alarms_count=0,
                             get_metric_data_requests=0, *,
                             catalog=None, provider: str = "aws",
-                            region: str = "us-east-1") -> float:
+                            region: str) -> float:
     """Monthly cost for CloudWatch custom metrics, alarms, and GetMetricData.
 
     - custom_metrics_count: number of custom metrics ($0.30 per metric-month)

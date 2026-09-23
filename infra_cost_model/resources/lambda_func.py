@@ -92,7 +92,8 @@ def calculate_gb_seconds(invocations: float, avg_duration_ms: float, memory_mb: 
 def apply_free_tier(invocations: float, gb_seconds: float,
                     free_requests: float = 1_000_000,
                     free_gb_seconds: float = 400_000,
-                    catalog=None) -> tuple[float, float]:
+                    catalog=None, *, provider: str = "aws",
+                    region: str) -> tuple[float, float]:
     """Apply Lambda free tier deductions.
 
     If a PricingCatalog is provided, free tier limits are queried from the
@@ -106,11 +107,13 @@ def apply_free_tier(invocations: float, gb_seconds: float,
         free_requests: Override free request limit (default: 1_000_000).
         free_gb_seconds: Override free GB-second limit (default: 400_000).
         catalog: Optional PricingCatalog for data-driven limits.
+        provider: Cloud provider for the catalog lookup.
+        region: Region for the catalog lookup, from the node metadata.
 
     Returns:
         Tuple of (billed_invocations, billed_gb_seconds).
     """
-    limits = get_lambda_free_tier_limits(catalog)
+    limits = get_lambda_free_tier_limits(catalog=catalog, provider=provider, region=region)
     if limits:
         free_requests = limits.get("requests", free_requests)
         free_gb_seconds = limits.get("gb_seconds", free_gb_seconds)
@@ -121,7 +124,7 @@ def apply_free_tier(invocations: float, gb_seconds: float,
     return billed_invocations, billed_gb_seconds
 
 
-def get_lambda_free_tier_limits(catalog=None, provider: str = "aws", region: str = "us-east-1") -> Optional[Dict[str, float]]:
+def get_lambda_free_tier_limits(*, catalog=None, provider: str = "aws", region: str) -> Optional[Dict[str, float]]:
     """Retrieve Lambda free tier limits from the pricing catalog.
 
     Per DP#4, free tier limits are first-class data, not hardcoded constants.
@@ -130,6 +133,8 @@ def get_lambda_free_tier_limits(catalog=None, provider: str = "aws", region: str
 
     Args:
         catalog: Optional PricingCatalog. If None, returns None.
+        provider: Cloud provider for the catalog lookup.
+        region: Region for the catalog lookup, from the node metadata.
 
     Returns:
         Dict with 'requests' and 'gb_seconds' keys, or None if unavailable.
@@ -171,7 +176,7 @@ def get_lambda_free_tier_limits(catalog=None, provider: str = "aws", region: str
 def _provisioned_concurrency_cost(provisioned_concurrency: float, hours: float,
                                   memory_mb: float = 128,
                                   invocations: float = 0,
-                                  catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
+                                  *, catalog=None, provider: str = "aws", region: str) -> float:
     """Calculate fixed provisioned-concurrency cost plus request charges.
 
     Args:

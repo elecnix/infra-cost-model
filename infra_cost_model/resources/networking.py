@@ -206,7 +206,7 @@ class ElasticIP(StorageResource):
         )
 
 
-def _nat_cost(nat_hours=730, data_processed_gb=0, *, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
+def _nat_cost(nat_hours=730, data_processed_gb=0, *, catalog=None, provider: str = "aws", region: str) -> float:
     """Calculate NAT Gateway cost.
 
     Args:
@@ -228,7 +228,7 @@ def _nat_cost(nat_hours=730, data_processed_gb=0, *, catalog=None, provider: str
 
 
 def _vpc_endpoint_cost(endpoint_hours=730, data_processed_gb=0, endpoint_type="Interface",
-                       subnet_count=1, *, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
+                       subnet_count=1, *, catalog=None, provider: str = "aws", region: str) -> float:
     """Calculate VPC Endpoint cost.
 
     Gateway endpoints (S3, DynamoDB) are free.
@@ -259,7 +259,7 @@ def _vpc_endpoint_cost(endpoint_hours=730, data_processed_gb=0, endpoint_type="I
     return total
 
 
-def _eip_cost(in_use_hours=730, idle_hours=0, *, catalog=None, provider: str = "aws", region: str = "us-east-1") -> float:
+def _eip_cost(in_use_hours=730, idle_hours=0, *, catalog=None, provider: str = "aws", region: str) -> float:
     """Calculate Elastic IP / public IPv4 address cost.
 
     Since February 2024, AWS charges $0.005/hr for every public IPv4 address,
