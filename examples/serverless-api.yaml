@@ -18,6 +18,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_apigatewayv2_api.items_api
     provider: aws
+    region: us-east-1
     service: ApiGatewayV2
     usageMetrics:
       requests: { unit: requests, value: 1 }
@@ -30,6 +31,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.get_items
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -42,6 +44,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.create_item
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -54,6 +57,7 @@ nodes:
     nodeType: storage
     resourceAddress: aws_dynamodb_table.items
     provider: aws
+    region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
       readRequests: { unit: requests, value: 1 }
