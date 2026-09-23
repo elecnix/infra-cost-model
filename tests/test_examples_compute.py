@@ -81,6 +81,18 @@ def test_example_validates(path):
     assert main(["validate", str(path)]) == 0
 
 
+@pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
+def test_every_edge_type_metric_counts_calls(path, seed_catalog, capsys):
+    """No example has a metric whose edge type never reaches its node (#322)."""
+    engine = CostEngine(load_model(path), catalog=seed_catalog, time_basis="monthly")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        engine.compute()
+    assert engine.edge_type_warnings == []
+    assert main(["validate", str(path)]) == 0
+    assert "Warning:" not in capsys.readouterr().err
+
+
 # Each example's monthly total, as a range. The low end applies each free
 # tier once per node, which the engine does today. The high end prices every
 # unit with no free tier. Once a free tier applies once per account (#294),

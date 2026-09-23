@@ -87,10 +87,10 @@ nodes:
     service: AmazonDynamoDB
     region: us-east-1
     usageMetrics:
-      # Each metric counts only the calls over edges of its type. This model
-      # has only a read edge into the table, so it charges no writes.
+      # This metric counts only the calls over read edges. The API only reads
+      # tenants, so the table has no write edge and no write metric. A write
+      # metric here would count no calls, and the engine would warn (#322).
       Dynamo-ReadRequest: { unit: requests, value: 1, edgeType: read }
-      Dynamo-WriteRequest: { unit: requests, value: 1, edgeType: write }
 
 edges:
   # Every response leaves AWS as data transfer out

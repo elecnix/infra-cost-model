@@ -16,7 +16,12 @@ from typing import Optional
 import yaml
 
 from infra_cost_model.schema import validate_cost_model
-from infra_cost_model.engine import CostEngine, SensitivityAnalyzer, UnpricedMetricWarning
+from infra_cost_model.engine import (
+    CostEngine,
+    EdgeTypeMetricWarning,
+    SensitivityAnalyzer,
+    UnpricedMetricWarning,
+)
 from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.pricing.vendors import VendorPackageError
 from infra_cost_model.version_requirement import check_engine_requirement
@@ -196,28 +201,34 @@ def _raise_cli_error(code: int = 1) -> None:
 
 
 @contextlib.contextmanager
-def _report_unpriced_metrics():
-    """Print one stderr warning per metric the engine could not price.
+def _report_engine_warnings():
+    """Print each engine warning about a usage metric once, on stderr.
 
     Commands that sweep a parameter run the engine many times, so the engine
-    emits the same UnpricedMetricWarning once per run. This collects them and
-    prints each (node, metric) pair once, after the command's own output.
-    Other warnings pass through unchanged.
+    emits the same warning once per run. This collects UnpricedMetricWarning
+    (#271) and EdgeTypeMetricWarning (#322), and prints each one once, after
+    the command's own output. Other warnings pass through unchanged.
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", UnpricedMetricWarning)
+        warnings.simplefilter("always", EdgeTypeMetricWarning)
         yield
 
     seen: dict[tuple[str, str], str] = {}
+    edge_type_messages: dict[str, None] = {}
     for w in caught:
         if issubclass(w.category, UnpricedMetricWarning):
             unpriced = w.message.unpriced
             seen.setdefault((unpriced.node, unpriced.metric), unpriced.describe())
+        elif issubclass(w.category, EdgeTypeMetricWarning):
+            edge_type_messages[str(w.message)] = None
         else:
             warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
-    if seen:
+    if seen or edge_type_messages:
         sys.stdout.flush()
+    for message in edge_type_messages:
+        _print_stderr(f"Warning: {message}")
     for description in seen.values():
         _print_stderr(f"Warning: {description}")
     if seen:
@@ -247,7 +258,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.print_help()
             return 0
 
-        with _report_unpriced_metrics():
+        with _report_engine_warnings():
             return args.func(args)
 
     except _CLIError as e:
@@ -295,8 +306,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     # Report the nodes that `compute` with its default catalog would reject
     # for a missing provider or region, using the engine's own rule (#273).
-    from infra_cost_model.engine.engine import catalog_location_errors
+    from infra_cost_model.engine.engine import (
+        catalog_location_errors,
+        edge_type_metric_warnings,
+    )
     errors = errors + catalog_location_errors(model)
+
+    # A metric whose edgeType no edge into its node carries counts no calls.
+    # The model is still valid, so this is a warning, from the rule that
+    # `compute` warns with (#322).
+    for message in edge_type_metric_warnings(model):
+        _print_stderr(f"Warning: {message}")
 
     if errors:
         print("Validation errors:")

@@ -10,6 +10,7 @@ from .engine import (
     ParametricSensitivityAnalyzer,
     UnpricedMetric,
     UnpricedMetricWarning,
+    EdgeTypeMetricWarning,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "ParametricSensitivityAnalyzer",
     "UnpricedMetric",
     "UnpricedMetricWarning",
+    "EdgeTypeMetricWarning",
 ]
