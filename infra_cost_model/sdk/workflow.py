@@ -65,9 +65,22 @@ class NodeUsage:
     """Usage metrics for a node."""
     metrics: dict[str, Union[float, dict]] = field(default_factory=dict)
 
-    def with_metric(self, name: str, value: float, unit: Optional[str] = None) -> "NodeUsage":
-        """Add a usage metric."""
-        self.metrics[name] = {"value": value, "unit": unit} if unit else value
+    def with_metric(self, name: str, value: float, unit: Optional[str] = None,
+                    edge_type: Optional[str] = None) -> "NodeUsage":
+        """Add a usage metric.
+
+        With ``edge_type`` ("read", "write" or "invoke"), the metric counts
+        only the calls that arrive over edges of that type (#313).
+        """
+        if not unit and not edge_type:
+            self.metrics[name] = value
+            return self
+        metric: dict = {"value": value}
+        if unit:
+            metric["unit"] = unit
+        if edge_type:
+            metric["edgeType"] = edge_type
+        self.metrics[name] = metric
         return self
 
 

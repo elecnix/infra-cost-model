@@ -87,8 +87,10 @@ nodes:
     service: AmazonDynamoDB
     region: us-east-1
     usageMetrics:
-      Dynamo-ReadRequest: { unit: requests, value: 1 }
-      Dynamo-WriteRequest: { unit: requests, value: 1 }
+      # Each metric counts only the calls over edges of its type. This model
+      # has only a read edge into the table, so it charges no writes.
+      Dynamo-ReadRequest: { unit: requests, value: 1, edgeType: read }
+      Dynamo-WriteRequest: { unit: requests, value: 1, edgeType: write }
 
 edges:
   # Every response leaves AWS as data transfer out

@@ -100,6 +100,17 @@ describe("NodeUsage", () => {
       gb_processed: { value: 2, unit: "GB" },
     });
   });
+
+  it("adds metrics that count one edge type's calls (#313)", () => {
+    const usage = new NodeUsage()
+      .withMetric("Dynamo-ReadRequest", 1, "requests", "read")
+      .withMetric("Dynamo-WriteRequest", 1, undefined, "write");
+
+    expect(usage.metrics).toEqual({
+      "Dynamo-ReadRequest": { value: 1, unit: "requests", edgeType: "read" },
+      "Dynamo-WriteRequest": { value: 1, edgeType: "write" },
+    });
+  });
 });
 
 // ── Workflow Builder ─────────────────────────────────────────────────────────
@@ -474,6 +485,15 @@ describe("parseYamlDsl on the bundled examples", () => {
     ]);
     expect(model.workflows![0]!.entry).toBe("aws_s3_bucket.uploads");
     expect(model.workflows![1]!.frequency).toEqual({ unit: "perDay", value: 1 });
+  });
+
+  it("keeps edgeType on the DynamoDB metrics in serverless-api.yaml (#313)", () => {
+    const model = parseYamlDsl(
+      readFileSync(join(EXAMPLES_DIR, "serverless-api.yaml"), "utf8"),
+    );
+    const metrics = model.nodes["aws_dynamodb_table.items"]!.usageMetrics!;
+    expect(metrics["Dynamo-ReadRequest"]!.edgeType).toBe("read");
+    expect(metrics["Dynamo-WriteRequest"]!.edgeType).toBe("write");
   });
 });
 

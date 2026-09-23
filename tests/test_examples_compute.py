@@ -109,12 +109,13 @@ MONTHLY_TOTALS = {
     # egress, Lambda, S3 and DynamoDB $60.12.
     "llm-augmented-api.yaml": (72379.62, 72393.35),
     # WorkOS $250 + $15 + $99 and Datadog 6 x $23 = $502; DynamoDB 21.915M
-    # calls x ($1.25 + $6.25)/M = $164.36; API $21.92 + egress $39.45; Lambda
-    # $15.78.
-    "saas-subscription-api.yaml": (743.50, 750.37),
+    # reads x $1.25/M = $27.39, and no writes because no write edge reaches
+    # the table (#313); API $21.92 + egress $39.45; Lambda $15.78.
+    "saas-subscription-api.yaml": (606.53, 613.40),
     # API 43.83M x $1/M = $43.83; egress 2,191.5 GB x $0.09 = $197.24;
-    # DynamoDB 43.83M x ($1.25 + $6.25)/M = $328.73; Lambda $23.61.
-    "serverless-api.yaml": (593.40, 606.86),
+    # DynamoDB 30.681M reads x $1.25/M + 13.149M writes x $6.25/M = $120.53
+    # (#313); Lambda $23.61.
+    "serverless-api.yaml": (385.21, 398.67),
 }
 
 
