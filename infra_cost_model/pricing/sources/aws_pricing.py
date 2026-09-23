@@ -104,7 +104,7 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
         # Fetch live prices only for known services the seed file didn't cover.
         cached_services = _cached_services(cache, list(SERVICE_CODES), region)
         missing = [s for s in SERVICE_CODES if s not in cached_services]
-        count += _fetch_live(missing, cache, region, set(), datetime.now().isoformat())
+        count += _fetch_live(missing, cache, region, datetime.now().isoformat())
         if count == 0:
             raise _no_pricing_error(services, region, seed_missing)
         return count
@@ -128,7 +128,7 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
             stacklevel=2,
         )
     known = [s for s in missing if s in SERVICE_CODES]
-    count += _fetch_live(known, cache, region, set(), datetime.now().isoformat())
+    count += _fetch_live(known, cache, region, datetime.now().isoformat())
 
     if count == 0:
         raise _no_pricing_error(services, region, seed_missing)
@@ -190,11 +190,12 @@ def _cached_services(cache, services: list[str], region: str) -> set[str]:
     return {svc for svc, _, _ in _cached_metrics(cache, services, region)}
 
 
-def _fetch_live(services: list[str], cache, region: str, seen: set, now: str) -> int:
+def _fetch_live(services: list[str], cache, region: str, now: str) -> int:
     """Fetch each SERVICE_CODES service from the AWS Price List API into the cache."""
     from infra_cost_model.pricing.cache import Price
 
     count = 0
+    seen: set = set()
     for service in services:
         for item in fetch_aws_price_list(SERVICE_CODES[service]):
             usage_metric = _usage_metric(service, item["attributes"], item["unit"])

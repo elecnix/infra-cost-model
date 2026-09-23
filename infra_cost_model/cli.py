@@ -254,8 +254,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return e.code
     except VendorPackageError as e:
         # Any command that opens the pricing catalog or the price cache loads
-        # the vendors package. Report a missing or foreign one on one line,
-        # like other CLI errors, instead of as a traceback (#289).
+        # the bundled vendor data in infra_cost_model.vendors. If this install
+        # lacks it, report that on one line, like other CLI errors, instead of
+        # as a traceback (#289).
         _print_stderr(f"Error: {e}")
         return 1
     except SystemExit as e:

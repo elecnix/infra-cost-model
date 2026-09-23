@@ -43,7 +43,7 @@ A vendor directory and its `vendor.yaml` manifest define the canonical vendor id
 
 - **Run tests:** `python3 -m pytest -q`
 - **Validate a model:** `python3 -m infra_cost_model.cli validate <file>`
-- **Required checks:** a PR merges into `main` only after `test (3.11)`, `test (3.12)`, `test (3.13)`, `ts`, and `vendor-check` pass. A repository ruleset in the GitHub settings sets this list.
+- **Required checks:** a PR merges into `main` only after `test (3.11)`, `test (3.12)`, `test (3.13)`, `ts`, `vendor-check`, and `wheel-install` pass. A repository ruleset in the GitHub settings sets this list.
 - **Core documentation:**
   - [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md)
   - [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md)
