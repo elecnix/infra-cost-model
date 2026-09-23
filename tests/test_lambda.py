@@ -6,7 +6,6 @@ from infra_cost_model.resources.lambda_func import (
     get_lambda_free_tier_limits, _lambda_cost,
     _provisioned_concurrency_cost
 )
-from infra_cost_model.pricing.catalog import PricingCatalog
 
 
 def test_lambda_from_address_terraform():
@@ -125,7 +124,7 @@ def test_free_tier_below_threshold():
     assert billed[1] == 0
 
 
-def test_lambda_cost_calculation():
+def test_lambda_cost_calculation(seed_catalog):
     """Test Lambda cost calculation with catalog (free tier from tiered pricing).
 
     The seed data models the free tier as a $0 first tier for both
@@ -133,7 +132,7 @@ def test_lambda_cost_calculation():
     _lambda_cost passes full quantities; the catalog applies the free tier
     automatically via tiered pricing.
     """
-    cost = _lambda_cost(10_000_000, 256, 200, region="us-east-1")
+    cost = _lambda_cost(10_000_000, 256, 200, catalog=seed_catalog, region="us-east-1")
 
     # Full quantities: 10M invocations, 500K GB-s (from 256MB, 200ms, 10M calls)
     # Catalog tiered pricing:
@@ -147,46 +146,35 @@ def test_lambda_cost_calculation():
     assert cost == pytest.approx(expected, rel=0.01)
 
 
-def test_get_lambda_free_tier_limits():
+def test_get_lambda_free_tier_limits(seed_catalog):
     """Test that free tier limits are queryable from the catalog (DP#4)."""
-    from infra_cost_model.pricing.catalog import PricingCatalog
-
-    catalog = PricingCatalog(seed=True)
-    limits = get_lambda_free_tier_limits(catalog=catalog, region="us-east-1")
+    limits = get_lambda_free_tier_limits(catalog=seed_catalog, region="us-east-1")
 
     assert limits is not None, "Free tier limits should be available from seed data"
     assert limits["requests"] == 1_000_000
     assert limits["gb_seconds"] == 400_000
 
 
-def test_apply_free_tier_with_catalog():
+def test_apply_free_tier_with_catalog(seed_catalog):
     """Test that apply_free_tier uses catalog limits when available (DP#4)."""
-    from infra_cost_model.pricing.catalog import PricingCatalog
-
-    catalog = PricingCatalog(seed=True)
-    billed = apply_free_tier(2_000_000, 500_000, catalog=catalog, region="us-east-1")
+    billed = apply_free_tier(2_000_000, 500_000, catalog=seed_catalog, region="us-east-1")
 
     assert billed[0] == 1_000_000  # 2M - 1M free (from catalog)
     assert billed[1] == 100_000  # 500K - 400K free (from catalog)
 
 
-def test_provisioned_concurrency_cost():
+def test_provisioned_concurrency_cost(seed_catalog):
     """Test fixed provisioned concurrency cost plus request charges."""
-    from infra_cost_model.pricing.catalog import PricingCatalog
-
-    # Create catalog to ensure seed prices are available
-    catalog = PricingCatalog(seed=True)
-
     cost = _provisioned_concurrency_cost(
         provisioned_concurrency=10,
         hours=24,
         memory_mb=256,
         invocations=5_000,
-        catalog=catalog,
+        catalog=seed_catalog,
         region="us-east-1",
     )
 
-    rate_result = catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-ProvisionedConcurrency-GB-Second")
+    rate_result = seed_catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-ProvisionedConcurrency-GB-Second")
     rate = rate_result.price_usd if rate_result else 0.000003606
     fixed = 10 * (256 / 1024) * 24 * 3600 * rate
     requests = 5_000 * 0.20e-6
