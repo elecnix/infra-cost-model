@@ -39,6 +39,7 @@ A vendor directory and its `vendor.yaml` manifest define the canonical vendor id
 
 - **Run tests:** `python3 -m pytest -q`
 - **Validate a model:** `python3 -m infra_cost_model.cli validate <file>`
+- **Required checks:** a PR merges into `main` only after `test (3.11)`, `test (3.12)`, `test (3.13)`, `ts`, and `vendor-check` pass. [.github/rulesets/main.json](./.github/rulesets/main.json) lists them. GitHub doesn't read that file. Create the ruleset once with `gh api -X POST repos/elecnix/infra-cost-model/rulesets --input .github/rulesets/main.json`. After an edit to the file, update it with `gh api -X PUT repos/elecnix/infra-cost-model/rulesets/<id> --input .github/rulesets/main.json`.
 - **Core documentation:**
   - [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md)
   - [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md)

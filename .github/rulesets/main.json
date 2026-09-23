@@ -1,0 +1,28 @@
+{
+  "name": "main: required checks",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["~DEFAULT_BRANCH"],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "test (3.11)", "integration_id": 15368 },
+          { "context": "test (3.12)", "integration_id": 15368 },
+          { "context": "test (3.13)", "integration_id": 15368 },
+          { "context": "ts", "integration_id": 15368 },
+          { "context": "vendor-check", "integration_id": 15368 }
+        ]
+      }
+    }
+  ]
+}
