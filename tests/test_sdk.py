@@ -913,3 +913,13 @@ def test_parse_yaml_dsl_parses_the_two_workflows_in_data_pipeline():
     assert [wf["name"] for wf in model["workflows"]] == ["data-pipeline", "daily-analytics"]
     assert model["workflows"][0]["entry"] == "aws_s3_bucket.uploads"
     assert model["workflows"][1]["frequency"] == {"unit": "perDay", "value": 1}
+
+
+@pytest.mark.parametrize("yaml_content", [
+    'version: "1.0"\nworkflow:\nnodes: {}',
+    'version: "1.0"\nworkflow: 3\nnodes: {}',
+    'version: "1.0"\nworkflows:\n  -\nnodes: {}',
+])
+def test_parse_yaml_dsl_rejects_a_workflow_that_is_not_a_mapping(yaml_content):
+    with pytest.raises(ValueError, match="'workflow' or 'workflows' section"):
+        parse_yaml_dsl(yaml_content)

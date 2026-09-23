@@ -37,17 +37,21 @@ const ENGINE_REQUIREMENT_KEY = "requiresEngine";
 export function parseYamlDsl(yamlContent: string): CostModel {
   const data = yaml.load(yamlContent) as Record<string, unknown>;
 
-  let workflows: Record<string, unknown>[];
+  const isMapping = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+
+  let workflows: unknown[] = [];
   if ("workflow" in data) {
-    workflows = [data.workflow as Record<string, unknown>];
-  } else if (Array.isArray(data.workflows) && data.workflows.length > 0) {
-    workflows = data.workflows as Record<string, unknown>[];
-  } else {
+    workflows = [data.workflow];
+  } else if (Array.isArray(data.workflows)) {
+    workflows = data.workflows;
+  }
+  if (workflows.length === 0 || !workflows.every(isMapping)) {
     throw new Error("YAML must have a 'workflow' or 'workflows' section");
   }
 
   // Handle shorthand frequency notation (e.g., "1000/min")
-  for (const workflow of workflows) {
+  for (const workflow of workflows as Record<string, unknown>[]) {
     const freq = workflow.frequency;
     if (typeof freq === "string" && freq.includes("/")) {
       const [value, unit] = freq.split("/");

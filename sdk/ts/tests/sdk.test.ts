@@ -367,6 +367,16 @@ calls:
     expect(() => parseYamlDsl(yaml)).toThrow("workflows");
   });
 
+  it.each([
+    ["an empty workflow section", 'version: "1.0"\nworkflow:\nnodes: {}'],
+    ["a workflow that is not a mapping", 'version: "1.0"\nworkflow: 3\nnodes: {}'],
+    ["a null entry in workflows", 'version: "1.0"\nworkflows:\n  -\nnodes: {}'],
+  ])("throws a clear error on %s", (_label, yaml) => {
+    expect(() => parseYamlDsl(yaml)).toThrow(
+      "YAML must have a 'workflow' or 'workflows' section",
+    );
+  });
+
   it("parses a workflows array and expands each shorthand frequency", () => {
     const yaml = `
 version: "1.0"

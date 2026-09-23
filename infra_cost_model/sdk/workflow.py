@@ -95,9 +95,11 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
     # workflows that share the nodes; the engine prices both.
     if "workflow" in data:
         workflows = [data["workflow"]]
-    elif isinstance(data.get("workflows"), list) and data["workflows"]:
+    elif isinstance(data.get("workflows"), list):
         workflows = data["workflows"]
     else:
+        workflows = []
+    if not workflows or not all(isinstance(wf, dict) for wf in workflows):
         raise ValueError("YAML must have a 'workflow' or 'workflows' section")
 
     # Handle shorthand frequency notation (e.g., "1000/min")
