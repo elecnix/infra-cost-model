@@ -4,7 +4,7 @@ from typing import Dict, Optional
 
 from infra_cost_model.pricing.catalog import PricingCatalog
 
-from .types import ComputeResource, ResourceExtract
+from .types import ComputeResource, DerivedCatalogUsage, ResourceExtract
 
 
 class LambdaFunction(ComputeResource):
@@ -13,6 +13,25 @@ class LambdaFunction(ComputeResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["invocations", "avgDurationMs", "memoryMb"]
+
+    def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+        """Derive requests and GB-seconds, the quantities Lambda bills.
+
+        Duration and memory have no price of their own. They feed the
+        GB-seconds formula in ``calculate_gb_seconds``.
+        """
+        inputs = ("invocations", "avgDurationMs", "memoryMb")
+        if not all(name in usage for name in inputs):
+            return None
+        invocations = usage["invocations"]
+        return DerivedCatalogUsage(
+            consumed=frozenset(inputs),
+            quantities={
+                "Lambda-Request": invocations,
+                "Lambda-GB-Second": calculate_gb_seconds(
+                    invocations, usage["avgDurationMs"], usage["memoryMb"]),
+            },
+        )
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["LambdaFunction"]:
