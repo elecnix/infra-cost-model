@@ -1,8 +1,9 @@
 """Amazon CloudFront Distribution resource model.
 
 CloudFront is the CDN/routing node with tiered data transfer pricing.
-Pricing: HTTP $0.0075/10K, HTTPS $0.0100/10K, Data out $0.085/GB,
-Origin requests S3 $0.0075/10K, Custom $0.0120/10K.
+Pricing: HTTP $0.0075/10K, HTTPS $0.0100/10K, Data out $0.085/GB.
+CloudFront doesn't charge per origin fetch, and data transfer from an AWS
+origin is free (#325).
 """
 
 from typing import Optional
@@ -15,7 +16,7 @@ class CloudFrontDistribution(RoutingResource):
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["requests", "dataOutGb", "originRequests"]
+        return ["requests", "dataOutGb"]
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudFrontDistribution"]:
@@ -91,8 +92,8 @@ class CloudFrontDistribution(RoutingResource):
                 for o in origins if isinstance(o, dict)]
 
 
-def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, origin_requests=0,
-                     origin_is_s3=True, *, catalog=None, provider: str = "aws", region: str) -> float:
+def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, *, catalog=None,
+                     provider: str = "aws", region: str) -> float:
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
@@ -106,9 +107,5 @@ def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, origin_requests
         if r and hasattr(r, "total_cost"): total += r.total_cost
     if data_out_gb > 0:
         r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-DataTransfer", data_out_gb)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    if origin_requests > 0:
-        metric = "CloudFront-OriginRequest-S3" if origin_is_s3 else "CloudFront-OriginRequest-Custom"
-        r = catalog.query(provider, "AmazonCloudFront", region, metric, origin_requests)
         if r and hasattr(r, "total_cost"): total += r.total_cost
     return total

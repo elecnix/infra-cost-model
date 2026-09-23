@@ -75,8 +75,9 @@ def test_apigw_request_cost(seed_catalog):
 
 def test_apigw_egress_cost(seed_catalog):
     """Test API Gateway egress cost calculation."""
-    cost = _apigw_egress_cost(100, catalog=seed_catalog, region="us-east-1")  # 100GB out (first tier)
+    cost = _apigw_egress_cost(200, catalog=seed_catalog, region="us-east-1")  # 200GB out
 
+    # The first 100 GB a month are free (#327), then $0.09 per GB
     assert cost == pytest.approx(9.00, rel=0.01)
 
 
@@ -84,23 +85,23 @@ def test_apigw_egress_tiered_10tb(seed_catalog):
     """Test egress cost at exactly 10TB boundary."""
     cost = _apigw_egress_cost(10_000, catalog=seed_catalog, region="us-east-1")
 
-    assert cost == pytest.approx(900.00, rel=0.01)
+    assert cost == pytest.approx((10_000 - 100) * 0.09, rel=0.01)
 
 
 def test_apigw_egress_tiered_50tb(seed_catalog):
     """Test egress cost in second tier (10-50TB)."""
     cost = _apigw_egress_cost(25_000, catalog=seed_catalog, region="us-east-1")  # 25TB
 
-    # 10TB at $0.09 + 15TB at $0.085
-    expected = 10_000 * 0.09 + 15_000 * 0.085
+    # 100 GB free, up to 10 TB (10,240 GB) at $0.09, the rest at $0.085
+    expected = (10_240 - 100) * 0.09 + (25_000 - 10_240) * 0.085
     assert cost == pytest.approx(expected, rel=0.01)
 
 
 def test_apigw_total_cost(seed_catalog):
     """Test total cost includes both requests and egress."""
-    cost = _apigw_total_cost(1_000_000, 100, catalog=seed_catalog, region="us-east-1")
+    cost = _apigw_total_cost(1_000_000, 200, catalog=seed_catalog, region="us-east-1")
 
-    expected = 1.00 + 9.00  # $1 requests + $9 egress
+    expected = 1.00 + 9.00  # $1 requests + $9 egress (100 GB free, 100 GB paid)
     assert cost == pytest.approx(expected, rel=0.01)
 
 

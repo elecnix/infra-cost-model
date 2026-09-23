@@ -201,7 +201,8 @@ class TestCostComputation:
 
         The free tiers are a fixed allowance, so at twice the traffic less of
         the bill is free. Each of the two functions has at most 1M requests at
-        $0.20/M and 400,000 GB-seconds at $0.0000166667 free.
+        $0.20/M and 400,000 GB-seconds at $0.0000166667 free, and the account
+        has 100 GB of data transfer out at $0.09 free (#327).
         """
         base_cost = engine.total_cost()
 
@@ -210,7 +211,7 @@ class TestCostComputation:
         engine_2x = CostEngine(model, catalog=seed_catalog, time_basis="monthly")
         cost_2x = engine_2x.total_cost()
 
-        free_tiers = 2 * (1_000_000 * 0.20e-6 + 400_000 * 0.0000166667)
+        free_tiers = 2 * (1_000_000 * 0.20e-6 + 400_000 * 0.0000166667) + 100 * 0.09
         assert base_cost * 2 <= cost_2x <= base_cost * 2 + free_tiers
 
     def test_frequency_change_what_if(self, engine, seed_catalog):

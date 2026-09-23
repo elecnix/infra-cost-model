@@ -55,19 +55,9 @@ class TestCloudFrontPricing:
         cost = _cloudfront_cost(data_out_gb=15000, catalog=self.catalog, region="global")
         expected = 10240 * 0.085 + 4760 * 0.080
         assert cost == pytest.approx(expected, rel=0.01)
-    def test_origin_requests_s3(self):
-        cost = _cloudfront_cost(origin_requests=500_000, origin_is_s3=True, catalog=self.catalog, region="global")
-        assert cost == pytest.approx(0.375, rel=0.01)
-    def test_origin_requests_custom(self):
-        cost = _cloudfront_cost(origin_requests=500_000, origin_is_s3=False, catalog=self.catalog, region="global")
-        assert cost == pytest.approx(0.60, rel=0.01)
-    def test_origin_custom_more_expensive_than_s3(self):
-        s3_cost = _cloudfront_cost(origin_requests=1_000_000, origin_is_s3=True, catalog=self.catalog, region="global")
-        custom_cost = _cloudfront_cost(origin_requests=1_000_000, origin_is_s3=False, catalog=self.catalog, region="global")
-        assert custom_cost > s3_cost
     def test_combined_all_dimensions(self):
-        cost = _cloudfront_cost(requests=10_000_000, https_ratio=0.5, data_out_gb=500, origin_requests=1_000_000, origin_is_s3=True, catalog=self.catalog, region="global")
-        expected = 3.75 + 5.00 + 42.50 + 0.75
+        cost = _cloudfront_cost(requests=10_000_000, https_ratio=0.5, data_out_gb=500, catalog=self.catalog, region="global")
+        expected = 3.75 + 5.00 + 42.50
         assert cost == pytest.approx(expected, rel=0.01)
     def test_zero_usage(self):
         assert _cloudfront_cost(catalog=self.catalog, region="global") == 0.0
@@ -77,7 +67,7 @@ class TestCloudFrontRoutingNode:
         assert CloudFrontDistribution.from_address("aws_cloudfront_distribution.cdn").node_type == "routing"
     def test_valid_metrics(self):
         d = CloudFrontDistribution()
-        assert all(m in d.valid_metrics for m in ["requests", "dataOutGb", "originRequests"])
+        assert d.valid_metrics == ["requests", "dataOutGb"]
 
 class TestCloudFrontRegistryIntegration:
     def test_in_registry(self):

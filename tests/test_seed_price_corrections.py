@@ -1,16 +1,25 @@
 """Seed rows match AWS's published us-east-1 on-demand prices (#311).
 
+Later fixes: SQS has no storage charge (#324), CloudFront has no charge per
+origin fetch (#325), scheduled rules cost nothing (#326), and the first
+100 GB of data transfer out each month are free (#327).
+
 Each case prices a quantity from the seed catalog and compares it with the
 price on the AWS page that the row's ``source`` field names.
 """
 
+import inspect
 import json
+import warnings
 
 import pytest
 
+from infra_cost_model.engine import CostEngine
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
 from infra_cost_model.resources.apigw import _apigw_egress_cost
+from infra_cost_model.resources.cloudfront import CloudFrontDistribution, _cloudfront_cost
 from infra_cost_model.resources.rds import _rds_cost
+from infra_cost_model.resources.sqs import _sqs_cost
 
 DYNAMODB = "https://aws.amazon.com/dynamodb/pricing/on-demand/"
 RDS_MYSQL = "https://aws.amazon.com/rds/mysql/pricing/"
@@ -21,6 +30,7 @@ EC2_DATA_TRANSFER = "https://aws.amazon.com/ec2/pricing/on-demand/"
 
 M = 1_000_000
 TB = 1024  # GB, as the AWS price list counts a terabyte
+FREE_GB = 100  # data transfer out that AWS doesn't charge for each month
 
 # (service, usage metric, quantity, cost in USD, source page)
 DOCUMENTED = [
@@ -35,6 +45,8 @@ DOCUMENTED = [
     # $1.00 per million custom events, from the first event
     ("AmazonEventBridge", "EventBridge-CustomEvent", 500_000, 0.50, EVENTBRIDGE),
     ("AmazonEventBridge", "EventBridge-CustomEvent", 2 * M, 2.00, EVENTBRIDGE),
+    # A scheduled rule on the default event bus costs nothing to run (#326)
+    ("AmazonEventBridge", "EventBridge-Schedule", 20 * M, 0.0, EVENTBRIDGE),
     # Replayed events cost the same as custom events
     ("AmazonEventBridge", "EventBridge-ArchiveReplay", 2 * M, 2.00, EVENTBRIDGE),
     # x86 provisioned concurrency: $0.0000041667 per GB-second
@@ -44,12 +56,15 @@ DOCUMENTED = [
     ("AmazonSNS", "SNS-Delivery-Lambda", 2 * M, 0.0, SNS),
     # HTTP/S: first 100,000 free, then $0.60 per million
     ("AmazonSNS", "SNS-Delivery-HTTP", 1_100_000, 0.60, SNS),
-    # Data transfer out to the internet: $0.09, $0.085, $0.07, $0.05 per GB
-    ("AWSDataTransfer", "DataTransfer-Internet-Out-GB", 100, 9.00, EC2_DATA_TRANSFER),
+    # Data transfer out to the internet: the first 100 GB a month free (#327),
+    # then $0.09 up to 10 TB, $0.085, $0.07 and $0.05 per GB
+    ("AWSDataTransfer", "DataTransfer-Internet-Out-GB", 50, 0.0, EC2_DATA_TRANSFER),
+    ("AWSDataTransfer", "DataTransfer-Internet-Out-GB", 100, 0.0, EC2_DATA_TRANSFER),
+    ("AWSDataTransfer", "DataTransfer-Internet-Out-GB", 150, 4.50, EC2_DATA_TRANSFER),
     ("AWSDataTransfer", "DataTransfer-Internet-Out-GB", 50 * TB,
-     10 * TB * 0.09 + 40 * TB * 0.085, EC2_DATA_TRANSFER),
+     (10 * TB - FREE_GB) * 0.09 + 40 * TB * 0.085, EC2_DATA_TRANSFER),
     ("AWSDataTransfer", "DataTransfer-Internet-Out-GB", 200 * TB,
-     10 * TB * 0.09 + 40 * TB * 0.085 + 100 * TB * 0.07 + 50 * TB * 0.05,
+     (10 * TB - FREE_GB) * 0.09 + 40 * TB * 0.085 + 100 * TB * 0.07 + 50 * TB * 0.05,
      EC2_DATA_TRANSFER),
 ]
 
@@ -100,4 +115,80 @@ def test_http_api_egress_is_priced_as_data_transfer_out(seed_catalog):
                                        "DataTransfer-Internet-Out-GB", 25 * TB)
     egress = _apigw_egress_cost(25 * TB, catalog=seed_catalog, region="us-east-1")
     assert egress == pytest.approx(data_transfer.total_cost)
-    assert egress == pytest.approx(10 * TB * 0.09 + 15 * TB * 0.085)
+    assert egress == pytest.approx((10 * TB - FREE_GB) * 0.09 + 15 * TB * 0.085)
+
+
+# Rows removed because AWS doesn't have the charge they model.
+REMOVED = [
+    # The SQS page charges for requests and data transfer, not for storing
+    # messages in a queue (#324).
+    ("AmazonSQS", "SQS-Retention"),
+    # CloudFront doesn't charge per origin fetch, and data transfer from an
+    # AWS origin is free (#325).
+    ("AmazonCloudFront", "CloudFront-OriginRequest-S3"),
+    ("AmazonCloudFront", "CloudFront-OriginRequest-Custom"),
+]
+
+
+@pytest.mark.parametrize("service, metric", REMOVED, ids=[m for _, m in REMOVED])
+def test_seed_has_no_row_for_a_charge_aws_does_not_have(service, metric):
+    assert seed_rows(service, metric) == []
+
+
+def test_sqs_cost_has_no_storage_charge():
+    """The SQS helper prices requests only (#324)."""
+    assert "retention_gb" not in inspect.signature(_sqs_cost).parameters
+
+
+def test_cloudfront_cost_has_no_origin_request_charge():
+    """A CloudFront node has no origin fetch metric or price (#325)."""
+    parameters = inspect.signature(_cloudfront_cost).parameters
+    assert "origin_requests" not in parameters
+    assert "origin_is_s3" not in parameters
+    assert "originRequests" not in CloudFrontDistribution().valid_metrics
+
+
+def egress_model(gb_per_node: dict[str, float]) -> dict:
+    """One workflow run a month, and one data transfer node per entry."""
+    nodes = {
+        address: {
+            "nodeType": "external",
+            "provider": "aws",
+            "service": "AWSDataTransfer",
+            "region": "us-east-1",
+            "usageMetrics": {"internetOutGb": {"unit": "GB", "value": gb}},
+        }
+        for address, gb in gb_per_node.items()
+    }
+    addresses = list(nodes)
+    return {
+        "version": "1.0",
+        "workflow": {"name": "egress", "entry": addresses[0],
+                     "frequency": {"unit": "perMonth", "value": 1}},
+        "nodes": nodes,
+        "edges": [{"from": a, "to": b, "type": "sync", "rate": 1.0}
+                  for a, b in zip(addresses, addresses[1:])],
+    }
+
+
+def compute_egress(seed_catalog, gb_per_node: dict[str, float]) -> dict[str, float]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        engine = CostEngine(egress_model(gb_per_node), catalog=seed_catalog,
+                            time_basis="monthly")
+        return engine.compute()
+
+
+@pytest.mark.parametrize("gb, cost", [(50, 0.0), (150, (150 - FREE_GB) * 0.09)])
+def test_one_egress_node_gets_the_free_100_gb(seed_catalog, gb, cost):
+    costs = compute_egress(seed_catalog, {"data_transfer.egress": gb})
+    assert costs["data_transfer.egress"] == pytest.approx(cost, abs=1e-9)
+
+
+def test_two_egress_nodes_share_one_free_100_gb(seed_catalog):
+    """AWS sums data transfer out across the account, so two nodes of 60 GB
+    pay for 20 GB and split the $1.80 in proportion to their quantities."""
+    costs = compute_egress(seed_catalog, {"data_transfer.a": 60, "data_transfer.b": 60})
+    assert sum(costs.values()) == pytest.approx((120 - FREE_GB) * 0.09)
+    assert costs["data_transfer.a"] == pytest.approx(0.90)
+    assert costs["data_transfer.b"] == pytest.approx(0.90)
