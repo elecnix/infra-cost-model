@@ -1,5 +1,6 @@
 """AWS Pricing API client for fallback pricing."""
 
+import warnings
 from datetime import datetime
 
 import requests
@@ -54,13 +55,17 @@ def fetch_aws_price_list(service_code: str) -> list[dict]:
 
 def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-east-1",
                         seed_only: bool = False) -> int:
-    """Seed pricing cache from AWS Price List API, filling gaps with seed file prices.
+    """Load seed file prices into the cache, then fill gaps from the AWS Price List API.
+
+    The live fetch covers only services with an entry in SERVICE_CODES. It
+    skips any other service name with a UserWarning that names it, and never
+    sends that name to the API.
 
     Args:
-        services: AWS service names to sync. None means every service in
-            SERVICE_CODES, the services the live AWS Price List fetch knows.
-            It doesn't mean every service in the seed file: to load the whole
-            seed file, use seed_prices in infra_cost_model.pricing.cache.
+        services: AWS service names to sync. None means every service in the
+            seed file, loaded through seed_prices in
+            infra_cost_model.pricing.cache, then a live fetch for each
+            SERVICE_CODES service that still has no cached rows.
         cache: PricingCache instance
         region: AWS region (default: us-east-1)
         seed_only: If True, only use seed file (don't query API)
@@ -72,12 +77,20 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
         ValueError: If services is an empty list
         RuntimeError: If no pricing data could be fetched and seed file unavailable
     """
-    from infra_cost_model.pricing.cache import Price
+    from infra_cost_model.pricing.cache import Price, seed_prices
     import json
-    import sqlite3
 
     if services is None:
-        services = list(SERVICE_CODES)
+        count = seed_prices(cache) if SEED_PRICES_PATH.exists() else 0
+        if seed_only:
+            return count
+        # Fetch live prices only for known services the seed file didn't cover.
+        cached_services = _cached_services(cache, list(SERVICE_CODES), region)
+        missing = [s for s in SERVICE_CODES if s not in cached_services]
+        count += _fetch_live(missing, cache, region, set(), datetime.now().isoformat())
+        if count == 0:
+            raise _no_pricing_error()
+        return count
     elif not services:
         raise ValueError("services must name at least one AWS service, or be None for all")
 
@@ -90,17 +103,7 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
     # tiered entries from two code paths reading the same JSON file. The check
     # runs per metric, so a cached row for one metric, or a "global" row,
     # doesn't stop the other seed rows of that service from loading.
-    conn = sqlite3.connect(cache.db_path)
-    placeholders = ','.join(['?'] * len(services))
-    rows = conn.execute(
-        f"SELECT service, region, usage_metric, COUNT(*) FROM prices "
-        f"WHERE vendor='aws' AND region IN (?, 'global') "
-        f"AND service IN ({placeholders}) "
-        f"GROUP BY service, region, usage_metric",
-        [region] + list(services)
-    ).fetchall()
-    conn.close()
-    cached = {(svc, reg, metric): n for svc, reg, metric, n in rows}
+    cached = _cached_metrics(cache, services, region)
 
     # First, load from seed file if it exists
     if SEED_PRICES_PATH.exists():
@@ -150,13 +153,53 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
     cached_services = {svc for svc, _, _ in cached}
     if cached_services and cached_services >= set(services):
         return sum(cached.values())  # Already seeded, nothing to do
-    services = [s for s in services if s not in cached_services]
+    missing = [s for s in services if s not in cached_services]
 
+    unknown = [s for s in missing if s not in SERVICE_CODES]
+    if unknown:
+        warnings.warn(
+            f"Skipping the AWS Price List fetch for {', '.join(unknown)}: "
+            f"no entry in SERVICE_CODES. Known services: {', '.join(SERVICE_CODES)}.",
+            UserWarning,
+            stacklevel=2,
+        )
+    known = [s for s in missing if s in SERVICE_CODES]
+    count += _fetch_live(known, cache, region, seen, now)
+
+    if count == 0:
+        raise _no_pricing_error()
+
+    return count
+
+
+def _cached_metrics(cache, services: list[str], region: str) -> dict:
+    """Count the cached AWS rows per (service, region, usage metric)."""
+    import sqlite3
+
+    conn = sqlite3.connect(cache.db_path)
+    placeholders = ','.join(['?'] * len(services))
+    rows = conn.execute(
+        f"SELECT service, region, usage_metric, COUNT(*) FROM prices "
+        f"WHERE vendor='aws' AND region IN (?, 'global') "
+        f"AND service IN ({placeholders}) "
+        f"GROUP BY service, region, usage_metric",
+        [region] + list(services)
+    ).fetchall()
+    conn.close()
+    return {(svc, reg, metric): n for svc, reg, metric, n in rows}
+
+
+def _cached_services(cache, services: list[str], region: str) -> set[str]:
+    return {svc for svc, _, _ in _cached_metrics(cache, services, region)}
+
+
+def _fetch_live(services: list[str], cache, region: str, seen: set, now: str) -> int:
+    """Fetch each SERVICE_CODES service from the AWS Price List API into the cache."""
+    from infra_cost_model.pricing.cache import Price
+
+    count = 0
     for service in services:
-        synced_metrics = set()
-        aws_code = SERVICE_CODES.get(service, service)
-
-        for item in fetch_aws_price_list(aws_code):
+        for item in fetch_aws_price_list(SERVICE_CODES[service]):
             usage_metric = _usage_metric(service, item["attributes"], item["unit"])
             if not usage_metric or item.get("attributes", {}).get("regionCode") != region:
                 continue
@@ -179,16 +222,15 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
                 effective_date=now,
                 fetched_at=now,
             ))
-            synced_metrics.add(usage_metric)
             count += 1
-
-    if count == 0:
-        raise RuntimeError(
-            f"No pricing data available. Seed file not found at {SEED_PRICES_PATH}. "
-            f"Run 'infra-cost-model seed-pricing' first, or set INFRACOST_API_KEY for live pricing."
-        )
-
     return count
+
+
+def _no_pricing_error() -> RuntimeError:
+    return RuntimeError(
+        f"No pricing data available. Seed file not found at {SEED_PRICES_PATH}. "
+        f"Run 'infra-cost-model seed-pricing' first, or set INFRACOST_API_KEY for live pricing."
+    )
 
 
 def _price_usd(dimension: dict) -> float:
