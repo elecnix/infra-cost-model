@@ -832,9 +832,9 @@ class CostAggregator:
         for metric_name, metric_def in usage_metrics.items():
             if "volume" in metric_name.lower() or "transaction" in metric_name.lower():
                 if isinstance(metric_def, dict):
-                    volume = metric_def.get("value", 0)
+                    volume = self._resolve_param(metric_def.get("value", 0))
                 else:
-                    volume = metric_def
+                    volume = self._resolve_param(metric_def)
                 break
 
         return invocations * (volume * percentage_rate + fixed_per_tx)

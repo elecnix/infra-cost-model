@@ -591,13 +591,13 @@ class TestCostAggregator:
         assert costs["stripe"] == pytest.approx(320.0)
 
     def test_percentage_pricing_scales_with_transactions(self):
-        """Twice the transactions cost twice as much, percentage part included."""
+        """Twice the transactions cost twice as much, for both fee parts."""
         nodes = {
             "stripe": {
                 "nodeType": "external",
                 "resourceAddress": "external.stripe_payments",
                 "pricingModel": "percentage",
-                "pricingRates": {"percentageRate": 0.029},
+                "pricingRates": {"percentageRate": 0.029, "fixedPerTransaction": 0.30},
                 "usageMetrics": {"transactionVolume": {"value": 50}},
             }
         }
@@ -606,8 +606,26 @@ class TestCostAggregator:
             derived = {"stripe": DerivedUsage("stripe", transactions)}
             return CostAggregator(nodes, derived, []).aggregate()["stripe"]
 
-        assert cost(10.0) == pytest.approx(10 * 50 * 0.029)
+        assert cost(10.0) == pytest.approx(10 * (50 * 0.029 + 0.30))
         assert cost(20.0) == pytest.approx(2 * cost(10.0))
+
+    def test_percentage_pricing_resolves_a_parameter_volume(self):
+        """transactionVolume can name a workflow parameter (Principle 4)."""
+        nodes = {
+            "stripe": {
+                "nodeType": "external",
+                "resourceAddress": "external.stripe_payments",
+                "pricingModel": "percentage",
+                "pricingRates": {"percentageRate": 0.029, "fixedPerTransaction": 0.30},
+                "usageMetrics": {"transactionVolume": {"value": "avg_order_value"}},
+            }
+        }
+        derived = {"stripe": DerivedUsage("stripe", 10.0)}
+
+        costs = CostAggregator(nodes, derived, [],
+                               parameters={"avg_order_value": 50.0}).aggregate()
+
+        assert costs["stripe"] == pytest.approx(10 * (50 * 0.029 + 0.30))
 
     def test_tiered_pricing_with_catalog(self):
         """Test tiered pricing uses catalog when available."""
