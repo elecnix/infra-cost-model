@@ -256,6 +256,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _single_workflow_error(model: dict, command: str) -> Optional[str]:
+    """Why `command`, which varies one workflow, cannot run on this model."""
+    if "workflow" in model:
+        return None
+    return (
+        f"{command} needs a model with a single 'workflow'; this model has a "
+        f"'workflows' array. Use compute or analyze for it."
+    )
+
+
+def _model_name(model: dict) -> str:
+    """Name a model by its workflow, or by every workflow in a `workflows` array."""
+    if "workflow" in model:
+        return model["workflow"]["name"]
+    return ", ".join(w.get("name", "unnamed") for w in model.get("workflows", []))
+
+
 def cmd_compute(args: argparse.Namespace) -> int:
     """Compute costs from a cost model file."""
     yaml_path = Path(args.yaml_file)
@@ -294,7 +311,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
             return 1
 
         pricing_source = "catalog" if use_catalog else "embedded pricing rates"
-        print(f"Costs for: {model['workflow']['name']} (pricing: {pricing_source}, {time_basis})")
+        print(f"Costs for: {_model_name(model)} (pricing: {pricing_source}, {time_basis})")
         print("-" * 40)
         for node, cost in sorted(costs.items()):
             print(f"  {node}: ${cost:.6f}")
@@ -346,7 +363,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             return 1
 
         output = {
-            "workflow": model["workflow"]["name"],
+            "workflow": _model_name(model),
             "derived_usage": {
                 addr: {"invocations_per_second": usage.invocation_count}
                 for addr, usage in derived.items()
@@ -358,7 +375,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps(output, indent=2))
         else:
-            print(f"Analysis: {model['workflow']['name']}")
+            print(f"Analysis: {_model_name(model)}")
             print("=" * 50)
 
             print("\nDerived Usage (per second):")
@@ -586,6 +603,11 @@ def cmd_whatif(args: argparse.Namespace) -> int:
         _print_stderr(f"Error: {e}")
         return 1
 
+    error = _single_workflow_error(model, "whatif")
+    if error is not None:
+        _print_stderr(f"Error: {error}")
+        return 1
+
     catalog = PricingCatalog() if args.catalog else None
     time_basis = "monthly" if args.monthly else "perSecond"
 
@@ -626,6 +648,11 @@ def cmd_sensitivity(args: argparse.Namespace) -> int:
         model = parse_yaml_dsl(content)
     except ValueError as e:
         _print_stderr(f"Error: {e}")
+        return 1
+
+    error = _single_workflow_error(model, "sensitivity")
+    if error is not None:
+        _print_stderr(f"Error: {error}")
         return 1
 
     catalog = PricingCatalog() if args.catalog else None
@@ -676,6 +703,11 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
         _print_stderr(f"Error: {e}")
         return 1
 
+    error = _single_workflow_error(model, "what-if")
+    if error is not None:
+        _print_stderr(f"Error: {error}")
+        return 1
+
     # Parse values from comma-separated string
     try:
         values = [float(v.strip()) for v in args.values.split(",")]
@@ -705,6 +737,11 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
             other_model = parse_yaml_dsl(compare_content)
         except ValueError as e:
             _print_stderr(f"Error in comparison model: {e}")
+            return 1
+
+        error = _single_workflow_error(other_model, "what-if --compare")
+        if error is not None:
+            _print_stderr(f"Error in comparison model: {error}")
             return 1
 
         try:

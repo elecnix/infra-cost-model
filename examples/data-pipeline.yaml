@@ -24,10 +24,11 @@ nodes:
     nodeType: storage
     resourceAddress: aws_s3_bucket.uploads
     provider: aws
+    region: us-east-1
     service: AmazonS3
     usageMetrics:
       putRequests: { unit: requests, value: 1 }
-      storageGb: { unit: GB-Mo, value: 1500 }
+      storageGb: { unit: GB-Mo, value: 1500, fixed: true }
     pricingRates:
       putRequests: 0.005e-3       # $0.005 per 1K PUT requests
       storageGb: 0.023            # $0.023 per GB-month
@@ -36,6 +37,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_eventbridge_rule.upload_trigger
     provider: aws
+    region: us-east-1
     service: EventBridge
     usageMetrics:
       events: { unit: events, value: 1 }
@@ -46,6 +48,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.extractor
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -58,6 +61,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.transformer
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -70,10 +74,11 @@ nodes:
     nodeType: storage
     resourceAddress: aws_dynamodb_table.data
     provider: aws
+    region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
       writeRequests: { unit: requests, value: 1 }
-      storageGb: { unit: GB-Mo, value: 3 }    # 3GB data stored
+      storageGb: { unit: GB-Mo, value: 3, fixed: true }    # 3GB data stored
     pricingRates:
       writeRequests: 1.25e-6       # $1.25 per million write requests
       storageGb: 0.25              # $0.25 per GB-month
@@ -82,6 +87,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_eventbridge_rule.daily_schedule
     provider: aws
+    region: us-east-1
     service: EventBridge
     usageMetrics:
       events: { unit: events, value: 1 }
@@ -92,6 +98,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.aggregator
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -104,6 +111,7 @@ nodes:
     nodeType: storage
     resourceAddress: aws_db_instance.analytics
     provider: aws
+    region: us-east-1
     service: AmazonRDS
     flatOverride: true              # RDS is provisioned — flat monthly cost
     usageMetrics:
@@ -115,10 +123,11 @@ nodes:
     nodeType: storage
     resourceAddress: aws_s3_bucket.reports
     provider: aws
+    region: us-east-1
     service: AmazonS3
     usageMetrics:
       putRequests: { unit: requests, value: 1 }
-      storageGb: { unit: GB-Mo, value: 0.3 }    # 300MB reports
+      storageGb: { unit: GB-Mo, value: 0.3, fixed: true }    # 300MB reports
     pricingRates:
       putRequests: 0.005e-3
       storageGb: 0.023

@@ -201,13 +201,14 @@ class TestMultiWorkflowEngine:
         assert True
 
     def test_scenario_edge_case_zero_frequency(self):
-        """Edge case: workflow with zero frequency should have zero cost."""
+        """Edge case: with zero frequency only the stored data costs anything."""
         model = load_yaml_model("data-pipeline.yaml")
         model["workflows"][0]["frequency"]["value"] = 0
         engine = CostEngine(model, time_basis="monthly")
         costs = engine.compute()
-        # Data pipeline entry should have zero cost contribution
-        assert costs["aws_s3_bucket.uploads"] == 0.0
+        # No uploads means no PUT requests. The 1,500 GB already stored is a
+        # fixed monthly charge that does not depend on traffic.
+        assert costs["aws_s3_bucket.uploads"] == pytest.approx(1500 * 0.023)
 
 
 class TestDataVolumeMetrics:

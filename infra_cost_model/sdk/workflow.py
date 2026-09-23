@@ -91,18 +91,24 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
     """
     data = yaml.safe_load(yaml_content)
 
-    if "workflow" not in data:
-        raise ValueError("YAML must have 'workflow' section")
+    # The schema accepts one `workflow` or a `workflows` array of independent
+    # workflows that share the nodes; the engine prices both.
+    if "workflow" in data:
+        workflows = [data["workflow"]]
+    elif isinstance(data.get("workflows"), list) and data["workflows"]:
+        workflows = data["workflows"]
+    else:
+        raise ValueError("YAML must have a 'workflow' or 'workflows' section")
 
     # Handle shorthand frequency notation (e.g., "1000/min")
-    workflow = data["workflow"]
-    freq = workflow.get("frequency")
-    if isinstance(freq, str):
-        # Parse "1000/min" -> {"unit": "perMinute", "value": 1000}
-        if "/" in freq:
-            value, unit = freq.split("/")
-            unit_map = {"sec": "perSecond", "min": "perMinute", "hr": "perHour", "day": "perDay", "week": "perWeek", "month": "perMonth"}
-            workflow["frequency"] = {"value": float(value), "unit": unit_map.get(unit, "perMinute")}
+    for workflow in workflows:
+        freq = workflow.get("frequency")
+        if isinstance(freq, str):
+            # Parse "1000/min" -> {"unit": "perMinute", "value": 1000}
+            if "/" in freq:
+                value, unit = freq.split("/")
+                unit_map = {"sec": "perSecond", "min": "perMinute", "hr": "perHour", "day": "perDay", "week": "perWeek", "month": "perMonth"}
+                workflow["frequency"] = {"value": float(value), "unit": unit_map.get(unit, "perMinute")}
 
     # Check if we have edges (standard format) or calls (DSL format)
     edges = data.get("edges", [])
@@ -129,12 +135,13 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
                         edge["dataSize"] = value.get("dataSize", value.get("data_size"))
                     edges.append(edge)
 
-    model = {
-        "version": "1.0",
-        "workflow": workflow,
-        "nodes": nodes,
-        "edges": edges,
-    }
+    model = {"version": "1.0"}
+    if "workflow" in data:
+        model["workflow"] = workflows[0]
+    else:
+        model["workflows"] = workflows
+    model["nodes"] = nodes
+    model["edges"] = edges
 
     # Carry the model's engine requirement across. This function rebuilds the
     # model from the fields it knows, so a key it does not copy is dropped

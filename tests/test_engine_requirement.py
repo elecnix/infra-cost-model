@@ -310,9 +310,6 @@ class TestUnpinnedModelStillWorks:
     def test_existing_examples_validate(self):
         """Every bundled example still validates."""
         for example in sorted((REPO_ROOT / "examples").glob("*.yaml")):
-            if example.name == "data-pipeline.yaml":
-                # Pre-existing: the parser rejects the `workflows` array.
-                continue
             assert main(["validate", str(example)]) == 0, example.name
 
 

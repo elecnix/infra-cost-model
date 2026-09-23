@@ -18,6 +18,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_apigatewayv2_api.ecommerce_api
     provider: aws
+    region: us-east-1
     service: ApiGatewayV2
     usageMetrics:
       requests: { unit: requests, value: 1 }
@@ -30,6 +31,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.auth
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -42,6 +44,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.get_products
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -54,6 +57,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.create_order
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -66,6 +70,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.process_payment
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -78,6 +83,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.fulfill_order
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -90,6 +96,7 @@ nodes:
     nodeType: storage
     resourceAddress: aws_dynamodb_table.products
     provider: aws
+    region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
       readRequests: { unit: requests, value: 3 }   # 3 reads per get_products call
@@ -100,6 +107,7 @@ nodes:
     nodeType: storage
     resourceAddress: aws_dynamodb_table.orders
     provider: aws
+    region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
       writeRequests: { unit: requests, value: 1 }
@@ -110,6 +118,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_sqs_queue.order_queue
     provider: aws
+    region: us-east-1
     service: AmazonSQS
     usageMetrics:
       messages: { unit: messages, value: 1 }
@@ -119,6 +128,9 @@ nodes:
   external_api.stripe:
     nodeType: external
     resourceAddress: external_api.stripe
+    provider: external
+    service: Stripe
+    region: global
     pricingModel: percentage
     pricingRates:
       percentageRate: 0.029     # 2.9% per transaction
@@ -130,6 +142,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_sns_topic.notifications
     provider: aws
+    region: us-east-1
     service: AmazonSNS
     usageMetrics:
       notifications: { unit: notifications, value: 1 }

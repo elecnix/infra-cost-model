@@ -19,6 +19,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_apigatewayv2_api.orders_api
     provider: aws
+    region: us-east-1
     service: ApiGatewayV2
     usageMetrics:
       requests: { unit: requests, value: 1 }
@@ -31,6 +32,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.producer
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -43,6 +45,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_sns_topic.order_events
     provider: aws
+    region: us-east-1
     service: AmazonSNS
     usageMetrics:
       notifications: { unit: notifications, value: 1 }
@@ -53,6 +56,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_sqs_queue.orders_queue
     provider: aws
+    region: us-east-1
     service: AmazonSQS
     usageMetrics:
       messages: { unit: messages, value: 1 }
@@ -63,6 +67,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_sqs_queue.notifications_queue
     provider: aws
+    region: us-east-1
     service: AmazonSQS
     usageMetrics:
       messages: { unit: messages, value: 1 }
@@ -73,6 +78,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_sqs_queue.analytics_queue
     provider: aws
+    region: us-east-1
     service: AmazonSQS
     usageMetrics:
       messages: { unit: messages, value: 1 }
@@ -83,6 +89,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.order_processor
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -95,6 +102,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.notifier
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -107,6 +115,7 @@ nodes:
     nodeType: compute
     resourceAddress: aws_lambda_function.analyzer
     provider: aws
+    region: us-east-1
     service: AWSLambda
     usageMetrics:
       invocations: { unit: requests, value: 1 }
@@ -119,6 +128,7 @@ nodes:
     nodeType: storage
     resourceAddress: aws_dynamodb_table.orders
     provider: aws
+    region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
       writeRequests: { unit: requests, value: 2 }   # 2 writes per order processor
@@ -129,6 +139,7 @@ nodes:
     nodeType: routing
     resourceAddress: aws_sns_topic.alerts
     provider: aws
+    region: us-east-1
     service: AmazonSNS
     usageMetrics:
       notifications: { unit: notifications, value: 1 }
@@ -139,6 +150,7 @@ nodes:
     nodeType: storage
     resourceAddress: aws_s3_bucket.data_lake
     provider: aws
+    region: us-east-1
     service: AmazonS3
     usageMetrics:
       putRequests: { unit: requests, value: 1 }
