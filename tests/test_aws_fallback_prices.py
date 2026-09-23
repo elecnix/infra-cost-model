@@ -2,6 +2,7 @@
 
 import pytest
 
+from infra_cost_model.pricing import cache as cache_module
 from infra_cost_model.pricing.cache import PricingCache
 from infra_cost_model.pricing.sources import aws_pricing
 from infra_cost_model.pricing.sources.aws_pricing import SERVICE_CODES, aws_fallback_prices
@@ -13,7 +14,7 @@ def api_only(monkeypatch, tmp_path):
 
     Returns the list of AWS service codes the stub was asked for.
     """
-    monkeypatch.setattr(aws_pricing, "SEED_PRICES_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(cache_module, "SEED_PRICES_PATH", tmp_path / "missing.json")
     requested: list[str] = []
 
     def fake_fetch(service_code):

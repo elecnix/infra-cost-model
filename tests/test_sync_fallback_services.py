@@ -99,7 +99,7 @@ def test_compute_prices_sqs_after_sync_pricing_without_key(
 
 def test_unknown_service_is_skipped_and_known_service_is_fetched(
         monkeypatch, requested, tmp_path):
-    monkeypatch.setattr(aws_pricing, "SEED_PRICES_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(cache_module, "SEED_PRICES_PATH", tmp_path / "missing.json")
     cache = PricingCache(db_path=tmp_path / "prices.db")
     with pytest.warns(UserWarning, match="NotAnAwsService"):
         count = aws_fallback_prices(["AWSLambda", "NotAnAwsService"], cache)
@@ -108,7 +108,7 @@ def test_unknown_service_is_skipped_and_known_service_is_fetched(
 
 
 def test_unknown_service_alone_is_never_fetched(monkeypatch, requested, tmp_path):
-    monkeypatch.setattr(aws_pricing, "SEED_PRICES_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(cache_module, "SEED_PRICES_PATH", tmp_path / "missing.json")
     cache = PricingCache(db_path=tmp_path / "prices.db")
     with pytest.warns(UserWarning, match="NotAnAwsService"):
         with pytest.raises(RuntimeError):

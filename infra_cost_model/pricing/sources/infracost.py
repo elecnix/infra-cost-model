@@ -673,17 +673,14 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
 def seed_pricing_catalog(services: list[str] | None = None) -> tuple[int, str]:
     """Seed the pricing catalog from the bundled seed file (offline).
 
-    With ``services=None``, loads every row of the seed file through
-    ``seed_prices``, the loader that ``PricingCatalog(seed=True)`` uses. With a
-    list, loads the seed rows of those AWS services only.
+    With ``services=None``, loads every row of the seed file, as
+    ``PricingCatalog(seed=True)`` does. With a list, loads the seed rows of
+    those AWS services only. See ``aws_fallback_prices``.
     """
-    from infra_cost_model.pricing.cache import PricingCache, seed_prices
+    from infra_cost_model.pricing.cache import PricingCache
     from .aws_pricing import aws_fallback_prices
 
-    cache = PricingCache()
-    if services is None:
-        return seed_prices(cache), "seed-pricelist"
-    count = aws_fallback_prices(services, cache, seed_only=True)
+    count = aws_fallback_prices(services, PricingCache(), seed_only=True)
     return count, "seed-pricelist"
 
 
