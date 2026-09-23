@@ -199,18 +199,24 @@ class TestS3Pricing:
         assert cost == pytest.approx(1371.20, rel=0.01)
 
     # Test 4: Tiered data transfer costing
-    def test_data_transfer_within_first_tier(self):
-        """100GB data transfer within first 10TB tier."""
+    def test_data_transfer_within_the_free_100_gb(self):
+        """The account's first 100 GB out each month are free (#332)."""
         cost = _s3_cost(data_out_gb=100, catalog=self.catalog, region="us-east-1")
+        assert cost == pytest.approx(0.0, abs=1e-9)
+
+    def test_data_transfer_within_first_tier(self):
+        """200 GB out: 100 GB free, then $0.09 per GB."""
+        cost = _s3_cost(data_out_gb=200, catalog=self.catalog, region="us-east-1")
         assert cost == pytest.approx(9.00, rel=0.01)  # 100 * $0.09
 
     def test_data_transfer_crossing_tiers(self):
         """Data transfer crossing from first to second tier."""
-        # 15,000 GB: first 10,240 GB at $0.09, remaining 4,760 GB at $0.085
+        # 15,000 GB: 100 GB free, up to 10,240 GB at $0.09, remaining
+        # 4,760 GB at $0.085
         cost = _s3_cost(data_out_gb=15_000, catalog=self.catalog, region="us-east-1")
 
         assert cost > 0
-        expected = 10240 * 0.09 + 4760 * 0.085
+        expected = (10240 - 100) * 0.09 + 4760 * 0.085
         assert cost == pytest.approx(expected, rel=0.01)
 
     def test_combined_cost_all_dimensions(self):
@@ -219,12 +225,12 @@ class TestS3Pricing:
             put_requests=500_000,   # 500K PUT  = $2.50
             get_requests=5_000_000,  # 5M GET    = $2.00
             storage_gb=1000,         # 1TB       = $23.00
-            data_out_gb=500,         # 500GB out = $45.00
+            data_out_gb=500,         # 500GB out = $36.00 (100 GB free)
             catalog=self.catalog,
             region="us-east-1",
         )
 
-        expected = 2.50 + 2.00 + 23.00 + 45.00  # $72.50
+        expected = 2.50 + 2.00 + 23.00 + 36.00  # $63.50
         assert cost == pytest.approx(expected, rel=0.01)
 
     def test_zero_usage_zero_cost(self):

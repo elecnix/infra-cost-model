@@ -136,6 +136,20 @@ class ResourceRegistry:
         return handler().catalog_metrics.get(logical_metric)
 
     @classmethod
+    def resolve_catalog_service(cls, resource_address: str,
+                                catalog_metric: str) -> Optional[str]:
+        """The service whose rows price ``catalog_metric`` for the handler
+        that owns ``resource_address``, when it isn't the node's service.
+
+        Returns ``None`` when no handler matches or the handler prices the
+        metric under the node's own service.
+        """
+        handler = cls.from_address(resource_address)
+        if handler is None:
+            return None
+        return handler().catalog_services.get(catalog_metric)
+
+    @classmethod
     def derive_catalog_usage(cls, resource_address: str,
                              usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
         """Ask the handler that owns ``resource_address`` for derived catalog

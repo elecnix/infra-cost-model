@@ -34,29 +34,31 @@ class TestCloudFrontExtraction:
         assert result.config["priceClass"] == "PriceClass_100" and len(result.config["origins"]) == 1
 
 class TestCloudFrontPricing:
+    """The first 10 million requests and 1 TB out each month are free (#333),
+    so these cases price usage above the free tier."""
     def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_http_request_pricing(self):
-        cost = _cloudfront_cost(requests=1_000_000, https_ratio=0.0, catalog=self.catalog, region="global")
+        cost = _cloudfront_cost(requests=11_000_000, https_ratio=0.0, catalog=self.catalog, region="global")
         assert cost == pytest.approx(0.75, rel=0.01)
     def test_https_request_pricing(self):
-        cost = _cloudfront_cost(requests=1_000_000, https_ratio=1.0, catalog=self.catalog, region="global")
+        cost = _cloudfront_cost(requests=11_000_000, https_ratio=1.0, catalog=self.catalog, region="global")
         assert cost == pytest.approx(1.00, rel=0.01)
     def test_https_more_expensive_than_http(self):
-        http = _cloudfront_cost(requests=1_000_000, https_ratio=0.0, catalog=self.catalog, region="global")
-        https = _cloudfront_cost(requests=1_000_000, https_ratio=1.0, catalog=self.catalog, region="global")
+        http = _cloudfront_cost(requests=11_000_000, https_ratio=0.0, catalog=self.catalog, region="global")
+        https = _cloudfront_cost(requests=11_000_000, https_ratio=1.0, catalog=self.catalog, region="global")
         assert https > http
     def test_mixed_http_https(self):
-        cost = _cloudfront_cost(requests=1_000_000, https_ratio=0.8, catalog=self.catalog, region="global")
+        cost = _cloudfront_cost(requests=11_000_000, https_ratio=0.8, catalog=self.catalog, region="global")
         assert cost == pytest.approx(0.95, rel=0.01)
     def test_data_transfer_first_tier(self):
         cost = _cloudfront_cost(data_out_gb=5000, catalog=self.catalog, region="global")
-        assert cost == pytest.approx(425.00, rel=0.01)
+        assert cost == pytest.approx((5000 - 1024) * 0.085, rel=0.01)
     def test_data_transfer_crossing_tiers(self):
         cost = _cloudfront_cost(data_out_gb=15000, catalog=self.catalog, region="global")
-        expected = 10240 * 0.085 + 4760 * 0.080
+        expected = (10240 - 1024) * 0.085 + 4760 * 0.080
         assert cost == pytest.approx(expected, rel=0.01)
     def test_combined_all_dimensions(self):
-        cost = _cloudfront_cost(requests=10_000_000, https_ratio=0.5, data_out_gb=500, catalog=self.catalog, region="global")
+        cost = _cloudfront_cost(requests=20_000_000, https_ratio=0.5, data_out_gb=1524, catalog=self.catalog, region="global")
         expected = 3.75 + 5.00 + 42.50
         assert cost == pytest.approx(expected, rel=0.01)
     def test_zero_usage(self):
@@ -114,7 +116,7 @@ class TestCloudFrontEndToEndPricing:
         node = ResourceRegistry.extract(address, resource, source_format)
         assert node["region"] == "global"
         node["usageMetrics"] = {
-            "CloudFront-HTTPS-Request": {"unit": "requests", "value": 1_000_000, "fixed": True},
+            "CloudFront-HTTPS-Request": {"unit": "requests", "value": 11_000_000, "fixed": True},
         }
         model = {
             "version": "1.0",
@@ -125,7 +127,7 @@ class TestCloudFrontEndToEndPricing:
         }
         costs = CostEngine(model, catalog=PricingCatalog(seed=True),
                            time_basis="monthly").compute()
-        # 1M HTTPS requests at $0.0100 per 10K requests.
+        # 1M HTTPS requests over the free 10M at $0.0100 per 10K requests.
         assert sum(costs.values()) == pytest.approx(1.00, rel=0.01)
 
     def test_seed_fallback_loads_global_cloudfront_rows(self, tmp_path):
@@ -136,7 +138,7 @@ class TestCloudFrontEndToEndPricing:
         aws_fallback_prices(["AmazonCloudFront"], cache, region="us-east-1", seed_only=True)
         catalog = PricingCatalog(db_path=tmp_path / "prices.db")
         result = catalog.query("aws", "AmazonCloudFront", "global",
-                               "CloudFront-HTTPS-Request", 1_000_000)
+                               "CloudFront-HTTPS-Request", 11_000_000)
         assert result is not None and result.total_cost == pytest.approx(1.00, rel=0.01)
 
     def test_seed_fallback_loads_services_missing_from_cache(self, tmp_path):

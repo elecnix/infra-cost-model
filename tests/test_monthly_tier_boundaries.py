@@ -69,11 +69,12 @@ def test_quantity_above_the_free_allowance_pays_for_the_excess(pricing_model):
 
 
 def test_quantity_crossing_a_paid_tier_boundary():
-    # CloudFront: $0.085 per GB up to 10,240 GB, then $0.080 up to 51,200 GB.
+    # CloudFront: the first 1,024 GB free (#333), $0.085 per GB up to
+    # 10,240 GB, then $0.080 up to 51,200 GB.
     model = one_node_model("AmazonCloudFront", "global",
                            "CloudFront-DataTransfer", 20_480, "tiered")
     cost, _ = compute(model)
-    assert cost == pytest.approx(10_240 * 0.085 + 10_240 * 0.080, rel=1e-9)
+    assert cost == pytest.approx(9_216 * 0.085 + 10_240 * 0.080, rel=1e-9)
 
 
 @pytest.mark.parametrize("time_basis, months", [

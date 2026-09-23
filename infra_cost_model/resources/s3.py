@@ -5,7 +5,9 @@ Pricing covers 4 dimensions with tiered rates:
 - PUT/COPY/POST/LIST requests: $0.005/1K
 - GET requests: $0.0004/1K
 - Storage: $0.023/GB-month (first 50TB)
-- Data transfer out to internet: $0.09/GB (first 10TB)
+- Data transfer out to internet: billed as AWS data transfer out, with the
+  account's first 100 GB a month free and its rate tiers shared across
+  services (#332)
 """
 
 from typing import Optional
@@ -14,6 +16,11 @@ from infra_cost_model.pricing.catalog import PricingCatalog
 
 from .types import StorageResource, ResourceExtract
 
+# AWS bills S3 egress to the internet as data transfer out, so it prices from
+# the same rows as every other service's egress (#332).
+_EGRESS_SERVICE = "AWSDataTransfer"
+_EGRESS_METRIC = "DataTransfer-Internet-Out-GB"
+
 
 class S3Bucket(StorageResource):
     """Amazon S3 Bucket - storage node (leaf, no outgoing edges)."""
@@ -21,6 +28,16 @@ class S3Bucket(StorageResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["putRequests", "getRequests", "storageGb", "dataOutGb"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # ``S3-DataTransfer`` is the name of the rows that #332 removed, so
+        # models written against them keep a price.
+        return {"dataOutGb": _EGRESS_METRIC, "S3-DataTransfer": _EGRESS_METRIC}
+
+    @property
+    def catalog_services(self) -> dict[str, str]:
+        return {_EGRESS_METRIC: _EGRESS_SERVICE}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["S3Bucket"]:
@@ -175,10 +192,11 @@ def _s3_cost(
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 
-    # Data transfer: tiered pricing (first 10TB at $0.09/GB)
+    # Data transfer out: the account-wide data transfer rows, with the
+    # first 100 GB a month free (#332)
     if data_out_gb > 0:
-        result = catalog.query(provider, "AmazonS3", region,
-                               "S3-DataTransfer", data_out_gb)
+        result = catalog.query(provider, _EGRESS_SERVICE, region,
+                               _EGRESS_METRIC, data_out_gb)
         if result and hasattr(result, "total_cost"):
             total += result.total_cost
 
