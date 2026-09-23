@@ -670,24 +670,20 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
     return total, "infracost"
 
 
-def seed_pricing_catalog(services: list[str] = None) -> tuple[int, str]:
+def seed_pricing_catalog(services: list[str] | None = None) -> tuple[int, str]:
     """Seed the pricing catalog from the bundled seed file (offline)."""
     from infra_cost_model.pricing.cache import PricingCache
     from .aws_pricing import aws_fallback_prices
 
     cache = PricingCache()
-    if services is None:
-        services = ["AWSLambda", "AmazonDynamoDB", "AmazonAPIGatewayHTTP", "AmazonBedrock"]
     count = aws_fallback_prices(services, cache, seed_only=True)
     return count, "seed-pricelist"
 
 
-def _sync_fallback(vendor: str, services: list[str], cache) -> tuple[int, str]:
+def _sync_fallback(vendor: str, services: list[str] | None, cache) -> tuple[int, str]:
     from .aws_pricing import aws_fallback_prices
 
     if vendor != "aws":
         return 0, "fallback-unsupported"
-    if services is None:
-        services = ["AWSLambda", "AmazonDynamoDB", "AmazonAPIGatewayHTTP", "AmazonBedrock"]
     count = aws_fallback_prices(services, cache)
     return count, "aws-pricelist"

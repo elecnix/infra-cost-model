@@ -52,11 +52,13 @@ def fetch_aws_price_list(service_code: str) -> list[dict]:
     return results
 
 
-def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", seed_only: bool = False) -> int:
+def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-east-1",
+                        seed_only: bool = False) -> int:
     """Seed pricing cache from AWS Price List API, filling gaps with seed file prices.
 
     Args:
-        services: List of AWS service names to sync
+        services: AWS service names to sync. None means every service in
+            SERVICE_CODES.
         cache: PricingCache instance
         region: AWS region (default: us-east-1)
         seed_only: If True, only use seed file (don't query API)
@@ -65,10 +67,17 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
         Number of prices synced to cache
 
     Raises:
+        ValueError: If services is an empty list
         RuntimeError: If no pricing data could be fetched and seed file unavailable
     """
     from infra_cost_model.pricing.cache import Price
     import json
+    import sqlite3
+
+    if services is None:
+        services = list(SERVICE_CODES)
+    elif not services:
+        raise ValueError("services must name at least one AWS service, or be None for all")
 
     count = 0
     now = datetime.now().isoformat()
@@ -79,20 +88,17 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
     # tiered entries from two code paths reading the same JSON file. The check
     # runs per metric, so a cached row for one metric, or a "global" row,
     # doesn't stop the other seed rows of that service from loading.
-    cached: dict[tuple, int] = {}
-    if services:
-        import sqlite3
-        conn = sqlite3.connect(cache.db_path)
-        placeholders = ','.join(['?'] * len(services))
-        rows = conn.execute(
-            f"SELECT service, region, usage_metric, COUNT(*) FROM prices "
-            f"WHERE vendor='aws' AND region IN (?, 'global') "
-            f"AND service IN ({placeholders}) "
-            f"GROUP BY service, region, usage_metric",
-            [region] + list(services)
-        ).fetchall()
-        conn.close()
-        cached = {(svc, reg, metric): n for svc, reg, metric, n in rows}
+    conn = sqlite3.connect(cache.db_path)
+    placeholders = ','.join(['?'] * len(services))
+    rows = conn.execute(
+        f"SELECT service, region, usage_metric, COUNT(*) FROM prices "
+        f"WHERE vendor='aws' AND region IN (?, 'global') "
+        f"AND service IN ({placeholders}) "
+        f"GROUP BY service, region, usage_metric",
+        [region] + list(services)
+    ).fetchall()
+    conn.close()
+    cached = {(svc, reg, metric): n for svc, reg, metric, n in rows}
 
     # First, load from seed file if it exists
     if SEED_PRICES_PATH.exists():
@@ -101,7 +107,7 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
             for item in seed_data:
                 if item.get("vendor") != "aws":
                     continue
-                if services and item.get("service") not in services:
+                if item.get("service") not in services:
                     continue
                 # Global services such as CloudFront have no AWS region, so
                 # their seed rows use "global" and load for any region.
