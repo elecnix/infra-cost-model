@@ -5,7 +5,37 @@ name = "infra-cost-model"
 # here would let the enforced version and the reported one drift.
 dynamic = ["version"]
 description = "DAG-based infrastructure cost model with usage derivation and pricing"
+readme = "README.md"
 requires-python = ">=3.10"
+# An SPDX expression (PEP 639). setuptools rejects a "License ::" classifier
+# next to it, so the classifiers below leave that one out.
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Nicolas Marchildon" }]
+keywords = [
+    "infrastructure-as-code",
+    "cost-modeling",
+    "cloud-costs",
+    "dag",
+    "finops",
+    "aws",
+    "gcp",
+    "azure",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: Office/Business :: Financial",
+]
 dependencies = [
     "jsonschema>=4.0",
     # PEP 440 comparison for a model's `requiresEngine` pin. Imported by the
@@ -20,6 +50,11 @@ dependencies = [
 [project.scripts]
 infra-cost-model = "infra_cost_model.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/elecnix/infra-cost-model"
+Repository = "https://github.com/elecnix/infra-cost-model"
+Issues = "https://github.com/elecnix/infra-cost-model/issues"
+Changelog = "https://github.com/elecnix/infra-cost-model/releases"
 
 [project.optional-dependencies]
 dev = [
@@ -28,7 +63,8 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+# 77.0 is the first release that reads `license` as an SPDX expression.
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
