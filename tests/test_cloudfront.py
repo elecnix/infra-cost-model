@@ -148,3 +148,15 @@ class TestCloudFrontEndToEndPricing:
         result = catalog.query("aws", "AmazonCloudFront", "global",
                                "CloudFront-HTTPS-Request", 1_000_000)
         assert result is not None and result.total_cost == pytest.approx(1.00, rel=0.01)
+
+    def test_seed_fallback_loads_services_missing_from_cache(self, tmp_path):
+        """Global CloudFront rows in the cache don't stop other services from loading."""
+        from infra_cost_model.pricing.cache import PricingCache
+        from infra_cost_model.pricing.sources.aws_pricing import aws_fallback_prices
+
+        cache = PricingCache(db_path=tmp_path / "prices.db")
+        aws_fallback_prices(["AmazonCloudFront"], cache, region="us-east-1", seed_only=True)
+        aws_fallback_prices(["AWSLambda", "AmazonCloudFront"], cache,
+                            region="us-east-1", seed_only=True)
+        catalog = PricingCatalog(db_path=tmp_path / "prices.db")
+        assert catalog.query("aws", "AWSLambda", "us-east-1", "Lambda-Request", 1_000_000) is not None

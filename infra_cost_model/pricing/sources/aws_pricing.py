@@ -74,21 +74,25 @@ def aws_fallback_prices(services: list[str], cache, region: str = "us-east-1", s
     now = datetime.now().isoformat()
     seen = set()
 
-    # Skip seed file loading if the cache already has entries for these
-    # services (e.g., seed_prices loaded them already). Prevents duplicate
-    # tiered entries from two code paths reading the same JSON file.
+    # Skip seed rows for services the cache already has (e.g., seed_prices
+    # loaded them already). Prevents duplicate tiered entries from two code
+    # paths reading the same JSON file. The check runs per service, so rows
+    # for one service don't stop the others from loading.
     if services:
         import sqlite3
         conn = sqlite3.connect(cache.db_path)
         placeholders = ','.join(['?'] * len(services))
-        existing = conn.execute(
-            f"SELECT COUNT(*) FROM prices WHERE vendor='aws' AND region IN (?, 'global') "
-            f"AND service IN ({placeholders})",
+        rows = conn.execute(
+            f"SELECT service, COUNT(*) FROM prices WHERE vendor='aws' "
+            f"AND region IN (?, 'global') AND service IN ({placeholders}) "
+            f"GROUP BY service",
             [region] + list(services)
-        ).fetchone()[0]
+        ).fetchall()
         conn.close()
-        if existing > 0:
-            return existing  # Already seeded, nothing to do
+        seeded = {service: n for service, n in rows}
+        if set(services) <= seeded.keys():
+            return sum(seeded.values())  # Already seeded, nothing to do
+        services = [s for s in services if s not in seeded]
 
     # First, load from seed file if it exists
     if SEED_PRICES_PATH.exists():
