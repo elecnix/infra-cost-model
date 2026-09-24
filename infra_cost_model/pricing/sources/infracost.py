@@ -13,6 +13,7 @@ bundled seed price list — but loudly (a ``UserWarning``), never silently, so a
 broken live path can't masquerade as success.
 """
 
+import dataclasses
 import os
 import json
 import platform
@@ -21,6 +22,8 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+
+from infra_cost_model.pricing.free_tiers import FREE_ALLOWANCES
 
 # The real hosted Cloud Pricing API (GraphQL). Override for self-hosting/tests.
 INFRACOST_PRICING_API_URL = os.getenv(
@@ -234,14 +237,20 @@ class InfracostClient:
 
     def sync_to_cache(self, cache, usage_metric: str, region: str,
                       vendor: str = "aws") -> int:
-        """Fetch the prices for one catalog usage_metric and upsert them.
+        """Fetch the prices for one catalog usage_metric and store them.
 
         Resolves the metric to an Infracost product descriptor (service, family,
         attribute filters, purchase option, unit) and stores the matching prices
         under the catalog's ``usage_metric`` name.
-        """
-        from infra_cost_model.pricing.cache import Price
 
+        The new rows replace the metric's Infracost rows for the region, in
+        one transaction (#355). Rows from a product that the descriptor no
+        longer selects go away, and rows from other sources stay. When the
+        metric has a free allowance in ``FREE_ALLOWANCES``, the stored rows
+        start with it as a $0 tier (#356).
+
+        Returns the number of rows stored.
+        """
         descriptor = METRIC_DESCRIPTORS.get(usage_metric)
         if descriptor is None:
             raise KeyError(f"No Infracost descriptor for usage_metric '{usage_metric}'")
@@ -261,21 +270,41 @@ class InfracostClient:
         )
         unit_match = descriptor.get("unit")
         now = datetime.now().isoformat()
-
-        if descriptor.get("region_pair_source"):
-            return self._upsert_region_pair_representative(
-                cache, prices, usage_metric, region, unit_match, descriptor, now)
-
-        if descriptor.get("regionless_usagetype"):
-            return self._upsert_regionless_usagetype(
-                cache, prices, usage_metric, region, unit_match, descriptor, now)
-
         # Some products are priced by Infracost under a different service than the
         # handler/seed model them (e.g. NAT Gateway is priced under AmazonEC2 but
-        # modeled under AmazonVPC). `store_service` upserts them under the service
-        # the engine queries. `usagetype_exclude` drops sibling usagetypes that
-        # share the same unit (e.g. NAT Gateway's $0 "Prvd" provisioned rows).
-        store_service = descriptor.get("store_service")
+        # modeled under AmazonVPC). `store_service` stores them under the service
+        # the engine queries.
+        store_service = descriptor.get("store_service") or descriptor["service"]
+
+        if descriptor.get("region_pair_source"):
+            rows = self._region_pair_representative(
+                prices, usage_metric, region, unit_match, descriptor, now)
+            store_region = region
+        elif descriptor.get("regionless_usagetype"):
+            rows = self._regionless_usagetype(
+                prices, usage_metric, region, unit_match, descriptor, now)
+            store_region = region
+        else:
+            rows = self._one_product(prices, usage_metric, unit_match, descriptor, now)
+            store_region = query_region
+
+        rows = [dataclasses.replace(r, service=store_service, region=store_region)
+                for r in rows]
+        rows = _with_free_tier(
+            rows, FREE_ALLOWANCES.get((vendor, store_service, usage_metric)))
+        with cache.replacing(vendor, store_service, store_region, usage_metric,
+                             "infracost"):
+            for row in rows:
+                cache.upsert(row)
+        return len(rows)
+
+    @staticmethod
+    def _one_product(prices, usage_metric, unit_match, descriptor, now) -> list:
+        """Keep the rows of the one product that the descriptor selects.
+
+        `usagetype_exclude` drops sibling usagetypes that share the same unit
+        (e.g. NAT Gateway's $0 "Prvd" provisioned rows).
+        """
         excludes = descriptor.get("usagetype_exclude") or []
         kept = []
         for p in prices:
@@ -286,21 +315,11 @@ class InfracostClient:
                 continue
             kept.append(p)
         _require_one_product(usage_metric, kept)
-        count = 0
-        for p in kept:
-            cache.upsert(Price(
-                vendor=p["vendor"], service=store_service or p["service"], region=p["region"],
-                product_family=p["product_family"], attributes=p["attributes"],
-                usage_metric=usage_metric, unit=p["unit"], price_usd=p["price_usd"],
-                start_usage_amount=p["start_usage_amount"],
-                end_usage_amount=p["end_usage_amount"],
-                source="infracost", effective_date=now, fetched_at=now,
-            ))
-            count += 1
-        return count
+        return [_price_row(p, usage_metric, now) for p in kept]
 
-    def _upsert_region_pair_representative(self, cache, prices, usage_metric,
-                                           region, unit_match, descriptor, now) -> int:
+    @staticmethod
+    def _region_pair_representative(prices, usage_metric, region, unit_match,
+                                    descriptor, now) -> list:
         """Collapse per-region-pair prices to one representative rate.
 
         Data-transfer products are priced per source/destination region pair, with
@@ -314,9 +333,8 @@ class InfracostClient:
         3. pick the modal price — the region's standard published rate — and store
            it once, flat, under the caller's ``region``.
 
-        Returns the number of rows upserted (0 or 1).
+        Returns the rows to store (none or one).
         """
-        from infra_cost_model.pricing.cache import Price
         from collections import Counter
 
         prefix = _region_usagetype_prefix(region)
@@ -333,24 +351,18 @@ class InfracostClient:
             candidates.append(p)
 
         if not candidates:
-            return 0
+            return []
 
         # Modal price = the region's standard rate; tie-break toward the lower rate.
         counts = Counter(round(p["price_usd"], 6) for p in candidates)
         modal = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
         rep = next(p for p in candidates if round(p["price_usd"], 6) == modal)
+        return [dataclasses.replace(_price_row(rep, usage_metric, now),
+                                    start_usage_amount=None, end_usage_amount=None)]
 
-        cache.upsert(Price(
-            vendor=rep["vendor"], service=rep["service"], region=region,
-            product_family=rep.get("product_family"), attributes=rep.get("attributes", {}),
-            usage_metric=usage_metric, unit=rep["unit"], price_usd=rep["price_usd"],
-            start_usage_amount=None, end_usage_amount=None,
-            source="infracost", effective_date=now, fetched_at=now,
-        ))
-        return 1
-
-    def _upsert_regionless_usagetype(self, cache, prices, usage_metric,
-                                     region, unit_match, descriptor, now) -> int:
+    @staticmethod
+    def _regionless_usagetype(prices, usage_metric, region, unit_match,
+                              descriptor, now) -> list:
         """Store a globally-catalogued, single-usagetype metric under the region.
 
         Unlike inter-region transfer, internet egress and inter-AZ transfer have
@@ -362,30 +374,54 @@ class InfracostClient:
         us-east-1 data-transfer usagetypes are unprefixed (an AWS legacy quirk);
         every other region prepends its short prefix (e.g. ``USW1-``).
 
-        Returns the number of rows upserted.
+        Returns the rows to store.
         """
-        from infra_cost_model.pricing.cache import Price
-
         base = descriptor["usagetype_base"]
         prefix = _region_usagetype_prefix(region)
         target = base if region == "us-east-1" else f"{prefix}-{base}"
+        return [
+            _price_row(p, usage_metric, now) for p in prices
+            if (not unit_match or p.get("unit") == unit_match)
+            and (p.get("attributes") or {}).get("usagetype") == target
+        ]
 
-        count = 0
-        for p in prices:
-            if unit_match and p.get("unit") != unit_match:
-                continue
-            if (p.get("attributes") or {}).get("usagetype") != target:
-                continue
-            cache.upsert(Price(
-                vendor=p["vendor"], service=p["service"], region=region,
-                product_family=p.get("product_family"), attributes=p.get("attributes", {}),
-                usage_metric=usage_metric, unit=p["unit"], price_usd=p["price_usd"],
-                start_usage_amount=p["start_usage_amount"],
-                end_usage_amount=p["end_usage_amount"],
-                source="infracost", effective_date=now, fetched_at=now,
-            ))
-            count += 1
-        return count
+
+def _price_row(p: dict, usage_metric: str, now: str):
+    """Turn one flattened Infracost price into a cache row for *usage_metric*."""
+    from infra_cost_model.pricing.cache import Price
+
+    return Price(
+        vendor=p["vendor"], service=p["service"], region=p["region"],
+        product_family=p.get("product_family"), attributes=p.get("attributes") or {},
+        usage_metric=usage_metric, unit=p["unit"], price_usd=p["price_usd"],
+        start_usage_amount=p.get("start_usage_amount"),
+        end_usage_amount=p.get("end_usage_amount"),
+        source="infracost", effective_date=now, fetched_at=now,
+    )
+
+
+def _with_free_tier(rows: list, allowance: float | None) -> list:
+    """Start *rows* with a $0 tier for the metric's free allowance (#356).
+
+    Infracost states a metric's paid tiers from 0. The seed file states the
+    allowance as a $0 tier from 0 to the allowance, and the paid tiers from
+    there. This gives the live rows the same tiers: it drops the parts of
+    the paid tiers below the allowance and adds the $0 tier, with the
+    product family and attributes of the paid rows. With no allowance, or
+    no rows, it returns *rows* as they are.
+    """
+    if not allowance or not rows:
+        return rows
+    ordered = sorted(rows, key=lambda r: r.start_usage_amount or 0)
+    paid = [
+        dataclasses.replace(r, start_usage_amount=max(r.start_usage_amount or 0,
+                                                      allowance))
+        for r in ordered
+        if r.end_usage_amount is None or r.end_usage_amount > allowance
+    ]
+    free = dataclasses.replace(ordered[0], price_usd=0.0, start_usage_amount=0.0,
+                               end_usage_amount=float(allowance))
+    return [free] + paid
 
 
 def _require_one_product(usage_metric: str, prices: list[dict]) -> None:
