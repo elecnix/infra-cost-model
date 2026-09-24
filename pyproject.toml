@@ -61,6 +61,12 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
 ]
+# Builds the documentation site: `mkdocs build --strict` (#243). MkDocs 2.0
+# drops the plugin and hook system that mkdocs-material and docs/hooks.py use.
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.5,<10",
+]
 
 [build-system]
 # 77.0 is the first release that reads `license` as an SPDX expression.

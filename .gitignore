@@ -5,3 +5,4 @@ infra_cost_model.egg-info/
 .pytest_cache/
 .test-home/
 .hermetic-probe-*/
+site/
