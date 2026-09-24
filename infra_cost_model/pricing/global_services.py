@@ -9,7 +9,9 @@ cost across the nodes by quantity.
 The pool uses the rows stored under the region "global" when there are
 some, then the us-east-1 rows, then the rows of one of the pool's regions.
 A live sync stores the Route 53 rows under each sync region (#361), and
-every copy has the same prices.
+every copy has the same prices. A node in a region with no rows of its
+own, such as eu-west-1 with only the seed file, is priced from the same
+rows (#384).
 
 The scope is a property of the provider's billing policy, so this table in
 the pricing layer states it, like ``ACCOUNT_WIDE_FREE_TIERS`` (#336). Live
@@ -22,7 +24,18 @@ GLOBAL_METRICS: frozenset[tuple[str, str, str]] = frozenset({
     # first 25 hosted zones, then $0.10. The AWS price list states the
     # "HostedZone" product with location "Any" and no region.
     ("aws", "AmazonRoute53", "Route53-HostedZone"),
+    # The same page: standard queries to public hosted zones cost $0.40 per
+    # million for the first 1 billion queries a month, then $0.20 (#384).
+    # The AWS price list states the "DNS-Queries" product with location
+    # "Any". Each region's "USE1-DNS-Queries" product is Route 53 Resolver
+    # queries, which a hosted zone doesn't bill.
+    ("aws", "AmazonRoute53", "Route53-Query"),
 })
+
+# The WAF metrics are not in the table (#385). A web ACL with the scope
+# CLOUDFRONT bills from the "Global-" products, and the WAF handler gives it
+# the region "global", so all such web ACLs already share one pool. A
+# regional web ACL bills from its own region's products.
 
 # The regions whose rows price a global pool, in order of preference.
 GLOBAL_PRICE_REGIONS: tuple[str, ...] = ("global", "us-east-1")

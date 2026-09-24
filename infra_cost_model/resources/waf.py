@@ -15,6 +15,16 @@ from typing import Optional
 from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import RoutingResource, ResourceExtract
 
+# A web ACL with the scope CLOUDFRONT bills from the AWS "Global-" products
+# (location "Any"), so it gets the catalog region "global", as a CloudFront
+# distribution does (#385). A regional web ACL keeps its region.
+_CLOUDFRONT_SCOPE = "CLOUDFRONT"
+_GLOBAL_REGION = "global"
+
+
+def _region_for_scope(scope, region):
+    return _GLOBAL_REGION if scope == _CLOUDFRONT_SCOPE else region
+
 
 class WAFv2WebACL(RoutingResource):
     """AWS WAFv2 web ACL - routing node with per-ACL + per-rule + per-request pricing."""
@@ -46,7 +56,7 @@ class WAFv2WebACL(RoutingResource):
         return ResourceExtract(
             resource_address=resource.get("address", ""),
             node_type="routing", provider="aws", service="AWSWAF",
-            region=values.get("region"),
+            region=_region_for_scope(values.get("scope"), values.get("region")),
             config={
                 "name": values.get("name"),
                 "scope": values.get("scope", "REGIONAL"),
@@ -60,7 +70,7 @@ class WAFv2WebACL(RoutingResource):
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="routing", provider="aws", service="AWSWAF",
-            region=inputs.get("region"),
+            region=_region_for_scope(inputs.get("scope"), inputs.get("region")),
             config={
                 "name": inputs.get("name"),
                 "scope": inputs.get("scope", "REGIONAL"),
@@ -74,7 +84,7 @@ class WAFv2WebACL(RoutingResource):
         return ResourceExtract(
             resource_address=resource.get("LogicalId", ""),
             node_type="routing", provider="aws", service="AWSWAF",
-            region=None,
+            region=_region_for_scope(properties.get("Scope"), None),
             config={
                 "name": properties.get("Name"),
                 "scope": properties.get("Scope", "REGIONAL"),
