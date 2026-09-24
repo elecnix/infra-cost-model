@@ -122,8 +122,8 @@ class TestAzureHandlers:
         result = AzureFunction.from_address("azurerm_linux_function_app.my_func")
         assert result is not None
 
-    def test_azure_function_cdk(self):
-        result = AzureFunction.from_address("sites/Microsoft.Web/sites")
+    def test_azure_function_arm(self):
+        result = AzureFunction.from_address("Microsoft.Web/sites:my-func")
         assert result is not None
 
     def test_cosmosdb_terraform(self):

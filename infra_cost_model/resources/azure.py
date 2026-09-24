@@ -6,9 +6,93 @@ pattern used for AWS. Full pricing implementations will be added as the
 model is validated against real Azure pricing data.
 """
 
-from typing import Optional
+import re
+import warnings
+from typing import Any, Optional
 
 from .types import ComputeResource, StorageResource, RoutingResource, ResourceExtract
+
+
+# Keys that `extract_resources_from_arm` adds to each ARM resource before it
+# calls `extract_arm`. ARM resources never use them.
+ARM_ADDRESS_KEY = "_address"
+ARM_PARAMETERS_KEY = "_templateParameters"
+
+_PARAMETER_EXPRESSION = re.compile(r"^\[\s*parameters\(\s*'([^']+)'\s*\)\s*\]$")
+
+
+def matches_arm_type(resource_address: str, arm_type: str) -> bool:
+    """Whether ``resource_address`` names a resource of exactly ``arm_type``.
+
+    Two address forms reach the Azure handlers:
+
+    - ``{type}:{name}``, built by ``extract_resources_from_arm``. The type
+      must be followed by ``:``, so a child such as
+      ``Microsoft.Web/sites/slots:app/staging`` doesn't match
+      ``Microsoft.Web/sites``.
+    - An Azure resource ID, ``.../providers/{namespace}/{type}/{name}``, as
+      found in a Pulumi stack export's ``id``. The parent type must be
+      followed by exactly one name segment, so child IDs don't match.
+
+    ARM resource types are case-insensitive.
+    """
+    address = resource_address.lower()
+    wanted = arm_type.lower()
+    if address.startswith(wanted + ":"):
+        return True
+    marker = "/providers/"
+    index = address.rfind(marker)
+    if index == -1:
+        return False
+    segments = address[index + len(marker):].split("/")
+    # namespace, type, name: a top-level resource has exactly three segments.
+    return len(segments) == 3 and segments[2] != "" and "/".join(segments[:2]) == wanted
+
+
+def resolve_arm_value(value: Any, parameters: dict) -> tuple[Any, bool]:
+    """Resolve an ARM template value to a literal.
+
+    Returns ``(value, True)`` for a literal, or for a plain
+    ``[parameters('x')]`` whose parameter has a literal default. Returns
+    ``(None, False)`` for any other expression, which only a deployment can
+    evaluate.
+    """
+    if not isinstance(value, str) or not value.startswith("["):
+        return value, True
+    if value.startswith("[["):
+        # `[[` escapes a literal string that starts with `[`.
+        return value[1:], True
+    match = _PARAMETER_EXPRESSION.match(value)
+    if match:
+        parameter = parameters.get(match.group(1))
+        if isinstance(parameter, dict) and "defaultValue" in parameter:
+            return resolve_arm_value(parameter["defaultValue"], parameters)
+    return None, False
+
+
+def arm_region(resource: dict) -> Optional[str]:
+    """The region of an ARM resource, from its ``location``.
+
+    An expression that can't be resolved without a deployment, such as
+    ``[resourceGroup().location]``, gives ``None`` and a UserWarning.
+    """
+    location = resource.get("location")
+    region, resolved = resolve_arm_value(location, resource.get(ARM_PARAMETERS_KEY, {}))
+    if not resolved:
+        warnings.warn(
+            f"{resource.get(ARM_ADDRESS_KEY, resource.get('name', '?'))}: can't resolve "
+            f"location {location!r} without a deployment, so its region is unset. "
+            f"Give the location as a literal or as a parameter with a default value."
+        )
+    return region
+
+
+def _arm_properties(resource: dict) -> dict:
+    return resource.get("properties") or {}
+
+
+def _arm_sku_name(resource: dict) -> Optional[str]:
+    return (resource.get("sku") or {}).get("name")
 
 
 class AzureFunction(ComputeResource):
@@ -23,7 +107,7 @@ class AzureFunction(ComputeResource):
         if (resource_address.startswith("azurerm_function_app.") or
                 resource_address.startswith("azurerm_linux_function_app.") or
                 "azure:appservice:FunctionApp:" in resource_address or
-                "Microsoft.Web/sites" in resource_address):
+                matches_arm_type(resource_address, "Microsoft.Web/sites")):
             return cls()
         return None
 
@@ -73,6 +157,26 @@ class AzureFunction(ComputeResource):
         )
 
 
+    @classmethod
+    def extract_arm(cls, resource: dict) -> ResourceExtract:
+        properties = _arm_properties(resource)
+        app_settings = {
+            setting.get("name"): setting.get("value")
+            for setting in (properties.get("siteConfig") or {}).get("appSettings") or []
+            if isinstance(setting, dict)
+        }
+        return ResourceExtract(
+            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            node_type="compute",
+            provider="azure",
+            service="AzureFunctions",
+            region=arm_region(resource),
+            config={
+                "sku": properties.get("serverFarmId"),
+                "runtime": app_settings.get("FUNCTIONS_WORKER_RUNTIME"),
+            },
+        )
+
 class CosmosDB(StorageResource):
     """Azure Cosmos DB - storage node (equivalent to DynamoDB)."""
 
@@ -84,7 +188,7 @@ class CosmosDB(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["CosmosDB"]:
         if (resource_address.startswith("azurerm_cosmosdb_account.") or
                 "azure:cosmosdb:Account:" in resource_address or
-                "Microsoft.DocumentDB/databaseAccounts" in resource_address):
+                matches_arm_type(resource_address, "Microsoft.DocumentDB/databaseAccounts")):
             return cls()
         return None
 
@@ -135,6 +239,23 @@ class CosmosDB(StorageResource):
         )
 
 
+    @classmethod
+    def extract_arm(cls, resource: dict) -> ResourceExtract:
+        properties = _arm_properties(resource)
+        return ResourceExtract(
+            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            node_type="storage",
+            provider="azure",
+            service="CosmosDB",
+            region=arm_region(resource),
+            config={
+                "offerType": properties.get("databaseAccountOfferType"),
+                "kind": resource.get("kind"),
+                "consistencyLevel": (properties.get("consistencyPolicy") or {}).get(
+                    "defaultConsistencyLevel"),
+            },
+        )
+
 class APIManagement(RoutingResource):
     """Azure API Management - routing node (equivalent to API Gateway)."""
 
@@ -146,7 +267,7 @@ class APIManagement(RoutingResource):
     def from_address(cls, resource_address: str) -> Optional["APIManagement"]:
         if (resource_address.startswith("azurerm_api_management.") or
                 "azure:apimanagement:Service:" in resource_address or
-                "Microsoft.ApiManagement/service" in resource_address):
+                matches_arm_type(resource_address, "Microsoft.ApiManagement/service")):
             return cls()
         return None
 
@@ -196,6 +317,20 @@ class APIManagement(RoutingResource):
         )
 
 
+    @classmethod
+    def extract_arm(cls, resource: dict) -> ResourceExtract:
+        return ResourceExtract(
+            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            node_type="routing",
+            provider="azure",
+            service="APIManagement",
+            region=arm_region(resource),
+            config={
+                "skuName": _arm_sku_name(resource),
+                "publisherName": _arm_properties(resource).get("publisherName"),
+            },
+        )
+
 class AzureOpenAI(ComputeResource):
     """Azure OpenAI Service - compute node (equivalent to Bedrock)."""
 
@@ -207,7 +342,7 @@ class AzureOpenAI(ComputeResource):
     def from_address(cls, resource_address: str) -> Optional["AzureOpenAI"]:
         if (resource_address.startswith("azurerm_cognitive_account.") or
                 "azure:cognitiveservices:Account:" in resource_address or
-                "Microsoft.CognitiveServices/accounts" in resource_address):
+                matches_arm_type(resource_address, "Microsoft.CognitiveServices/accounts")):
             return cls()
         return None
 
@@ -257,6 +392,20 @@ class AzureOpenAI(ComputeResource):
         )
 
 
+    @classmethod
+    def extract_arm(cls, resource: dict) -> ResourceExtract:
+        return ResourceExtract(
+            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            node_type="compute",
+            provider="azure",
+            service="AzureOpenAI",
+            region=arm_region(resource),
+            config={
+                "kind": resource.get("kind"),
+                "skuName": _arm_sku_name(resource),
+            },
+        )
+
 class AzureBlobStorage(StorageResource):
     """Azure Blob Storage - storage node (equivalent to S3)."""
 
@@ -268,7 +417,7 @@ class AzureBlobStorage(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["AzureBlobStorage"]:
         if (resource_address.startswith("azurerm_storage_account.") or
                 "azure:storage:Account:" in resource_address or
-                "Microsoft.Storage/storageAccounts" in resource_address):
+                matches_arm_type(resource_address, "Microsoft.Storage/storageAccounts")):
             return cls()
         return None
 
@@ -315,5 +464,22 @@ class AzureBlobStorage(StorageResource):
             config={
                 "accountTier": properties.get("sku", {}).get("name"),
                 "accessTier": properties.get("accessTier"),
+            },
+        )
+
+    @classmethod
+    def extract_arm(cls, resource: dict) -> ResourceExtract:
+        # An ARM storage SKU joins tier and replication, as in `Standard_LRS`.
+        tier, _, replication = (_arm_sku_name(resource) or "").partition("_")
+        return ResourceExtract(
+            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            node_type="storage",
+            provider="azure",
+            service="BlobStorage",
+            region=arm_region(resource),
+            config={
+                "accountTier": tier or None,
+                "replicationType": replication or None,
+                "accessTier": _arm_properties(resource).get("accessTier"),
             },
         )

@@ -81,11 +81,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_analyze.set_defaults(func=cmd_analyze)
 
     # extract
-    p_extract = sub.add_parser("extract", help="Extract resources from IaC (Terraform/Pulumi/CDK)")
+    p_extract = sub.add_parser("extract", help="Extract resources from IaC (Terraform/Pulumi/CDK/ARM)")
     p_extract.add_argument("path", metavar="<path>", help="Path to IaC JSON export file")
     p_extract.add_argument("--from", dest="source_format", metavar="FORMAT",
-                           choices=["terraform", "pulumi", "cdk"], default="terraform",
-                           help="Source format: terraform, pulumi, or cdk (default: terraform)")
+                           choices=["terraform", "pulumi", "cdk", "arm"], default="terraform",
+                           help="Source format: terraform, pulumi, cdk, or arm (default: terraform)")
     p_extract.add_argument("--json", action="store_true", help="Output in JSON format")
     p_extract.set_defaults(func=cmd_extract)
 
@@ -169,8 +169,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_coverage = sub.add_parser("coverage", help="Check coverage between cost model and IaC resources")
     p_coverage.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     p_coverage.add_argument("--from", dest="source_format", metavar="FORMAT",
-                            choices=["terraform", "pulumi", "cdk"], default="terraform",
-                            help="Source format: terraform, pulumi, or cdk (default: terraform)")
+                            choices=["terraform", "pulumi", "cdk", "arm"], default="terraform",
+                            help="Source format: terraform, pulumi, cdk, or arm (default: terraform)")
     p_coverage.add_argument("iac_file", metavar="<iac-file>", help="Path to IaC JSON export")
     p_coverage.add_argument("--exit-on-uncosted", action="store_true",
                             help="Exit with error code 1 if uncosted resources exist (for CI budget gates)")
@@ -620,9 +620,12 @@ def cmd_extract(args: argparse.Namespace) -> int:
         elif source_format == "cdk":
             from infra_cost_model.resources.registry import extract_resources_from_cdk
             nodes = extract_resources_from_cdk(data)
+        elif source_format == "arm":
+            from infra_cost_model.resources.registry import extract_resources_from_arm
+            nodes = extract_resources_from_arm(data)
         else:
             _print_stderr(f"Unknown source format: {source_format}")
-            _print_stderr("Valid formats: terraform, pulumi, cdk")
+            _print_stderr("Valid formats: terraform, pulumi, cdk, arm")
             return 1
 
         if args.json:
@@ -986,7 +989,7 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
     Args:
         args.yaml_file: Path to cost model YAML
-        args.source_format: "terraform", "pulumi", or "cdk"
+        args.source_format: "terraform", "pulumi", "cdk", or "arm"
         args.iac_file: Path to IaC JSON export
         args.exit_on_uncosted: Exit 1 if uncosted resources exist
         args.json: Output in JSON format
@@ -1043,6 +1046,9 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     elif source_format == "cdk":
         from infra_cost_model.resources.registry import extract_resources_from_cdk
         extracted = extract_resources_from_cdk(iac_data)
+    elif source_format == "arm":
+        from infra_cost_model.resources.registry import extract_resources_from_arm
+        extracted = extract_resources_from_arm(iac_data)
     else:
         _print_stderr(f"Unknown source format: {source_format}")
         return 1

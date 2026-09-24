@@ -25,7 +25,10 @@ from .cloudwatch import CloudWatchLogGroup, CloudWatchMetricAlarm
 from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
-from .azure import AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage
+from .azure import (
+    AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage,
+    ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, resolve_arm_value,
+)
 from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 from .kms import KMSKey
 from .waf import WAFv2WebACL
@@ -191,7 +194,7 @@ class ResourceRegistry:
         Args:
             resource_address: Full resource address
             resource_data: Raw resource data from IaC export
-            source_format: "terraform", "pulumi", or "cdk"
+            source_format: "terraform", "pulumi", "cdk", or "arm"
 
         Returns:
             Extracted resource dict or None if unsupported.
@@ -204,6 +207,7 @@ class ResourceRegistry:
             "terraform": "extract_tf",
             "pulumi": "extract_pulumi",
             "cdk": "extract_cdk",
+            "arm": "extract_arm",
         }
 
         method = getattr(handler, extract_methods.get(source_format, "extract_tf"), None)
@@ -378,6 +382,91 @@ def extract_resources_from_cdk(cdk_json: dict) -> dict[str, dict]:
                 results[addr] = extracted
             else:
                 unsupported.append(addr)
+
+    if unsupported:
+        warnings.warn(
+            f"{len(unsupported)} resource(s) could not be extracted because no handler "
+            f"is registered for their resource type. Unsupported addresses: "
+            f"{', '.join(sorted(unsupported))}. "
+            f"Supported handlers: {sorted(h.__name__ for h in ResourceRegistry._handlers)}."
+        )
+
+    return results
+
+
+def _arm_template(arm_json: dict) -> dict:
+    """The template in an ARM template file or an `az deployment` export.
+
+    `az deployment group export` and `az group export` print the template
+    itself. Some tools wrap it as ``{"template": ...}`` or, like
+    `az deployment group show`, as ``{"properties": {"template": ...}}``.
+    """
+    if isinstance(arm_json.get("template"), dict):
+        return arm_json["template"]
+    template = (arm_json.get("properties") or {}).get("template")
+    if isinstance(template, dict):
+        return template
+    return arm_json
+
+
+def _arm_resources(resources, parameters: dict, parent_type: str = "",
+                   parent_name: str = ""):
+    """Yield ``(address, resource)`` for each resource, nested ones included.
+
+    ``resources`` is a list, or an object keyed by symbolic name in a
+    ``languageVersion`` 2.0 template. A nested child may give a short type
+    and name (``slots`` / ``staging``), which take the parent's as a prefix.
+    """
+    if isinstance(resources, dict):
+        resources = list(resources.values())
+    if not isinstance(resources, list):
+        return
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        arm_type = resource.get("type", "")
+        name, _ = resolve_arm_value(resource.get("name", ""), parameters)
+        name = name if isinstance(name, str) else resource.get("name", "")
+        if parent_type and arm_type and "/" not in arm_type:
+            arm_type = f"{parent_type}/{arm_type}"
+            name = f"{parent_name}/{name}"
+        if not arm_type:
+            continue
+        yield f"{arm_type}:{name}", resource
+        yield from _arm_resources(resource.get("resources"), parameters, arm_type, name)
+
+
+def extract_resources_from_arm(arm_json: dict) -> dict[str, dict]:
+    """Extract all resources from an Azure Resource Manager (ARM) template.
+
+    Reads ``resources`` from an ARM template or an `az deployment` export,
+    including the ``resources`` nested in a parent. Each address is the
+    resource type and name joined by ``:``, as in
+    ``Microsoft.Web/sites:func-orders``. A plain ``[parameters('x')]`` name
+    resolves to the parameter's default value.
+
+    Args:
+        arm_json: ARM template JSON
+
+    Returns:
+        Dict mapping resource addresses to extracted configs.
+
+    Emits UserWarning if any resources could not be extracted because
+    no handler was registered for their resource type.
+    """
+    results = {}
+    unsupported: list[str] = []
+    template = _arm_template(arm_json)
+    parameters = template.get("parameters") or {}
+
+    for addr, resource in _arm_resources(template.get("resources"), parameters):
+        resource_data = {**resource, ARM_ADDRESS_KEY: addr,
+                         ARM_PARAMETERS_KEY: parameters}
+        extracted = ResourceRegistry.extract(addr, resource_data, "arm")
+        if extracted:
+            results[addr] = extracted
+        else:
+            unsupported.append(addr)
 
     if unsupported:
         warnings.warn(
