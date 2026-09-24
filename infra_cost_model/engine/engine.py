@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
+from infra_cost_model.pricing.free_tiers import ACCOUNT, free_tier_scope
 from infra_cost_model.version_requirement import require_engine
 
 
@@ -486,24 +487,30 @@ def _price_pooled_charges(catalog: PricingCatalog,
     node costs still add up to the pool cost. Returns, per node, the change
     to its usage-driven cost (per second) and to its fixed cost (per
     month), and updates ``cost`` on each charge. A pool with one charge
-    keeps its cost.
+    keeps its cost, unless it shares an account-wide free allowance with a
+    pool in another region (#336).
     """
     pools: dict[tuple, list[_CatalogCharge]] = defaultdict(list)
     for charge in charges:
         pools[charge.pool].append(charge)
 
+    pool_costs = _price_account_wide_pools(catalog, pools)
+
     deltas: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
-    for (provider, service, region, metric, _), members in pools.items():
-        if len(members) < 2:
-            continue
+    for key, members in pools.items():
+        (provider, service, region, metric, _) = key
         total_quantity = sum(c.quantity for c in members)
-        if total_quantity <= 0:
+        if key in pool_costs:
+            pool_cost = pool_costs[key]
+        elif len(members) < 2 or total_quantity <= 0:
             continue
-        result = catalog.query(provider, service, region, metric, total_quantity,
-                               parameters=members[0].parameters,
-                               period_seconds=SECONDS_PER_MONTH)
+        else:
+            pool_cost = catalog.query(
+                provider, service, region, metric, total_quantity,
+                parameters=members[0].parameters,
+                period_seconds=SECONDS_PER_MONTH).total_cost
         for charge in members:
-            share = result.total_cost * charge.quantity / total_quantity
+            share = pool_cost * charge.quantity / total_quantity
             delta = share - charge.cost
             charge.cost = share
             if charge.fixed:
@@ -511,6 +518,53 @@ def _price_pooled_charges(catalog: PricingCatalog,
             else:
                 deltas[charge.node][0] += delta / SECONDS_PER_MONTH
     return deltas
+
+
+def _price_account_wide_pools(catalog: PricingCatalog,
+                              pools: dict[tuple, list[_CatalogCharge]]
+                              ) -> dict[tuple, float]:
+    """Share each account-wide free allowance across regions (#336).
+
+    Some providers give a free allowance once to the account, across all
+    regions. For each such metric used in more than one region, this applies
+    the allowance once to the total quantity and gives each region a part of
+    it in proportion to the region's quantity. Each region pays its own rate
+    for the rest. Returns the monthly cost of each regional pool it priced.
+    The pricing layer says which metrics are account-wide.
+    """
+    accounts: dict[tuple, list[tuple]] = defaultdict(list)
+    for key, members in pools.items():
+        provider, service, _, metric, scaling = key
+        if (free_tier_scope(provider, service, metric) == ACCOUNT
+                and sum(c.quantity for c in members) > 0):
+            accounts[(provider, service, metric, scaling)].append(key)
+
+    costs: dict[tuple, float] = {}
+    for keys in accounts.values():
+        if len(keys) < 2:
+            continue
+        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
+        total = sum(quantities.values())
+        results = {
+            k: catalog.query(k[0], k[1], k[2], k[3], quantities[k],
+                             parameters=pools[k][0].parameters,
+                             period_seconds=SECONDS_PER_MONTH)
+            for k in keys
+        }
+        if any(r is None for r in results.values()):
+            continue
+        # Regions normally state the same allowance. When they differ, use
+        # the smallest so the account never gets more than any region states.
+        allowance = min(r.free_allowance for r in results.values())
+        free_fraction = min(1.0, allowance / total)
+        for k in keys:
+            paid = quantities[k] * (1.0 - free_fraction)
+            costs[k] = catalog.query(
+                k[0], k[1], k[2], k[3], paid,
+                parameters=pools[k][0].parameters,
+                include_free_tier=False,
+                period_seconds=SECONDS_PER_MONTH).total_cost
+    return costs
 
 
 @dataclass
