@@ -222,13 +222,18 @@ def test_log_ingestion_of_3_gb_is_free_after_a_live_sync(creds, tmp_path):
 
 
 def test_free_allowances_match_the_seed_free_tiers():
-    """Each $0 tier from 0 in the seed file has an entry, and the other way round."""
+    """Each $0 tier from 0 in the seed file has an entry, and the other way round.
+
+    The seed file has no GCP rows, so the GCP allowances (#373) have no seed
+    tier to match.
+    """
     seed = {
         (r.vendor, r.service, r.usage_metric): r.end_usage_amount
         for r in load_seed_rows()
         if r.price_usd == 0 and r.start_usage_amount == 0
     }
-    assert FREE_ALLOWANCES == seed
+    assert not any(vendor == "gcp" for vendor, _, _ in seed)
+    assert {k: v for k, v in FREE_ALLOWANCES.items() if k[0] != "gcp"} == seed
 
 
 def test_sync_adds_the_free_tier_once(creds, tmp_path):

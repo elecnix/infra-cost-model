@@ -55,6 +55,12 @@ ACCOUNT_WIDE_FREE_TIERS: frozenset[tuple[str, str, str]] = frozenset({
     # subscription" (#363).
     ("azure", "AzureFunctions", "AzureFunctions-Execution"),
     ("azure", "AzureFunctions", "AzureFunctions-GB-Second"),
+    # https://cloud.google.com/run/pricing: "The free tier usage is
+    # aggregated across projects by billing account and resets every
+    # month" (#373).
+    ("gcp", "CloudRun", "CloudRun-Request"),
+    ("gcp", "CloudRun", "CloudRun-vCPU-Second"),
+    ("gcp", "CloudRun", "CloudRun-GiB-Second"),
 })
 
 
@@ -145,4 +151,38 @@ FREE_ALLOWANCES: dict[tuple[str, str, str], float] = {
     ("azure", "AzureFunctions", "AzureFunctions-Execution"): 1_000_000,
     ("azure", "AzureFunctions", "AzureFunctions-GB-Second"): 400_000,
     ("azure", "APIManagement", "APIM-Consumption-Call"): 1_000_000,
+    # https://azure.microsoft.com/pricing/details/bandwidth/: the first
+    # 100 GB a month of internet egress are free (#372).
+    ("azure", "Bandwidth", "Bandwidth-Internet-Out-GB"): 100,
+    # https://cloud.google.com/run/pricing: 180,000 vCPU-seconds and 360,000
+    # GiB-seconds a month for request-based billing (#373). The Infracost
+    # rows state the 2M free requests themselves.
+    ("gcp", "CloudRun", "CloudRun-vCPU-Second"): 180_000,
+    ("gcp", "CloudRun", "CloudRun-GiB-Second"): 360_000,
+    # https://cloud.google.com/firestore/pricing: 50,000 reads and 20,000
+    # writes a day, and 1 GiB of stored data (#373). Catalog tiers count a
+    # month, so a daily quota counts 365.25 / 12 = 30.4375 days, the month
+    # of `SECONDS_PER_MONTH`. A day's unused quota doesn't carry over, so
+    # this is exact only for usage spread evenly over the month.
+    ("gcp", "Firestore", "Firestore-Read"): 50_000 * 30.4375,
+    ("gcp", "Firestore", "Firestore-Write"): 20_000 * 30.4375,
+    ("gcp", "Firestore", "Firestore-GiB-Month"): 1,
+}
+
+# Free allowances that a provider gives as a sum of money, stated as units
+# at a reference price (#373). GCP applies the Cloud Run free tier "as a
+# spending based discount using Tier 1 pricing", so in a Tier 2 region the
+# allowance pays for fewer units. The value is the us-central1 price.
+SPEND_BASED_FREE_TIERS: dict[tuple[str, str, str], float] = {
+    ("gcp", "CloudRun", "CloudRun-vCPU-Second"): 0.000024,
+    ("gcp", "CloudRun", "CloudRun-GiB-Second"): 0.0000025,
+}
+
+# Free tiers that a product states in every region but the provider gives in
+# a few regions only. A live sync drops the $0 tier in the other regions.
+# https://cloud.google.com/storage/pricing: "Cloud Storage Always Free quotas
+# apply to usage in US-WEST1, US-CENTRAL1, and US-EAST1 regions" (#372).
+FREE_ALLOWANCE_REGIONS: dict[tuple[str, str, str], tuple[str, ...]] = {
+    ("gcp", "CloudStorage", "GCS-Internet-Egress-GiB"): (
+        "us-central1", "us-east1", "us-west1"),
 }

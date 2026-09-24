@@ -24,7 +24,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-from infra_cost_model.pricing.free_tiers import FREE_ALLOWANCES
+from infra_cost_model.pricing.free_tiers import (
+    FREE_ALLOWANCES, FREE_ALLOWANCE_REGIONS, SPEND_BASED_FREE_TIERS,
+)
+from infra_cost_model.pricing.sources import azure_retail
 
 # The real hosted Cloud Pricing API (GraphQL). Override for self-hosting/tests.
 INFRACOST_PRICING_API_URL = os.getenv(
@@ -146,6 +149,20 @@ _GCP_LOCATION = {
 GLOBAL_REGION = "global"
 _GLOBAL_USAGETYPE_PREFIX = "Global"
 
+# Cloud Run regions with Tier 2 prices, from https://cloud.google.com/run/pricing
+# (checked 2026-09-24). Infracost names a region's tier in the description
+# ("Services CPU Tier 2 (Request-based billing)"), and gives africa-south1,
+# a Tier 1 region, both products (#376). `CLOUD_RUN_TIER` in a descriptor's
+# pattern is replaced with " Tier 2" in these regions, and with nothing in
+# the others, so the pattern matches the tier that GCP publishes.
+_CLOUD_RUN_TIER_2_REGIONS = frozenset({
+    "asia-east2", "asia-northeast3", "asia-southeast1", "asia-southeast2", "asia-south2",
+    "australia-southeast1", "australia-southeast2", "europe-central2", "europe-west10",
+    "europe-west12", "europe-west2", "europe-west3", "europe-west6", "me-central1",
+    "me-central2", "northamerica-northeast1", "northamerica-northeast2",
+    "southamerica-east1", "southamerica-west1", "us-west2", "us-west3", "us-west4",
+})
+
 
 def sync_regions(vendor: str) -> list[str]:
     """The regions that ``sync-pricing`` syncs for *vendor* by default.
@@ -167,6 +184,13 @@ def _resolve_gcp_location(filters: Optional[list[dict]], region: str) -> Optiona
         return filters
     location = _GCP_LOCATION.get(region, "GCP_LOCATION")
     return [{**f, "value": f["value"].replace("GCP_LOCATION", location)} for f in filters]
+
+
+def _resolve_cloud_run_tier(patterns: dict, region: str) -> dict:
+    """Replace ``CLOUD_RUN_TIER`` in pattern values with *region*'s tier."""
+    tier = " Tier 2" if region in _CLOUD_RUN_TIER_2_REGIONS else ""
+    return {key: pattern.replace("CLOUD_RUN_TIER", tier)
+            for key, pattern in patterns.items()}
 
 
 def _scaled(amount: Optional[float], scale: float) -> Optional[float]:
@@ -375,15 +399,27 @@ class InfracostClient:
                 {"key": f["key"], "value": f["value"].replace("REGION_PREFIX-", "")}
                 for f in attribute_filters
             ]
-        prices = self.query_prices(
-            service=descriptor["service"],
-            region=query_region,
-            product_family=descriptor.get("product_family"),
-            attribute_filters=_resolve_gcp_location(attribute_filters, region),
-            purchase_option=descriptor.get("purchase_option"),
-            vendor=vendor,
-        )
+        if descriptor.get("azure_retail"):
+            # Infracost's copy of this meter has stale tiers (#372).
+            prices = []
+        else:
+            prices = self.query_prices(
+                service=descriptor["service"],
+                region=query_region,
+                product_family=descriptor.get("product_family"),
+                attribute_filters=_resolve_gcp_location(attribute_filters, region),
+                purchase_option=descriptor.get("purchase_option"),
+                vendor=vendor,
+            )
         unit_match = descriptor.get("unit")
+        if vendor == "azure" and not _with_unit(prices, unit_match):
+            # Infracost lacks some Azure meters in some regions (#376). The
+            # public Azure Retail Prices API, which Infracost copies, has them.
+            prices = azure_retail.query_azure_retail_prices(
+                descriptor["service"], region, attribute_filters)
+        if descriptor.get("attribute_patterns"):
+            descriptor = {**descriptor, "attribute_patterns": _resolve_cloud_run_tier(
+                descriptor["attribute_patterns"], region)}
         now = datetime.now().isoformat()
         # Some products are priced by Infracost under a different service than the
         # handler/seed model them (e.g. NAT Gateway is priced under AmazonEC2 but
@@ -407,10 +443,15 @@ class InfracostClient:
         if descriptor.get("store_unit"):
             changes["unit"] = descriptor["store_unit"]
         rows = [dataclasses.replace(r, **changes) for r in rows]
-        rows = _with_free_tier(
-            rows, FREE_ALLOWANCES.get((vendor, store_service, usage_metric)))
+        key = (vendor, store_service, usage_metric)
+        if region not in FREE_ALLOWANCE_REGIONS.get(key, (region,)):
+            # The product states a free tier that GCP gives in a few regions.
+            rows = _without_free_tier(rows)
+        rows = _with_free_tier(rows, FREE_ALLOWANCES.get(key),
+                               SPEND_BASED_FREE_TIERS.get(key))
+        # Rows from the Azure Retail Prices API replace Infracost rows too.
         with cache.replacing(vendor, store_service, region, usage_metric,
-                             "infracost"):
+                             ("infracost", azure_retail.SOURCE)):
             for row in rows:
                 cache.upsert(row)
         return len(rows)
@@ -548,11 +589,12 @@ def _price_row(p: dict, usage_metric: str, now: str):
         usage_metric=usage_metric, unit=p["unit"], price_usd=p["price_usd"],
         start_usage_amount=p.get("start_usage_amount"),
         end_usage_amount=p.get("end_usage_amount"),
-        source="infracost", effective_date=now, fetched_at=now,
+        source=p.get("source", "infracost"), effective_date=now, fetched_at=now,
     )
 
 
-def _with_free_tier(rows: list, allowance: float | None) -> list:
+def _with_free_tier(rows: list, allowance: float | None,
+                    reference_price: float | None = None) -> list:
     """Start *rows* with a $0 tier for the metric's free allowance (#356).
 
     Infracost states a metric's paid tiers from 0. The seed file states the
@@ -561,10 +603,17 @@ def _with_free_tier(rows: list, allowance: float | None) -> list:
     the paid tiers below the allowance and adds the $0 tier, with the
     product family and attributes of the paid rows. With no allowance, or
     no rows, it returns *rows* as they are.
+
+    With a *reference_price*, the allowance is worth ``allowance *
+    reference_price`` dollars (#373). Where the first paid price is higher,
+    the $0 tier holds as many units as that sum pays for.
     """
     if not allowance or not rows:
         return rows
     ordered = sorted(rows, key=lambda r: r.start_usage_amount or 0)
+    paid_prices = [r.price_usd for r in ordered if r.price_usd > 0]
+    if reference_price and paid_prices and paid_prices[0] > reference_price:
+        allowance = allowance * reference_price / paid_prices[0]
     paid = [
         dataclasses.replace(r, start_usage_amount=max(r.start_usage_amount or 0,
                                                       allowance))
@@ -574,6 +623,14 @@ def _with_free_tier(rows: list, allowance: float | None) -> list:
     free = dataclasses.replace(ordered[0], price_usd=0.0, start_usage_amount=0.0,
                                end_usage_amount=float(allowance))
     return [free] + paid
+
+
+def _without_free_tier(rows: list) -> list:
+    """Drop the leading $0 tier of *rows*, and start the next tier at 0."""
+    ordered = sorted(rows, key=lambda r: r.start_usage_amount or 0)
+    if len(ordered) < 2 or ordered[0].price_usd != 0 or (ordered[0].start_usage_amount or 0):
+        return rows
+    return [dataclasses.replace(ordered[1], start_usage_amount=0.0)] + ordered[2:]
 
 
 def _require_one_product(usage_metric: str, prices: list[dict]) -> None:
@@ -946,6 +1003,21 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
                               {"key": "meterName", "value": "Hot LRS Write Operations"}],
         "unit": "10K", "unit_scale": 10_000, "store_unit": "requests",
     },
+    # Internet egress (#372). Azure bills every service's egress on one
+    # Bandwidth meter, so the handlers price `dataOutGb` under "Bandwidth"
+    # (`catalog_services`). The default routing is the Microsoft global
+    # network ("Rtn Preference: MGN"). The first 100 GB a month are free.
+    # Infracost gives this meter with the tier starts of an older price list
+    # (5, 10240 GB ...) beside the current ones (100, 10335 GB ...), so the
+    # sync reads the Azure Retail Prices API (`azure_retail`).
+    "Bandwidth-Internet-Out-GB": {
+        "vendor": "azure", "service": "Bandwidth", "store_service": "Bandwidth",
+        "azure_retail": True,
+        "attribute_filters": [{"key": "productName", "value": "Rtn Preference: MGN"},
+                              {"key": "skuName", "value": "Standard"},
+                              {"key": "meterName", "value": "Standard Data Transfer Out"}],
+        "unit": "1 GB", "store_unit": "GB",
+    },
     # --- GCP (#226) --------------------------------------------------------------
     # GCP rows have two attributes, a description and a resource group. Some
     # products are in Infracost's global catalogue (`query_region: "global"`) and
@@ -975,7 +1047,7 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "unit": "second",
     },
     # Cloud Run services with request-based billing. The first 2M requests a
-    # month are free.
+    # month are free. `CLOUD_RUN_TIER` selects the region's price tier (#376).
     "CloudRun-Request": {
         "vendor": "gcp", "service": "Cloud Run", "store_service": "CloudRun",
         "query_region": "global",
@@ -985,14 +1057,26 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     "CloudRun-vCPU-Second": {
         "vendor": "gcp", "service": "Cloud Run", "store_service": "CloudRun",
         "attribute_filters": [{"key": "resourceGroup", "value": "Compute"}],
-        "attribute_patterns": {"description": r"Services CPU( Tier 2)? +\(Request-based billing\)"},
+        "attribute_patterns": {"description": r"Services CPUCLOUD_RUN_TIER +\(Request-based billing\)"},
         "unit": "second",
     },
     "CloudRun-GiB-Second": {
         "vendor": "gcp", "service": "Cloud Run", "store_service": "CloudRun",
         "attribute_filters": [{"key": "resourceGroup", "value": "Compute"}],
-        "attribute_patterns": {"description": r"Services Memory( Tier 2)? +\(Request-based billing\)"},
+        "attribute_patterns": {"description": r"Services MemoryCLOUD_RUN_TIER +\(Request-based billing\)"},
         "unit": "gibibyte second",
+    },
+    # Internet egress (#372). GCP bills it under each service's own SKUs, and
+    # counts the monthly tiers for each SKU, so each service has its own
+    # metric. Each region has one product for traffic to its own continent
+    # ("North America to North America"), which the pattern selects. The North
+    # America product starts with the free 1 GiB a month.
+    "CloudRun-Internet-Egress-GiB": {
+        "vendor": "gcp", "service": "Cloud Run", "store_service": "CloudRun",
+        "attribute_filters": [{"key": "resourceGroup", "value": "PremiumInternetEgress"}],
+        "attribute_patterns": {"description": r"Cloud Run Network Internet Data Transfer"
+                                              r" Out (.+) to \1"},
+        "unit": "gibibyte",
     },
     # Cloud Storage, Standard class in a single region. Storage is in the
     # regional catalogue. Class A (writes, lists) and Class B (reads) operations
@@ -1016,10 +1100,22 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
                                "value": "Regional Standard Class B Operations"}],
         "unit": "count",
     },
+    # Internet egress (#372) to worldwide destinations other than Asia and
+    # Australia, in the global catalogue. The product starts with the 100 GiB
+    # a month of Always Free egress, which applies in us-central1, us-east1
+    # and us-west1 only (`FREE_ALLOWANCE_REGIONS`).
+    "GCS-Internet-Egress-GiB": {
+        "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description", "value":
+                               "Download Worldwide Destinations (excluding Asia & Australia)"}],
+        "unit": "gibibyte",
+    },
     # Firestore Standard edition, in the global catalogue with one product for
-    # each location. GCP_LOCATION is resolved from the sync region. The daily
-    # free quota is left out: its tier bounds count a day, and catalog tiers
-    # count a month.
+    # each location. GCP_LOCATION is resolved from the sync region. These are
+    # the products without the free quota: the "(with free tier)" products
+    # state the daily quota as a tier, and catalog tiers count a month. The
+    # sync adds the quota as a month of days (`FREE_ALLOWANCES`, #373).
     "Firestore-Read": {
         "vendor": "gcp", "service": "Cloud Firestore", "store_service": "Firestore",
         "query_region": "global",

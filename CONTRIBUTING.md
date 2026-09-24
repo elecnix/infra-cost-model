@@ -47,6 +47,10 @@ A resource that has no AWS region, such as a CloudFront distribution or a WAF we
 
 The Infracost Cloud Pricing API states each paid price from 0 and leaves out the free allowances, which AWS publishes as separate "Global-" products. `FREE_ALLOWANCES` in the same file gives the monthly allowance of each metric that has a $0 tier in the seed file. When `sync-pricing` stores the live rows of a listed metric, it adds a $0 tier up to the allowance and starts the paid tiers there, so a live catalog prices the same usage as the seed catalog ([#356](https://github.com/elecnix/infra-cost-model/issues/356)). When you add a free tier to the seed file, add its allowance to `FREE_ALLOWANCES` as well. A test checks that the two agree.
 
+Some allowances need more than a number ([#372](https://github.com/elecnix/infra-cost-model/issues/372), [#373](https://github.com/elecnix/infra-cost-model/issues/373)). Firestore gives a quota each day, so its entry is a day's quota times 30.4375, the days in an average month. GCP gives the Cloud Run free tier as a sum of money at Tier 1 prices. `SPEND_BASED_FREE_TIERS` states that price, and the sync gives a Tier 2 region fewer free units. Cloud Storage gives its free egress in three US regions only, so `FREE_ALLOWANCE_REGIONS` lists them, and the sync drops the product's $0 tier in the other regions.
+
+When the Infracost API has no price for an Azure meter in a region, the sync reads the public Azure Retail Prices API, which Infracost copies ([#376](https://github.com/elecnix/infra-cost-model/issues/376)). A descriptor with `azure_retail` always reads that API. Its rows have the source `azure-retail`, and they replace seed rows the way Infracost rows do.
+
 A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. References in examples, provider registration, and price rows must use that identity consistently. `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
 
 ## Development

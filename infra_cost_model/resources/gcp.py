@@ -120,9 +120,11 @@ class CloudStorage(StorageResource):
     def catalog_metrics(self) -> dict[str, str]:
         # Standard class in one region. Writes are Class A operations and
         # reads are Class B operations.
+        # GCP bills egress under each service's own SKUs (#372).
         return {"storageGb": "GCS-Standard-GiB-Month",
                 "writeRequests": "GCS-Class-A-Operation",
-                "readRequests": "GCS-Class-B-Operation"}
+                "readRequests": "GCS-Class-B-Operation",
+                "dataOutGb": "GCS-Internet-Egress-GiB"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudStorage"]:
@@ -191,7 +193,8 @@ class CloudRun(RoutingResource):
         # Request-based billing.
         return {"requests": "CloudRun-Request",
                 "vcpuSeconds": "CloudRun-vCPU-Second",
-                "memoryGbSeconds": "CloudRun-GiB-Second"}
+                "memoryGbSeconds": "CloudRun-GiB-Second",
+                "dataOutGb": "CloudRun-Internet-Egress-GiB"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudRun"]:
