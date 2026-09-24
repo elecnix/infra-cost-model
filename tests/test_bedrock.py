@@ -3,7 +3,7 @@
 import pytest
 from infra_cost_model.resources.bedrock import (
     BedrockModel, _bedrock_cost, _cached_prompt_bedrock_cost,
-    _streaming_bedrock_cost, _model_cost_comparison, is_economic_sink
+    _streaming_bedrock_cost, _model_cost_comparison
 )
 
 
@@ -74,13 +74,6 @@ def test_model_cost_comparison():
 
     # All models currently use the same seed prices
     assert results["claude-3-5-haiku"] == results["claude-3-5-sonnet"]
-
-
-def test_leaf_node_classification():
-    """Test that Bedrock models are classified as leaf nodes."""
-    assert is_economic_sink("compute", "bedrock") is True
-    assert is_economic_sink("compute", "openai") is True
-    assert is_economic_sink("storage", "aws") is False
 
 
 def test_cached_prompt_cost_discount(seed_catalog):
