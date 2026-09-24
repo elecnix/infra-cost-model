@@ -277,13 +277,17 @@ class InfracostClient:
         # share the same unit (e.g. NAT Gateway's $0 "Prvd" provisioned rows).
         store_service = descriptor.get("store_service")
         excludes = descriptor.get("usagetype_exclude") or []
-        count = 0
+        kept = []
         for p in prices:
             if unit_match and p.get("unit") != unit_match:
                 continue
             usagetype = (p.get("attributes") or {}).get("usagetype", "")
             if any(x in usagetype for x in excludes):
                 continue
+            kept.append(p)
+        _require_one_product(usage_metric, kept)
+        count = 0
+        for p in kept:
             cache.upsert(Price(
                 vendor=p["vendor"], service=store_service or p["service"], region=p["region"],
                 product_family=p["product_family"], attributes=p["attributes"],
@@ -384,6 +388,27 @@ class InfracostClient:
         return count
 
 
+def _require_one_product(usage_metric: str, prices: list[dict]) -> None:
+    """Raise if *prices* come from more than one product (#350).
+
+    A metric's rows are the tiers of one product. Rows from several products
+    would be stored as tiers that overlap, and a query would charge the
+    quantity once for each product. Two rows belong to the same product when
+    their product family and attributes are equal.
+    """
+    products = {
+        (p.get("product_family"), tuple(sorted((p.get("attributes") or {}).items())))
+        for p in prices
+    }
+    if len(products) > 1:
+        usagetypes = sorted(dict(attrs).get("usagetype", "?") for _, attrs in products)
+        raise RuntimeError(
+            f"Infracost descriptor for '{usage_metric}' matched {len(products)} "
+            f"products (usagetypes: {', '.join(usagetypes)}); it must match one. "
+            f"No rows were stored."
+        )
+
+
 # Map each catalog usage_metric to the Infracost product query that prices it.
 # Validated against the live Cloud Pricing API; extend per service as needed.
 METRIC_DESCRIPTORS: dict[str, dict] = {
@@ -466,16 +491,20 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
                               {"key": "groupDescription", "value": "Charge for per GB data processed by VPC Endpoints"}],
         "unit": "GB",
     },
-    # CloudWatch Logs: ingestion ($/GB) + storage ($/GB-month).
+    # CloudWatch Logs (#350): Standard log class ingestion ($/GB) and log
+    # storage ($/GB-month). Each usagetype names one product. The group
+    # "Ingested Logs" also holds the tiered vended-log products, and the group
+    # "Centralized Logs" is cross-account centralization, not storage. In
+    # us-east-1 the unprefixed usagetypes are legacy duplicates of the USE1- ones.
     "CloudWatch-Log-Ingestion": {
         "service": "AmazonCloudWatch",
-        "attribute_filters": [{"key": "group", "value": "Ingested Logs"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-DataProcessing-Bytes"}],
         "unit": "GB",
     },
     "CloudWatch-Log-Storage": {
         "service": "AmazonCloudWatch",
-        "attribute_filters": [{"key": "group", "value": "Centralized Logs"}],
-        "unit": "GB",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-TimedStorage-ByteHrs"}],
+        "unit": "GB-Mo",
     },
     # Secrets Manager: per-secret per month.
     "SecretsManager-Secret": {
