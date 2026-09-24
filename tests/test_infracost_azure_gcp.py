@@ -283,6 +283,13 @@ def test_descriptor_stores_one_product(creds, metric, region, vendor, service, u
     assert [p for _, _, p in got] == pytest.approx([p for _, _, p in tiers])
 
 
+def test_every_scaled_descriptor_names_its_stored_unit():
+    """A row priced per unit must not keep the API's block unit ("10K")."""
+    scaled = {m: d for m, d in ic.METRIC_DESCRIPTORS.items() if "unit_scale" in d}
+    assert scaled
+    assert [m for m, d in scaled.items() if "store_unit" not in d] == []
+
+
 def test_every_azure_and_gcp_descriptor_is_covered():
     covered = {e[0] for e in EXPECTED}
     new = {m for m, d in ic.METRIC_DESCRIPTORS.items() if d.get("vendor") in ("azure", "gcp")}
