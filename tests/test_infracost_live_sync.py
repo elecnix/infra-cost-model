@@ -38,9 +38,10 @@ def _product(family, attributes, prices):
 
 
 US_EAST_1 = [
-    _product("Serverless", {"group": "AWS-Lambda-Requests"},
+    _product("Serverless", {"group": "AWS-Lambda-Requests", "usagetype": "Request"},
              [("0.0000002", "Requests", "0", "Inf")]),
-    _product("Serverless", {"group": "AWS-Lambda-Duration"},
+    _product("Serverless", {"group": "AWS-Lambda-Duration",
+                           "usagetype": "Lambda-GB-Second"},
              [("0.0000166667", "seconds", "0", "6000000000"),
               ("0.000015", "seconds", "6000000000", "15000000000"),
               ("0.0000133334", "seconds", "15000000000", "Inf")]),
@@ -184,7 +185,8 @@ def test_resync_with_no_matching_product_removes_the_live_rows(creds, tmp_path):
 # below the first boundary where live and seed tiers differ.
 QUANTITIES = {
     ("AWSLambda", "Lambda-Request"): [0, 400_000, 1_000_000, 3_500_000],
-    ("AWSLambda", "Lambda-GB-Second"): [0, 100_000, 400_000, 2_000_000],
+    ("AWSLambda", "Lambda-GB-Second"): [0, 100_000, 400_000, 2_000_000,
+                                        10_000_000_000, 20_000_000_000],
     ("AmazonCloudWatch", "CloudWatch-Metric-Month"): [0, 3, 10, 500, 20_000, 2_000_000],
     ("AmazonCloudWatch", "CloudWatch-Alarm-Month"): [0, 7, 10, 250],
     ("AmazonCloudWatch", "CloudWatch-Log-Ingestion"): [0, 3, 5, 10, 1_000],
