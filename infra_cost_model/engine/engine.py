@@ -659,8 +659,9 @@ def _price_global_pools(catalog: PricingCatalog,
     region together at one price. For each such metric used in more than one
     region, this prices the total quantity once and gives each regional pool
     a part of the cost in proportion to its quantity. The rows stored under
-    ``GLOBAL_PRICE_REGIONS`` price the total, or else the rows of the first
-    region of the pool that has some. Returns the monthly cost of each
+    ``GLOBAL_PRICE_REGIONS`` price the total, or else the rows of the pool's
+    region that comes first in alphabetical order and has some, so the
+    choice doesn't depend on node order. Returns the monthly cost of each
     regional pool it priced. The pricing layer says which metrics are global.
     """
     accounts: dict[tuple, list[tuple]] = defaultdict(list)
@@ -677,6 +678,7 @@ def _price_global_pools(catalog: PricingCatalog,
         quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
         total = sum(quantities.values())
         regions = list(GLOBAL_PRICE_REGIONS) + sorted(k[2] for k in keys)
+        result = None
         for region in regions:
             result = catalog.query(provider, service, region, metric, total,
                                    parameters=pools[keys[0]][0].parameters,

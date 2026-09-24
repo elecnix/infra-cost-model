@@ -148,3 +148,30 @@ def test_pool_without_global_rows_uses_a_node_region(tmp_path):
     costs = compute(catalog, {"eu": node("eu-west-1", 20),
                               "ap": node("ap-south-1", 20)})
     assert costs["eu"] + costs["ap"] == pytest.approx(14.00, rel=1e-9)
+
+
+def test_pool_region_choice_ignores_node_order(tmp_path):
+    # Without global or us-east-1 rows, the rows of the region that comes
+    # first in alphabetical order price the pool, whatever the node order.
+    catalog = _catalog(tmp_path, {"eu-west-1": (0.50, 0.10),
+                                  "ap-south-1": (0.90, 0.30)})
+    expected = 25 * 0.90 + 15 * 0.30
+    for nodes in ({"eu": node("eu-west-1", 20), "ap": node("ap-south-1", 20)},
+                  {"ap": node("ap-south-1", 20), "eu": node("eu-west-1", 20)}):
+        costs = compute(catalog, nodes)
+        assert sum(costs.values()) == pytest.approx(expected, rel=1e-9)
+
+
+def test_pool_is_skipped_when_no_region_prices_the_total(tmp_path):
+    # A pool that no region can price keeps the costs of its regional pools.
+    from infra_cost_model.engine.engine import (
+        _CatalogCharge, _price_global_pools,
+    )
+    catalog = PricingCatalog(db_path=tmp_path / "pricing.db")
+    pools = {
+        ("aws", ZONES[0], region, ZONES[1], ()): [_CatalogCharge(
+            node=region, pool=("aws", ZONES[0], region, ZONES[1], ()),
+            quantity=20, cost=10.0, fixed=True, parameters={})]
+        for region in ("us-east-1", "eu-west-1")
+    }
+    assert _price_global_pools(catalog, pools) == {}
