@@ -481,3 +481,28 @@ def test_engine_prices_firestore_from_synced_rows(creds, tmp_path):
     cost, unpriced = _monthly(catalog, node, 1_000_000)
     assert cost == pytest.approx(2_000_000 * 0.0000003 + 1_000_000 * 0.0000009, rel=1e-6)
     assert unpriced == []
+
+
+# --- The synced Azure rows match the seed rows (#363) ---------------------------
+
+
+def _seed_rows(service, metric):
+    from infra_cost_model.pricing.cache import load_seed_rows
+
+    return [r for r in load_seed_rows([service])
+            if (r.vendor, r.region, r.usage_metric) == ("azure", "eastus", metric)]
+
+
+AZURE_SEEDED = [(e[0], e[3]) for e in EXPECTED if e[2] == "azure"]
+
+
+@pytest.mark.parametrize("metric,service", AZURE_SEEDED, ids=[m for m, _ in AZURE_SEEDED])
+def test_synced_azure_rows_match_the_seed_rows(creds, metric, service):
+    """A live sync replaces the seed rows, so it must store the same units and tiers."""
+    seed = _seed_rows(service, metric)
+    assert seed, f"no eastus seed row for {metric}"
+    synced = _sync(metric, "eastus")
+    assert {r.unit for r in synced} == {r.unit for r in seed}
+    got, want = _tiers(synced), _tiers(seed)
+    assert [(s or 0, e) for s, e, _ in got] == [(s or 0, e) for s, e, _ in want]
+    assert [p for _, _, p in got] == pytest.approx([p for _, _, p in want])
