@@ -102,19 +102,22 @@ def _shape_errors(model: dict, known_shapes: list[str]) -> list[str]:
             continue
         metrics = node.get("usageMetrics")
         if metrics is None:
+            # A node may give one metric under the singular key instead.
             metric = node.get("usageMetric")
-            metrics = {"usageMetric": metric} if isinstance(metric, dict) else {}
-        if not isinstance(metrics, dict):
+            paths = {f"nodes.{name}.usageMetric": metric}
+        elif isinstance(metrics, dict):
+            paths = {f"nodes.{name}.usageMetrics.{key}": value
+                     for key, value in metrics.items()}
+        else:
             continue
-        for metric_name, metric in metrics.items():
+        for path, metric in paths.items():
             if not isinstance(metric, dict):
                 continue
             shape = metric.get("shape")
             if not isinstance(shape, str) or shape in known_shapes:
                 continue
             if shape in REMOVED_SHAPES:
-                errors.append(f"nodes.{name}.usageMetrics.{metric_name}.shape: "
-                              + removed_shape_message(shape))
+                errors.append(f"{path}.shape: " + removed_shape_message(shape))
             else:
                 errors.append(
                     f"Unknown shape '{shape}' on node '{name}'. Known shapes: {known_shapes}"
