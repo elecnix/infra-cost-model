@@ -2,7 +2,8 @@
 
 Native handler for AWS KMS customer-managed keys.
 - Recurring cost: $/customer-managed-key-month
-- Usage cost: $/symmetric-API-request (with a 20,000-request free tier)
+- Usage cost: $/symmetric-API-request (20,000 requests a month free, once for the
+  account across all regions)
 """
 
 from typing import Optional

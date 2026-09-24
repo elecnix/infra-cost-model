@@ -29,6 +29,24 @@ REGIONAL = ("TestRegionalService", "Regional-Metric", "GB")
 # tests can tell which region's rate priced each quantity.
 EGRESS_RATE = {"us-east-1": 0.09, "eu-west-1": 0.10}
 
+# The KMS (#343) and CloudWatch (#342) allowances, and test paid rates for
+# each region. The log ingestion rates differ so that the tests can tell
+# which region's rate priced each quantity.
+# (service, metric): (unit, free quantity, paid rate by region)
+KMS_REQUESTS = ("AWSKMS", "KMS-API-Request")
+ONCE_PER_ACCOUNT = {
+    KMS_REQUESTS: ("requests", 20_000,
+                   {"us-east-1": 0.000003, "eu-west-1": 0.000003}),
+    ("AmazonCloudWatch", "CloudWatch-Metric-Month"): (
+        "Metrics", 10, {"us-east-1": 0.30, "eu-west-1": 0.30}),
+    ("AmazonCloudWatch", "CloudWatch-Alarm-Month"): (
+        "Alarms", 10, {"us-east-1": 0.10, "eu-west-1": 0.10}),
+    ("AmazonCloudWatch", "CloudWatch-Log-Ingestion"): (
+        "GB", 5, {"us-east-1": 0.50, "eu-west-1": 0.57}),
+    ("AmazonCloudWatch", "CloudWatch-Log-Storage"): (
+        "GB-Mo", 5, {"us-east-1": 0.03, "eu-west-1": 0.03}),
+}
+
 
 def _row(region, service, metric, unit, price, start, end):
     return Price(
@@ -51,6 +69,10 @@ def catalog(tmp_path):
                           0.0, 0, 1_000_000))
         cache.upsert(_row(region, "AWSLambda", "Lambda-Request", "requests",
                           0.0000002, 1_000_000, None))
+        for (service, metric), (unit, free, rate) in ONCE_PER_ACCOUNT.items():
+            cache.upsert(_row(region, service, metric, unit, 0.0, 0, free))
+            cache.upsert(_row(region, service, metric, unit, rate[region],
+                              free, None))
         service, metric, unit = REGIONAL
         cache.upsert(_row(region, service, metric, unit, 0.0, 0, 100))
         cache.upsert(_row(region, service, metric, unit, 1.0, 100, None))
@@ -95,9 +117,18 @@ def test_scope_table_marks_the_account_wide_allowances():
         ("AmazonSQS", "SQS-FIFO-Request"),
         ("AmazonSNS", "SNS-Publish"),
         ("AmazonSNS", "SNS-Delivery-HTTP"),
+        ("AWSKMS", "KMS-API-Request"),
+        ("AmazonCloudWatch", "CloudWatch-Metric-Month"),
+        ("AmazonCloudWatch", "CloudWatch-Alarm-Month"),
+        ("AmazonCloudWatch", "CloudWatch-Log-Ingestion"),
+        ("AmazonCloudWatch", "CloudWatch-Log-Storage"),
     ]:
         assert free_tier_scope("aws", service, metric) == ACCOUNT, metric
     assert free_tier_scope("aws", "AmazonS3", "S3-Storage") == REGION
+    # GetMetricData has no free tier (#341), and KMS keys cost from the first.
+    assert free_tier_scope("aws", "AmazonCloudWatch",
+                           "CloudWatch-GetMetricData") == REGION
+    assert free_tier_scope("aws", "AWSKMS", "KMS-Key-Month") == REGION
     assert free_tier_scope("github", "Copilot", "Copilot-Credit") == REGION
 
 
@@ -178,3 +209,49 @@ def test_region_with_zero_quantity_leaves_the_allowance_to_the_others(catalog):
                               "eu": node("eu-west-1", 0)})
     assert costs["us"] == pytest.approx(20 * 0.09, rel=1e-9)
     assert costs["eu"] == pytest.approx(0.0, abs=1e-12)
+
+
+def kms_node(region, requests):
+    service, metric = KMS_REQUESTS
+    return node(region, requests, service=service, metric=metric,
+                unit="requests")
+
+
+@pytest.mark.parametrize("each, paid_each", [
+    (8_000, 0),         # 16,000 in all: under the 20,000 allowance
+    (10_000, 0),        # 20,000 in all: exactly the allowance
+    (20_000, 10_000),   # 40,000 in all: 20,000 over it (#343)
+])
+def test_kms_requests_share_one_allowance_across_regions(catalog, each,
+                                                        paid_each):
+    costs = compute(catalog, {"us": kms_node("us-east-1", each),
+                              "eu": kms_node("eu-west-1", each)})
+    assert costs["us"] == pytest.approx(paid_each * 0.000003, abs=1e-12)
+    assert costs["eu"] == pytest.approx(paid_each * 0.000003, abs=1e-12)
+
+
+def test_kms_issue_example_pays_for_20000_requests(catalog):
+    # 20,000 requests in each region: the account pays for 20,000 at $0.03
+    # per 10,000, $0.06. Separate allowances would bill $0.
+    costs = compute(catalog, {"us": kms_node("us-east-1", 20_000),
+                              "eu": kms_node("eu-west-1", 20_000)})
+    assert sum(costs.values()) == pytest.approx(0.06, rel=1e-9)
+
+
+@pytest.mark.parametrize("service, metric", [
+    key for key in ONCE_PER_ACCOUNT if key != KMS_REQUESTS])
+def test_cloudwatch_allowances_apply_once_across_regions(catalog, service,
+                                                         metric):
+    unit, free, rate = ONCE_PER_ACCOUNT[(service, metric)]
+    # Below: half the allowance in all. At: the allowance. Above: twice it.
+    for each, paid_each in [(free / 4, 0), (free / 2, 0), (free, free / 2)]:
+        costs = compute(catalog, {
+            "us": node("us-east-1", each, service=service, metric=metric,
+                       unit=unit),
+            "eu": node("eu-west-1", each, service=service, metric=metric,
+                       unit=unit),
+        })
+        assert costs["us"] == pytest.approx(paid_each * rate["us-east-1"],
+                                            abs=1e-12), (metric, each)
+        assert costs["eu"] == pytest.approx(paid_each * rate["eu-west-1"],
+                                            abs=1e-12), (metric, each)

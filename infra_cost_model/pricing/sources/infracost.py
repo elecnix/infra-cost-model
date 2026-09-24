@@ -556,7 +556,7 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     # CloudWatch Metrics/Alarms (#209). Custom-metric pricing is tiered
     # ($0.30 / $0.10 / $0.05 / $0.02) and comes back as multiple tiers under the
     # one usagetype. GetMetricData is a per-metric API request (excludes the
-    # GetMetricWidgetImage rows that share the family) with a 1M free tier.
+    # GetMetricWidgetImage rows that share the family) with no free tier.
     "CloudWatch-Metric-Month": {
         "service": "AmazonCloudWatch", "product_family": "Metric",
         "attribute_filters": [{"key": "usagetype", "value": "CW:MetricMonitorUsage"}],

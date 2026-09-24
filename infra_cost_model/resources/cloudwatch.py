@@ -4,8 +4,8 @@ CloudWatch Logs is a storage (leaf) node with two cost dimensions:
 - Log ingestion: $0.50 per GB ingested (the dominant term; scales with request volume)
 - Log storage: $0.03 per GB-month (retained volume, driven by retention_in_days)
 
-Actual AWS pricing includes a 5 GB per-account storage free tier. We model
-conservatively without the free tier by default.
+AWS gives the account 5 GB of ingestion and 5 GB-month of storage free each
+month, once across all regions (#342). The seed rows state both allowances.
 """
 
 from typing import Optional
@@ -78,9 +78,12 @@ class CloudWatchMetricAlarm(StorageResource):
     """Amazon CloudWatch Metric Alarm - storage node (leaf, no outgoing edges).
 
     Models the recurring CloudWatch metrics/alarms cost dimensions:
-    - Custom metrics: $0.30 per metric-month (standard resolution)
-    - Alarms: $0.10 per standard-resolution alarm-month
-    - GetMetricData: $0.00001 per metric requested (after a 1M free tier)
+    - Custom metrics: $0.30 per metric-month for the first 10,000, then less
+    - Alarms: $0.10 per standard-resolution alarm metric-month
+    - GetMetricData: $0.00001 per metric requested, with no free tier (#341)
+
+    The account gets 10 metrics and 10 alarm metrics free each month, once
+    across all regions (#342).
     """
 
     @property
@@ -176,10 +179,12 @@ def _cloudwatch_metric_cost(custom_metrics_count=0, alarms_count=0,
                             region: str) -> float:
     """Monthly cost for CloudWatch custom metrics, alarms, and GetMetricData.
 
-    - custom_metrics_count: number of custom metrics ($0.30 per metric-month)
-    - alarms_count: number of standard-resolution alarms ($0.10 per alarm-month)
+    - custom_metrics_count: number of custom metrics ($0.30 per metric-month
+      after 10 free)
+    - alarms_count: number of standard-resolution alarms ($0.10 per
+      alarm-month after 10 free)
     - get_metric_data_requests: metrics requested via GetMetricData
-      ($0.00001 each, after a 1,000,000 free tier)
+      ($0.00001 each, with no free tier)
     """
     if catalog is None:
         catalog = PricingCatalog()
