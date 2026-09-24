@@ -14,7 +14,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
-from infra_cost_model.pricing.free_tiers import ACCOUNT, free_tier_scope
+from infra_cost_model.pricing.free_tiers import (
+    ACCOUNT, SharedFreeAllowance, free_tier_scope, shared_free_allowance,
+)
 from infra_cost_model.version_requirement import require_engine
 
 
@@ -558,13 +560,15 @@ def _price_pooled_charges(catalog: PricingCatalog,
     to its usage-driven cost (per second) and to its fixed cost (per
     month), and updates ``cost`` on each charge. A pool with one charge
     keeps its cost, unless it shares an account-wide free allowance with a
-    pool in another region (#336).
+    pool in another region (#336), or its metric shares a free allowance
+    with other metrics (#338).
     """
     pools: dict[tuple, list[_CatalogCharge]] = defaultdict(list)
     for charge in charges:
         pools[charge.pool].append(charge)
 
     pool_costs = _price_account_wide_pools(catalog, pools)
+    pool_costs.update(_price_shared_allowance_pools(catalog, pools))
 
     deltas: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
     for key, members in pools.items():
@@ -605,6 +609,8 @@ def _price_account_wide_pools(catalog: PricingCatalog,
     accounts: dict[tuple, list[tuple]] = defaultdict(list)
     for key, members in pools.items():
         provider, service, _, metric, scaling = key
+        if shared_free_allowance(provider, service, metric) is not None:
+            continue  # _price_shared_allowance_pools prices it (#338).
         if (free_tier_scope(provider, service, metric) == ACCOUNT
                 and sum(c.quantity for c in members) > 0):
             accounts[(provider, service, metric, scaling)].append(key)
@@ -634,6 +640,43 @@ def _price_account_wide_pools(catalog: PricingCatalog,
                 parameters=pools[k][0].parameters,
                 include_free_tier=False,
                 period_seconds=SECONDS_PER_MONTH).total_cost
+    return costs
+
+
+def _price_shared_allowance_pools(catalog: PricingCatalog,
+                                  pools: dict[tuple, list[_CatalogCharge]]
+                                  ) -> dict[tuple, float]:
+    """Share one free allowance across several metrics (#338).
+
+    Some providers give one free allowance to several metrics of a service,
+    such as SQS standard and FIFO requests. For each such group, this
+    applies the allowance once to the total quantity of all its metrics in
+    all regions, and gives each pool a part of it in proportion to the
+    pool's quantity. Each pool pays its own metric's rate, in its own
+    region, for the rest, priced from the first paid tier. The allowance
+    comes from the pricing layer's table, which overrides the free tiers of
+    the metrics' rows. Returns the monthly cost of each pool it priced.
+    """
+    groups: dict[SharedFreeAllowance, list[tuple]] = defaultdict(list)
+    for key, members in pools.items():
+        provider, service, _, metric, _ = key
+        group = shared_free_allowance(provider, service, metric)
+        if group is not None and sum(c.quantity for c in members) > 0:
+            groups[group].append(key)
+
+    costs: dict[tuple, float] = {}
+    for group, keys in groups.items():
+        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
+        free_fraction = min(1.0, group.allowance / sum(quantities.values()))
+        for k in keys:
+            paid = quantities[k] * (1.0 - free_fraction)
+            result = catalog.query(
+                k[0], k[1], k[2], k[3], paid,
+                parameters=pools[k][0].parameters,
+                include_free_tier=False,
+                period_seconds=SECONDS_PER_MONTH)
+            if result is not None:
+                costs[k] = result.total_cost
     return costs
 
 
