@@ -49,6 +49,7 @@ A vendor directory and its `vendor.yaml` manifest define the canonical vendor id
 
 - **Run tests:** `python3 -m pytest -q`
 - **Validate a model:** `python3 -m infra_cost_model.cli validate <file>`
+- **Build the documentation site:** `pip install -e ".[docs]"`, then `mkdocs build --strict` (or `mkdocs serve` to preview it). `docs/hooks.py` builds every page from the Markdown files at the repository root, the example models, the vendor pricing notes, and the command parser, so a change to any of them changes the site. Links between the root Markdown files use the file names, such as `DESIGN_PRINCIPLES.md`, so they work on GitHub and on the site. After a merge into `main`, `.github/workflows/docs.yml` deploys the site to GitHub Pages.
 - **Required checks:** a PR merges into `main` only after `test (3.11)`, `test (3.12)`, `test (3.13)`, `ts`, `vendor-check`, and `wheel-install` pass. A repository ruleset in the GitHub settings sets this list.
 - **Core documentation:**
   - [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md)

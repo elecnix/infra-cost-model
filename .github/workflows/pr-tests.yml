@@ -167,3 +167,22 @@ jobs:
         run: |
           cd sdk/ts
           npm test
+
+  docs:
+    # Builds the documentation site the way docs.yml does before it deploys.
+    # `--strict` turns a broken link between pages into a failure (#243).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[docs]"
+
+      - name: Build the site
+        run: mkdocs build --strict
