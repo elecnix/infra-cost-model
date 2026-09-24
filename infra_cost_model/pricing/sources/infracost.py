@@ -288,20 +288,22 @@ class InfracostClient:
         if descriptor.get("region_pair_source"):
             rows = self._region_pair_representative(
                 prices, usage_metric, region, unit_match, descriptor, now)
-            store_region = region
         elif descriptor.get("regionless_usagetype"):
             rows = self._regionless_usagetype(
                 prices, usage_metric, region, unit_match, descriptor, now)
-            store_region = region
         else:
             rows = self._one_product(prices, usage_metric, unit_match, descriptor, now)
-            store_region = query_region
 
-        rows = [dataclasses.replace(r, service=store_service, region=store_region)
-                for r in rows]
+        # Rows from the global catalogue (query_region "") are stored under the
+        # sync region too, where the engine looks for them. `store_unit` gives
+        # the rows the unit that the seed file states (#367).
+        changes = {"service": store_service, "region": region}
+        if descriptor.get("store_unit"):
+            changes["unit"] = descriptor["store_unit"]
+        rows = [dataclasses.replace(r, **changes) for r in rows]
         rows = _with_free_tier(
             rows, FREE_ALLOWANCES.get((vendor, store_service, usage_metric)))
-        with cache.replacing(vendor, store_service, store_region, usage_metric,
+        with cache.replacing(vendor, store_service, region, usage_metric,
                              "infracost"):
             for row in rows:
                 cache.upsert(row)
@@ -316,9 +318,7 @@ class InfracostClient:
         """
         excludes = descriptor.get("usagetype_exclude") or []
         kept = []
-        for p in prices:
-            if unit_match and p.get("unit") != unit_match:
-                continue
+        for p in _with_unit(prices, unit_match):
             usagetype = (p.get("attributes") or {}).get("usagetype", "")
             if any(x in usagetype for x in excludes):
                 continue
@@ -349,9 +349,7 @@ class InfracostClient:
         prefix = _region_usagetype_prefix(region)
         suffix = descriptor.get("usagetype_suffix", "-AWS-Out-Bytes")
         candidates = []
-        for p in prices:
-            if unit_match and p.get("unit") != unit_match:
-                continue
+        for p in _with_unit(prices, unit_match):
             usagetype = (p.get("attributes") or {}).get("usagetype", "")
             if not usagetype.startswith(f"{prefix}-") or not usagetype.endswith(suffix):
                 continue
@@ -389,10 +387,29 @@ class InfracostClient:
         prefix = _region_usagetype_prefix(region)
         target = base if region == "us-east-1" else f"{prefix}-{base}"
         return [
-            _price_row(p, usage_metric, now) for p in prices
-            if (not unit_match or p.get("unit") == unit_match)
-            and (p.get("attributes") or {}).get("usagetype") == target
+            _price_row(p, usage_metric, now) for p in _with_unit(prices, unit_match)
+            if (p.get("attributes") or {}).get("usagetype") == target
         ]
+
+
+def _with_unit(prices: list[dict], unit_match) -> list[dict]:
+    """Keep the prices whose unit is *unit_match* (#360).
+
+    *unit_match* is one unit, a list of units, or ``None`` for any unit.
+    The Cloud Pricing API spells the unit of one product differently in
+    each region, and gives some products in two spellings at the same
+    prices. A list names the spellings in order of preference, and this
+    keeps the prices of the first spelling that *prices* have, so each tier
+    is stored once.
+    """
+    if not unit_match:
+        return prices
+    spellings = [unit_match] if isinstance(unit_match, str) else unit_match
+    present = {p.get("unit") for p in prices}
+    for unit in spellings:
+        if unit in present:
+            return [p for p in prices if p.get("unit") == unit]
+    return []
 
 
 def _price_row(p: dict, usage_metric: str, now: str):
@@ -457,15 +474,28 @@ def _require_one_product(usage_metric: str, prices: list[dict]) -> None:
 # Map each catalog usage_metric to the Infracost product query that prices it.
 # Validated against the live Cloud Pricing API; extend per service as needed.
 METRIC_DESCRIPTORS: dict[str, dict] = {
+    # Lambda (#360): the usagetype selects the product in each region, bare
+    # in us-east-1. The API spells the units differently in each region, and
+    # gives some products in two spellings at the same prices ("Requests" and
+    # "Request" in eu-west-1; "seconds", "Second" and "Lambda-GB-Second" for
+    # GB-seconds). The sync keeps the first spelling in the list that the
+    # product has, and stores the rows with the seed file's unit (#367).
     "Lambda-Request": {
         "service": "AWSLambda", "product_family": "Serverless",
-        "attribute_filters": [{"key": "group", "value": "AWS-Lambda-Requests"}],
-        "purchase_option": "on_demand", "unit": "Requests",
+        "attribute_filters": [{"key": "group", "value": "AWS-Lambda-Requests"},
+                              {"key": "usagetype", "value": "REGION_PREFIX-Request"}],
+        "unprefixed_in_us_east_1": True,
+        "purchase_option": "on_demand", "unit": ["Requests", "Request"],
+        "store_unit": "requests",
     },
     "Lambda-GB-Second": {
         "service": "AWSLambda", "product_family": "Serverless",
-        "attribute_filters": [{"key": "group", "value": "AWS-Lambda-Duration"}],
-        "purchase_option": "on_demand", "unit": "seconds",
+        "attribute_filters": [{"key": "group", "value": "AWS-Lambda-Duration"},
+                              {"key": "usagetype", "value": "REGION_PREFIX-Lambda-GB-Second"}],
+        "unprefixed_in_us_east_1": True,
+        "purchase_option": "on_demand",
+        "unit": ["Lambda-GB-Second", "seconds", "Second"],
+        "store_unit": "GB-s",
     },
     "Dynamo-WriteRequest": {
         "service": "AmazonDynamoDB", "product_family": "Amazon DynamoDB PayPerRequest Throughput",
@@ -570,10 +600,14 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "unprefixed_in_us_east_1": True,
         "unit": "GB-Mo",
     },
-    # Route53: per hosted zone per month.
+    # Route 53 (#361): per hosted zone per month, $0.50 for the first 25
+    # zones and $0.10 after. The hosted-zone product is in the global
+    # catalogue (region ""). The family "DNS Domain Names" is DNS Firewall.
     "Route53-HostedZone": {
-        "service": "AmazonRoute53", "product_family": "DNS Domain Names",
-        "unit": "Mo",
+        "service": "AmazonRoute53", "product_family": "DNS Zone",
+        "query_region": "",
+        "attribute_filters": [{"key": "usagetype", "value": "HostedZone"}],
+        "unit": "HostedZone", "store_unit": "Zones",
     },
     # S3 (#354): AWS bills PUT, COPY, POST and LIST requests as Tier 1 requests.
     "S3-PutRequest": {
@@ -640,19 +674,23 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     # ($0.30 / $0.10 / $0.05 / $0.02) and comes back as multiple tiers under the
     # one usagetype. GetMetricData is a per-metric API request (excludes the
     # GetMetricWidgetImage rows that share the family) with no free tier.
+    # The usagetypes are bare in us-east-1 and prefixed elsewhere (#359).
     "CloudWatch-Metric-Month": {
         "service": "AmazonCloudWatch", "product_family": "Metric",
-        "attribute_filters": [{"key": "usagetype", "value": "CW:MetricMonitorUsage"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-CW:MetricMonitorUsage"}],
+        "unprefixed_in_us_east_1": True,
         "unit": "Metrics",
     },
     "CloudWatch-Alarm-Month": {
         "service": "AmazonCloudWatch", "product_family": "Alarm",
-        "attribute_filters": [{"key": "usagetype", "value": "CW:AlarmMonitorUsage"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-CW:AlarmMonitorUsage"}],
+        "unprefixed_in_us_east_1": True,
         "unit": "Alarms",
     },
     "CloudWatch-GetMetricData": {
         "service": "AmazonCloudWatch", "product_family": "API Request",
-        "attribute_filters": [{"key": "usagetype", "value": "CW:GMD-Metrics"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-CW:GMD-Metrics"}],
+        "unprefixed_in_us_east_1": True,
         "unit": "Metrics",
     },
     # Inter-region data transfer (#211): priced under service "AWSDataTransfer",
