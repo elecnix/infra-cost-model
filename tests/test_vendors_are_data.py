@@ -45,6 +45,14 @@ class TestRemovedShapes:
         assert "vendor price rows" in message[0]
         assert "infra_cost_model/vendors/<id>/prices.yaml" in message[0]
 
+    def test_singular_usage_metric_is_checked_too(self):
+        model = _model({})
+        del model["nodes"]["n"]["usageMetrics"]
+        model["nodes"]["n"]["usageMetric"] = {"unit": "u", "value": 1, "shape": "free_tier"}
+        errors = validate_cost_model(model)
+        assert any(e.startswith("nodes.n.usageMetric.shape: The 'free_tier' shape was removed")
+                   for e in errors), errors
+
     @pytest.mark.parametrize("shape", REMOVED_SHAPES)
     def test_compute_refuses_a_removed_shape(self, shape):
         with pytest.raises(ValueError, match="vendor price rows"):
@@ -156,8 +164,9 @@ class TestWorkosBands:
         model["nodes"]["n"]["usageMetrics"] = {metric: {"unit": "u", "value": quantity, "fixed": True}}
         return CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()["n"]
 
-    def test_fifteen_sso_connections_are_all_in_the_first_band(self, seed_catalog):
-        assert self._cost(seed_catalog, "SSO-Connection", 15) == pytest.approx(15 * 125.0)
+    @pytest.mark.parametrize("metric", ["SSO-Connection", "SCIM-Connection"])
+    def test_fifteen_connections_are_all_in_the_first_band(self, seed_catalog, metric):
+        assert self._cost(seed_catalog, metric, 15) == pytest.approx(15 * 125.0)
 
     def test_the_sixteenth_connection_is_in_the_second_band(self, seed_catalog):
         assert self._cost(seed_catalog, "SSO-Connection", 16) == pytest.approx(15 * 125.0 + 100.0)
