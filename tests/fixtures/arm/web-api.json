@@ -1,0 +1,101 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {"type": "string", "defaultValue": "eastus"},
+    "apimName": {"type": "string", "defaultValue": "apim-orders"}
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ApiManagement/service",
+      "apiVersion": "2022-08-01",
+      "name": "[parameters('apimName')]",
+      "location": "[parameters('location')]",
+      "sku": {"name": "Consumption", "capacity": 0},
+      "properties": {"publisherName": "Orders Team", "publisherEmail": "orders@example.com"},
+      "resources": [
+        {
+          "type": "apis",
+          "apiVersion": "2022-08-01",
+          "name": "orders",
+          "dependsOn": ["[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"],
+          "properties": {"path": "orders", "protocols": ["https"]}
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2022-09-01",
+      "name": "plan-orders",
+      "location": "[parameters('location')]",
+      "sku": {"name": "Y1", "tier": "Dynamic"}
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2022-09-01",
+      "name": "func-orders",
+      "kind": "functionapp",
+      "location": "[parameters('location')]",
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', 'plan-orders')]",
+        "siteConfig": {
+          "appSettings": [
+            {"name": "FUNCTIONS_WORKER_RUNTIME", "value": "python"},
+            {"name": "FUNCTIONS_EXTENSION_VERSION", "value": "~4"}
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/slots",
+      "apiVersion": "2022-09-01",
+      "name": "func-orders/staging",
+      "location": "[parameters('location')]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "apiVersion": "2023-04-15",
+      "name": "cosmos-orders",
+      "kind": "GlobalDocumentDB",
+      "location": "eastus",
+      "properties": {
+        "databaseAccountOfferType": "Standard",
+        "consistencyPolicy": {"defaultConsistencyLevel": "Session"},
+        "locations": [{"locationName": "eastus", "failoverPriority": 0}]
+      },
+      "resources": [
+        {
+          "type": "sqlDatabases",
+          "apiVersion": "2023-04-15",
+          "name": "orders",
+          "properties": {"resource": {"id": "orders"}}
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "storders",
+      "kind": "StorageV2",
+      "location": "[parameters('location')]",
+      "sku": {"name": "Standard_LRS"},
+      "properties": {"accessTier": "Hot"}
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-01-01",
+      "name": "storders/default",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2023-05-01",
+      "name": "oai-orders",
+      "kind": "OpenAI",
+      "location": "[parameters('location')]",
+      "sku": {"name": "S0"},
+      "properties": {}
+    }
+  ]
+}
