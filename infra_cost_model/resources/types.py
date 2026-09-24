@@ -67,6 +67,19 @@ class ResourceType(ABC):
         """
         return {}
 
+    @property
+    def catalog_services(self) -> dict[str, str]:
+        """Map catalog usage_metric names to the service whose rows price them.
+
+        Empty by default: the engine prices every metric under the node's
+        own service. A handler overrides this when the provider bills a
+        quantity under another service. S3 egress to the internet, for
+        example, is billed as ``AWSDataTransfer`` data transfer out, so it
+        shares the account's free allowance and rate tiers with every other
+        node that sends data out (#332).
+        """
+        return {}
+
     def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
         """Derive catalog quantities that depend on more than one usage metric.
 

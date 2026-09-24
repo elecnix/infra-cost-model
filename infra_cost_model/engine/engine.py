@@ -1046,7 +1046,13 @@ class CostAggregator:
 
         Each priced quantity is also kept as a charge, so that ``aggregate``
         can apply the tiers to the account's total (#294).
+
+        When the node's handler bills ``metric`` under another service, such
+        as S3 egress under ``AWSDataTransfer``, the query and the pool use
+        that service. The charge then shares one pool with the other nodes
+        that pay for the same metric (#332).
         """
+        node = self._node_for_metric(node, metric)
         result = self.catalog.query(
             node.get("provider"), node.get("service", ""), node.get("region"),
             metric, quantity, parameters=self.parameters,
@@ -1063,6 +1069,19 @@ class CostAggregator:
                 parameters=self.parameters,
             ))
         return result
+
+    def _node_for_metric(self, node: dict, metric: str) -> dict:
+        """The node as the catalog sees it when it prices ``metric``: with
+        the service the handler names for that metric, if any (#332)."""
+        from infra_cost_model.resources.registry import ResourceRegistry
+
+        resource_address = node.get("resourceAddress") or self._pricing_address
+        if not resource_address:
+            return node
+        service = ResourceRegistry.resolve_catalog_service(resource_address, metric)
+        if service is None or service == node.get("service"):
+            return node
+        return {**node, "service": service}
 
     def _resolve_catalog_metric(self, address: str, node: dict, logical_metric: str):
         """Translate a node's logical usageMetrics key to a catalog usage_metric

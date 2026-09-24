@@ -2,6 +2,8 @@
 
 CloudFront is the CDN/routing node with tiered data transfer pricing.
 Pricing: HTTP $0.0075/10K, HTTPS $0.0100/10K, Data out $0.085/GB.
+The always-free tier covers the first 10 million HTTP or HTTPS requests and
+the first 1 TB of data transfer out each month (#333).
 CloudFront doesn't charge per origin fetch, and data transfer from an AWS
 origin is free (#325).
 """
@@ -97,14 +99,13 @@ def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, *, catalog=None
     if catalog is None:
         catalog = PricingCatalog()
     total = 0.0
-    http_req = requests * (1.0 - https_ratio)
-    https_req = requests * https_ratio
-    if http_req > 0:
-        r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-HTTP-Request", http_req)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    if https_req > 0:
-        r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-HTTPS-Request", https_req)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
+    # The free 10 million requests cover HTTP and HTTPS together (#333), so
+    # each protocol pays its share of the price of all the requests.
+    for metric, share in (("CloudFront-HTTP-Request", 1.0 - https_ratio),
+                          ("CloudFront-HTTPS-Request", https_ratio)):
+        if requests > 0 and share > 0:
+            r = catalog.query(provider, "AmazonCloudFront", region, metric, requests)
+            if r and hasattr(r, "total_cost"): total += r.total_cost * share
     if data_out_gb > 0:
         r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-DataTransfer", data_out_gb)
         if r and hasattr(r, "total_cost"): total += r.total_cost

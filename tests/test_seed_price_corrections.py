@@ -1,8 +1,9 @@
 """Seed rows match AWS's published us-east-1 on-demand prices (#311).
 
 Later fixes: SQS has no storage charge (#324), CloudFront has no charge per
-origin fetch (#325), scheduled rules cost nothing (#326), and the first
-100 GB of data transfer out each month are free (#327).
+origin fetch (#325), scheduled rules cost nothing (#326), the first 100 GB
+of data transfer out each month are free (#327), S3 egress shares those
+data transfer rows (#332), and CloudFront has an always-free tier (#333).
 
 Each case prices a quantity from the seed catalog and compares it with the
 price on the AWS page that the row's ``source`` field names.
@@ -15,10 +16,12 @@ import warnings
 import pytest
 
 from infra_cost_model.engine import CostEngine
+from infra_cost_model.engine.engine import UnpricedMetricWarning
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
 from infra_cost_model.resources.apigw import _apigw_egress_cost
 from infra_cost_model.resources.cloudfront import CloudFrontDistribution, _cloudfront_cost
 from infra_cost_model.resources.rds import _rds_cost
+from infra_cost_model.resources.s3 import S3Bucket, _s3_cost
 from infra_cost_model.resources.sqs import _sqs_cost
 
 DYNAMODB = "https://aws.amazon.com/dynamodb/pricing/on-demand/"
@@ -27,6 +30,7 @@ EVENTBRIDGE = "https://aws.amazon.com/eventbridge/pricing/"
 LAMBDA = "https://aws.amazon.com/lambda/pricing/"
 SNS = "https://aws.amazon.com/sns/pricing/"
 EC2_DATA_TRANSFER = "https://aws.amazon.com/ec2/pricing/on-demand/"
+CLOUDFRONT = "https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/"
 
 M = 1_000_000
 TB = 1024  # GB, as the AWS price list counts a terabyte
@@ -127,6 +131,9 @@ REMOVED = [
     # AWS origin is free (#325).
     ("AmazonCloudFront", "CloudFront-OriginRequest-S3"),
     ("AmazonCloudFront", "CloudFront-OriginRequest-Custom"),
+    # S3 egress to the internet is data transfer out, priced by the
+    # account-wide DataTransfer-Internet-Out-GB rows (#332).
+    ("AmazonS3", "S3-DataTransfer"),
 ]
 
 
@@ -192,3 +199,145 @@ def test_two_egress_nodes_share_one_free_100_gb(seed_catalog):
     assert sum(costs.values()) == pytest.approx((120 - FREE_GB) * 0.09)
     assert costs["data_transfer.a"] == pytest.approx(0.90)
     assert costs["data_transfer.b"] == pytest.approx(0.90)
+
+
+# S3 egress to the internet (#332). The S3 page lists the first 100 GB a
+# month free "aggregated across all AWS Services and Regions", and its rate
+# tiers use the account's total data transfer out across AWS services.
+
+@pytest.mark.parametrize("gb, cost", [
+    (100, 0.0),
+    (150, (150 - FREE_GB) * 0.09),
+    (15_000, (10 * TB - FREE_GB) * 0.09 + (15_000 - 10 * TB) * 0.085),
+])
+def test_s3_egress_is_priced_as_data_transfer_out(seed_catalog, gb, cost):
+    data_transfer = seed_catalog.query("aws", "AWSDataTransfer", "us-east-1",
+                                       "DataTransfer-Internet-Out-GB", gb)
+    egress = _s3_cost(data_out_gb=gb, catalog=seed_catalog, region="us-east-1")
+    assert egress == pytest.approx(data_transfer.total_cost)
+    assert egress == pytest.approx(cost)
+
+
+def test_s3_handler_maps_data_out_to_the_data_transfer_rows():
+    bucket = S3Bucket()
+    assert bucket.catalog_metrics["dataOutGb"] == "DataTransfer-Internet-Out-GB"
+    assert bucket.catalog_services == {"DataTransfer-Internet-Out-GB": "AWSDataTransfer"}
+
+
+def egress_node(address: str, gb: float, metric: str = "dataOutGb") -> dict:
+    if address.startswith("aws_s3_bucket."):
+        service, node_type = "AmazonS3", "storage"
+    else:
+        service, node_type, metric = "AWSDataTransfer", "external", "internetOutGb"
+    return {
+        "nodeType": node_type,
+        "resourceAddress": address,
+        "provider": "aws",
+        "service": service,
+        "region": "us-east-1",
+        "usageMetrics": {metric: {"unit": "GB", "value": gb}},
+    }
+
+
+def compute_nodes(seed_catalog, nodes: dict[str, dict]) -> tuple[dict, list]:
+    addresses = list(nodes)
+    model = {
+        "version": "1.0",
+        "workflow": {"name": "egress", "entry": addresses[0],
+                     "frequency": {"unit": "perMonth", "value": 1}},
+        "nodes": nodes,
+        "edges": [{"from": a, "to": b, "type": "sync", "rate": 1.0}
+                  for a, b in zip(addresses, addresses[1:])],
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        costs = CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
+    unpriced = [w.message.unpriced.metric for w in caught
+                if isinstance(w.message, UnpricedMetricWarning)]
+    return costs, unpriced
+
+
+@pytest.mark.parametrize("metric", ["dataOutGb", "S3-DataTransfer",
+                                    "DataTransfer-Internet-Out-GB"])
+@pytest.mark.parametrize("gb, cost", [(100, 0.0), (150, (150 - FREE_GB) * 0.09)])
+def test_s3_node_egress_gets_the_free_100_gb(seed_catalog, metric, gb, cost):
+    """The logical name, the old catalog name and the data transfer name
+    all price from the data transfer rows."""
+    address = "aws_s3_bucket.assets"
+    costs, unpriced = compute_nodes(seed_catalog,
+                                    {address: egress_node(address, gb, metric)})
+    assert unpriced == []
+    assert costs[address] == pytest.approx(cost, abs=1e-9)
+
+
+def test_s3_and_api_egress_share_one_free_100_gb(seed_catalog):
+    """An S3 bucket and an HTTP API's egress node each send 60 GB out.
+    AWS sums them, so they pay for 20 GB and split the $1.80."""
+    s3, api = "aws_s3_bucket.assets", "data_transfer.api_egress"
+    costs, unpriced = compute_nodes(seed_catalog, {
+        s3: egress_node(s3, 60), api: egress_node(api, 60)})
+    assert unpriced == []
+    assert costs[s3] + costs[api] == pytest.approx((120 - FREE_GB) * 0.09)
+    assert costs[s3] == pytest.approx(0.90)
+    assert costs[api] == pytest.approx(0.90)
+
+
+def test_s3_and_api_egress_share_the_rate_tiers(seed_catalog):
+    """Together they cross the 10 TB tier that neither reaches alone."""
+    s3, api = "aws_s3_bucket.assets", "data_transfer.api_egress"
+    costs, _ = compute_nodes(seed_catalog, {
+        s3: egress_node(s3, 8 * TB), api: egress_node(api, 8 * TB)})
+    expected = (10 * TB - FREE_GB) * 0.09 + 6 * TB * 0.085
+    assert costs[s3] + costs[api] == pytest.approx(expected)
+
+
+# CloudFront always-free tier (#333): 1 TB of data transfer out and
+# 10,000,000 HTTP or HTTPS requests a month.
+
+CLOUDFRONT_DOCUMENTED = [
+    ("CloudFront-HTTPS-Request", 5 * M, 0.0),
+    ("CloudFront-HTTPS-Request", 10 * M, 0.0),
+    # $0.0100 per 10,000 HTTPS requests after the free 10 million
+    ("CloudFront-HTTPS-Request", 12 * M, 2 * M * 0.0100 / 10_000),
+    ("CloudFront-HTTP-Request", 5 * M, 0.0),
+    ("CloudFront-HTTP-Request", 10 * M, 0.0),
+    # $0.0075 per 10,000 HTTP requests after the free 10 million
+    ("CloudFront-HTTP-Request", 12 * M, 2 * M * 0.0075 / 10_000),
+    ("CloudFront-DataTransfer", 500, 0.0),
+    ("CloudFront-DataTransfer", TB, 0.0),
+    # United States, Mexico and Canada: next 9 TB at $0.085, next 40 TB at $0.080
+    ("CloudFront-DataTransfer", 2 * TB, TB * 0.085),
+    ("CloudFront-DataTransfer", 20 * TB, 9 * TB * 0.085 + 10 * TB * 0.080),
+]
+
+
+@pytest.mark.parametrize("metric, quantity, cost", CLOUDFRONT_DOCUMENTED,
+                         ids=[f"{m}-{q:g}" for m, q, _ in CLOUDFRONT_DOCUMENTED])
+def test_cloudfront_row_matches_the_documented_price(seed_catalog, metric, quantity, cost):
+    result = seed_catalog.query("aws", "AmazonCloudFront", "global", metric, quantity)
+    assert result is not None
+    assert result.total_cost == pytest.approx(cost, rel=1e-6, abs=1e-9)
+
+
+@pytest.mark.parametrize("metric", sorted({m for m, _, _ in CLOUDFRONT_DOCUMENTED}))
+def test_cloudfront_rows_cite_the_aws_page(metric):
+    rows = seed_rows("AmazonCloudFront", metric)
+    assert rows
+    for row in rows:
+        assert row["source"] == CLOUDFRONT
+        assert row["effective_date"] == "2026-09-23"
+
+
+def test_cloudfront_issue_example_costs_nothing(seed_catalog):
+    """5 million HTTPS requests and 500 GB out fit in the free tier."""
+    cost = _cloudfront_cost(requests=5 * M, data_out_gb=500,
+                            catalog=seed_catalog, region="global")
+    assert cost == pytest.approx(0.0, abs=1e-9)
+
+
+def test_cloudfront_http_and_https_share_the_free_10_million(seed_catalog):
+    """8 million HTTP and 8 million HTTPS requests: 6 million are over the
+    free 10 million, split in proportion between the two prices."""
+    cost = _cloudfront_cost(requests=16 * M, https_ratio=0.5,
+                            catalog=seed_catalog, region="global")
+    assert cost == pytest.approx(3 * M * 0.0075 / 10_000 + 3 * M * 0.0100 / 10_000)
