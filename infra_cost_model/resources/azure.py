@@ -1,16 +1,18 @@
-"""Azure resource model stubs.
+"""Azure resource handlers.
 
-Per DP#6, the cost model supports multi-cloud. These stubs provide the
-handler interface for Azure resources with the same from_address / extract
-pattern used for AWS. Full pricing implementations will be added as the
-model is validated against real Azure pricing data.
+Per DP#6, the cost model supports multi-cloud. These handlers use the same
+from_address / extract pattern as the AWS ones. Their catalog metrics name
+the Azure rows of the seed file, which prices one region, eastus (#363).
 """
 
+import math
 import re
 import warnings
 from typing import Any, Optional
 
-from .types import ComputeResource, StorageResource, RoutingResource, ResourceExtract
+from .types import (
+    ComputeResource, DerivedCatalogUsage, StorageResource, RoutingResource, ResourceExtract,
+)
 
 
 # Keys that `extract_resources_from_arm` adds to each ARM resource before it
@@ -95,6 +97,17 @@ def _arm_sku_name(resource: dict) -> Optional[str]:
     return (resource.get("sku") or {}).get("name")
 
 
+def is_function_app_kind(kind: Any) -> bool:
+    """Whether a ``Microsoft.Web/sites`` ``kind`` names a Function App (#364).
+
+    The kind is a comma-separated list, such as ``functionapp,linux``. A web
+    app has ``app`` or ``app,linux``. A site with no kind is a web app.
+    """
+    if not isinstance(kind, str):
+        return False
+    return "functionapp" in (part.strip().lower() for part in kind.split(","))
+
+
 class AzureFunction(ComputeResource):
     """Azure Function App - compute node (equivalent to AWS Lambda)."""
 
@@ -102,10 +115,35 @@ class AzureFunction(ComputeResource):
     def valid_metrics(self) -> list[str]:
         return ["invocations", "avgDurationMs", "memoryMb"]
 
+    def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+        """Derive executions and GB-seconds, the quantities the consumption plan bills.
+
+        Azure rounds memory up to the next 128 MB and bills at least 100 ms
+        for each execution.
+        """
+        inputs = ("invocations", "avgDurationMs", "memoryMb")
+        if not all(name in usage for name in inputs):
+            return None
+        invocations = usage["invocations"]
+        memory_gb = math.ceil(usage["memoryMb"] / 128) * 128 / 1024
+        seconds = max(usage["avgDurationMs"], 100.0) / 1000
+        return DerivedCatalogUsage(
+            consumed=frozenset(inputs),
+            quantities={
+                "AzureFunctions-Execution": invocations,
+                "AzureFunctions-GB-Second": invocations * memory_gb * seconds,
+            },
+        )
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureFunction"]:
+        # `Microsoft.Web/sites` also covers web apps. The address has no
+        # kind, so `extract_arm` and `extract_pulumi` check it (#364).
+        # Terraform names web apps with other types, such as
+        # `azurerm_linux_web_app`, which don't match.
         if (resource_address.startswith("azurerm_function_app.") or
                 resource_address.startswith("azurerm_linux_function_app.") or
+                resource_address.startswith("azurerm_windows_function_app.") or
                 "azure:appservice:FunctionApp:" in resource_address or
                 matches_arm_type(resource_address, "Microsoft.Web/sites")):
             return cls()
@@ -129,6 +167,11 @@ class AzureFunction(ComputeResource):
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
+        # An azure-native `WebApp` is a Function App or a web app by its kind.
+        kind = inputs.get("kind", (resource.get("outputs") or {}).get("kind"))
+        if (resource.get("type") == "azure-native:web:WebApp"
+                and not is_function_app_kind(kind)):
+            raise NotImplementedError("a web app is not a Function App")
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="compute",
@@ -159,6 +202,9 @@ class AzureFunction(ComputeResource):
 
     @classmethod
     def extract_arm(cls, resource: dict) -> ResourceExtract:
+        if not is_function_app_kind(resource.get("kind")):
+            # A web app: the registry reports it as unsupported.
+            raise NotImplementedError("a web app is not a Function App")
         properties = _arm_properties(resource)
         app_settings = {
             setting.get("name"): setting.get("value")
@@ -182,7 +228,15 @@ class CosmosDB(StorageResource):
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["readRequests", "writeRequests", "storageGb"]
+        return ["readRequests", "writeRequests", "requestUnits", "storageGb"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # Serverless accounts bill request units, and a read or a write costs a
+        # number of them that depends on the item. So the catalog prices
+        # `requestUnits`, and has no price for a read or a write.
+        return {"requestUnits": "CosmosDB-Serverless-RU",
+                "storageGb": "CosmosDB-Storage-GB-Month"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CosmosDB"]:
@@ -263,6 +317,10 @@ class APIManagement(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["requests", "dataOutGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"requests": "APIM-Consumption-Call"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["APIManagement"]:
         if (resource_address.startswith("azurerm_api_management.") or
@@ -338,6 +396,12 @@ class AzureOpenAI(ComputeResource):
     def valid_metrics(self) -> list[str]:
         return ["invocations", "inputTokens", "outputTokens"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # The seed prices GPT-4o (2024-08-06) in a Global Standard deployment.
+        return {"inputTokens": "AzureOpenAI-Input-Token",
+                "outputTokens": "AzureOpenAI-Output-Token"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureOpenAI"]:
         if (resource_address.startswith("azurerm_cognitive_account.") or
@@ -412,6 +476,13 @@ class AzureBlobStorage(StorageResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["storageGb", "readRequests", "writeRequests", "dataOutGb"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # Hot tier with LRS, the defaults of azurerm_storage_account.
+        return {"storageGb": "Blob-Hot-LRS-GB-Month",
+                "readRequests": "Blob-Hot-Read-Operation",
+                "writeRequests": "Blob-Hot-LRS-Write-Operation"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureBlobStorage"]:
