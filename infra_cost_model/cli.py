@@ -480,11 +480,11 @@ def cmd_sync_pricing(args: argparse.Namespace) -> int:
     back to the bundled seed fixtures and warns.
     """
     from infra_cost_model.pricing.sources.infracost import (
-        sync_pricing_catalog, _REGION_PREFIX,
+        sync_pricing_catalog, sync_regions,
     )
 
     services = args.services if args.services else None
-    regions = args.regions if args.regions else sorted(_REGION_PREFIX)
+    regions = args.regions if args.regions else sync_regions(args.vendor)
 
     try:
         count, source = sync_pricing_catalog(

@@ -1689,6 +1689,21 @@ def test_cli_sync_pricing_defaults_to_all_regions(monkeypatch):
     assert set(captured["regions"]) == set(ic._REGION_PREFIX)
 
 
+@pytest.mark.parametrize("vendor,region", [("azure", "eastus"), ("gcp", "us-central1")])
+def test_cli_sync_pricing_defaults_to_the_vendor_regions(monkeypatch, vendor, region):
+    """`sync-pricing --vendor azure` syncs Azure regions, not AWS ones (#226)."""
+    import infra_cost_model.pricing.sources.infracost as ic
+    captured = {}
+    monkeypatch.setattr(ic, "sync_pricing_catalog",
+                        lambda vendor="aws", services=None, regions=None:
+                            captured.update(vendor=vendor, regions=regions) or (1, "infracost"))
+    rc = main(["sync-pricing", "--vendor", vendor])
+    assert rc == 0
+    assert captured["vendor"] == vendor
+    assert captured["regions"] == ic.sync_regions(vendor)
+    assert region in captured["regions"]
+
+
 def test_cli_sync_pricing_explicit_regions(monkeypatch):
     import infra_cost_model.pricing.sources.infracost as ic
     captured = {}
