@@ -31,7 +31,8 @@ class CloudFunction(ComputeResource):
         """Derive invocations, GB-seconds and GHz-seconds for a 1st gen function.
 
         GCP bills the memory size that holds ``memoryMb`` and the CPU clock
-        that comes with it, for the duration rounded up to the next 100 ms.
+        that comes with it, for the duration rounded up to the next 100 ms,
+        and at least 100 ms.
         """
         inputs = ("invocations", "avgDurationMs", "memoryMb")
         if not all(name in usage for name in inputs):
@@ -40,7 +41,8 @@ class CloudFunction(ComputeResource):
         memory_mb, ghz = next(
             ((mb, ghz) for mb, ghz in _FUNCTION_CPU_GHZ if usage["memoryMb"] <= mb),
             _FUNCTION_CPU_GHZ[-1])
-        seconds = math.ceil(usage["avgDurationMs"] / 100) / 10
+        # Each invocation bills at least one 100 ms increment.
+        seconds = max(math.ceil(usage["avgDurationMs"] / 100), 1) / 10
         return DerivedCatalogUsage(
             consumed=frozenset(inputs),
             quantities={

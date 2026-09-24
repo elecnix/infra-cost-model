@@ -405,10 +405,11 @@ def test_cloud_function_derives_gb_and_ghz_seconds(memory_mb, gb, ghz):
     }
 
 
-def test_cloud_function_rounds_duration_up_to_100_ms():
+@pytest.mark.parametrize("duration_ms,seconds", [(101.0, 0.2), (0.0, 0.1), (1.0, 0.1)])
+def test_cloud_function_rounds_duration_up_to_100_ms(duration_ms, seconds):
     derived = CloudFunction().derive_catalog_usage(
-        {"invocations": 1.0, "avgDurationMs": 101.0, "memoryMb": 1024.0})
-    assert derived.quantities["CloudFunctions-GB-Second"] == pytest.approx(0.2)
+        {"invocations": 1.0, "avgDurationMs": duration_ms, "memoryMb": 1024.0})
+    assert derived.quantities["CloudFunctions-GB-Second"] == pytest.approx(seconds)
 
 
 def _synced_catalog(tmp_path, metrics_by_region):
