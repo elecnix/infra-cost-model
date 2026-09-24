@@ -4,6 +4,8 @@ Later fixes: SQS has no storage charge (#324), CloudFront has no charge per
 origin fetch (#325), scheduled rules cost nothing (#326), the first 100 GB
 of data transfer out each month are free (#327), S3 egress shares those
 data transfer rows (#332), and CloudFront has an always-free tier (#333).
+CloudWatch charges for GetMetricData from the first metric (#341) and gives
+free metrics, alarms and log data each month (#342).
 
 Each case prices a quantity from the seed catalog and compares it with the
 price on the AWS page that the row's ``source`` field names.
@@ -20,6 +22,8 @@ from infra_cost_model.engine.engine import UnpricedMetricWarning
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
 from infra_cost_model.resources.apigw import _apigw_egress_cost
 from infra_cost_model.resources.cloudfront import CloudFrontDistribution, _cloudfront_cost
+from infra_cost_model.resources.cloudwatch import _cloudwatch_log_cost, _cloudwatch_metric_cost
+from infra_cost_model.resources.kms import _kms_cost
 from infra_cost_model.resources.rds import _rds_cost
 from infra_cost_model.resources.s3 import S3Bucket, _s3_cost
 from infra_cost_model.resources.sqs import _sqs_cost
@@ -31,6 +35,8 @@ LAMBDA = "https://aws.amazon.com/lambda/pricing/"
 SNS = "https://aws.amazon.com/sns/pricing/"
 EC2_DATA_TRANSFER = "https://aws.amazon.com/ec2/pricing/on-demand/"
 CLOUDFRONT = "https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/"
+CLOUDWATCH = "https://aws.amazon.com/cloudwatch/pricing/"
+KMS = "https://aws.amazon.com/kms/pricing/"
 
 M = 1_000_000
 TB = 1024  # GB, as the AWS price list counts a terabyte
@@ -70,6 +76,36 @@ DOCUMENTED = [
     ("AWSDataTransfer", "DataTransfer-Internet-Out-GB", 200 * TB,
      (10 * TB - FREE_GB) * 0.09 + 40 * TB * 0.085 + 100 * TB * 0.07 + 50 * TB * 0.05,
      EC2_DATA_TRANSFER),
+    # GetMetricData: $0.01 per 1,000 metrics, from the first metric (#341)
+    ("AmazonCloudWatch", "CloudWatch-GetMetricData", 500_000, 5.00, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-GetMetricData", 2 * M, 20.00, CLOUDWATCH),
+    # Custom or detailed metrics: the first 10 free (#342), then $0.30 up to
+    # 10,000, $0.10 up to 250,000, $0.05 up to 1,000,000 and $0.02 above
+    ("AmazonCloudWatch", "CloudWatch-Metric-Month", 5, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Metric-Month", 10, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Metric-Month", 11, 0.30, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Metric-Month", 20_000,
+     9_990 * 0.30 + 10_000 * 0.10, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Metric-Month", 2 * M,
+     9_990 * 0.30 + 240_000 * 0.10 + 750_000 * 0.05 + M * 0.02, CLOUDWATCH),
+    # Standard-resolution alarm metrics: the first 10 free, then $0.10
+    ("AmazonCloudWatch", "CloudWatch-Alarm-Month", 5, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Alarm-Month", 10, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Alarm-Month", 25, 1.50, CLOUDWATCH),
+    # Logs: the first 5 GB ingested and 5 GB stored free, then $0.50 per GB
+    # ingested and $0.03 per GB-month stored
+    ("AmazonCloudWatch", "CloudWatch-Log-Ingestion", 3, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Log-Ingestion", 5, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Log-Ingestion", 15, 5.00, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Log-Storage", 3, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Log-Storage", 5, 0.0, CLOUDWATCH),
+    ("AmazonCloudWatch", "CloudWatch-Log-Storage", 105, 3.00, CLOUDWATCH),
+    # KMS: $1 a key-month; the first 20,000 requests free, then $0.03 per
+    # 10,000 (#343)
+    ("AWSKMS", "KMS-Key-Month", 2, 2.00, KMS),
+    ("AWSKMS", "KMS-API-Request", 10_000, 0.0, KMS),
+    ("AWSKMS", "KMS-API-Request", 20_000, 0.0, KMS),
+    ("AWSKMS", "KMS-API-Request", 30_000, 0.03, KMS),
 ]
 
 
@@ -341,3 +377,34 @@ def test_cloudfront_http_and_https_share_the_free_10_million(seed_catalog):
     cost = _cloudfront_cost(requests=16 * M, https_ratio=0.5,
                             catalog=seed_catalog, region="global")
     assert cost == pytest.approx(3 * M * 0.0075 / 10_000 + 3 * M * 0.0100 / 10_000)
+
+
+def test_get_metric_data_has_no_free_row():
+    """AWS charges for GetMetricData from the first metric (#341)."""
+    rows = seed_rows("AmazonCloudWatch", "CloudWatch-GetMetricData")
+    assert [r["price_usd"] for r in rows] == [0.00001]
+    assert rows[0]["start_usage_amount"] == 0
+
+
+def test_cloudwatch_issue_341_example(seed_catalog):
+    """500,000 GetMetricData metrics a month cost $5.00, not $0."""
+    cost = _cloudwatch_metric_cost(get_metric_data_requests=500_000,
+                                   catalog=seed_catalog, region="us-east-1")
+    assert cost == pytest.approx(5.00)
+
+
+def test_cloudwatch_issue_342_example(seed_catalog):
+    """10 custom metrics and 5 GB of log ingestion fit in the free tier."""
+    metrics = _cloudwatch_metric_cost(custom_metrics_count=10,
+                                      catalog=seed_catalog, region="us-east-1")
+    logs = _cloudwatch_log_cost(ingested_gb=5, catalog=seed_catalog,
+                                region="us-east-1")
+    assert metrics == pytest.approx(0.0, abs=1e-9)
+    assert logs == pytest.approx(0.0, abs=1e-9)
+
+
+def test_kms_cost_uses_the_seed_rows(seed_catalog):
+    """2 keys and 30,000 requests: $2.00 + 10,000 paid requests at $0.03."""
+    cost = _kms_cost(keys_count=2, api_requests=30_000, catalog=seed_catalog,
+                     region="us-east-1")
+    assert cost == pytest.approx(2.03)

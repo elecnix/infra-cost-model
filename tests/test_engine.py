@@ -2840,5 +2840,6 @@ class TestCatalogMetricMappingTiered:
             }}
             derived = {"cw": DerivedUsage("cw", 1.0)}
             costs = CostAggregator(nodes, derived, [], catalog).aggregate()
-            # 1M free + 1M x $0.00001 = $10.00, via getMetricDataRequests -> CloudWatch-GetMetricData
-            assert costs["cw"] == pytest.approx(10.0)
+            # 2M x $0.00001 = $20.00 with no free tier (#341), via
+            # getMetricDataRequests -> CloudWatch-GetMetricData
+            assert costs["cw"] == pytest.approx(20.0)

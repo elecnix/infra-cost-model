@@ -110,7 +110,12 @@ def test_separate_allowances_stay_separate():
     for service, metric in [("AWSLambda", "Lambda-Request"),
                             ("AWSLambda", "Lambda-GB-Second"),
                             ("AmazonSNS", "SNS-Publish"),
-                            ("AmazonSNS", "SNS-Delivery-HTTP")]:
+                            ("AmazonSNS", "SNS-Delivery-HTTP"),
+                            ("AWSKMS", "KMS-API-Request"),
+                            ("AmazonCloudWatch", "CloudWatch-Metric-Month"),
+                            ("AmazonCloudWatch", "CloudWatch-Alarm-Month"),
+                            ("AmazonCloudWatch", "CloudWatch-Log-Ingestion"),
+                            ("AmazonCloudWatch", "CloudWatch-Log-Storage")]:
         assert shared_free_allowance("aws", service, metric) is None, metric
 
 

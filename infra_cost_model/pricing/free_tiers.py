@@ -37,6 +37,18 @@ ACCOUNT_WIDE_FREE_TIERS: frozenset[tuple[str, str, str]] = frozenset({
     # 1,000,000 publishes and 100,000 HTTP deliveries a month.
     ("aws", "AmazonSNS", "SNS-Publish"),
     ("aws", "AmazonSNS", "SNS-Delivery-HTTP"),
+    # 20,000 requests a month "calculated across all Regions"
+    # (https://aws.amazon.com/kms/pricing/). The AWS price list states it as
+    # "Global-KMS-Requests", location "Any" (#343).
+    ("aws", "AWSKMS", "KMS-API-Request"),
+    # https://aws.amazon.com/cloudwatch/pricing/: 10 custom or detailed
+    # monitoring metrics, 10 standard-resolution alarm metrics, and 5 GB each
+    # of log ingestion and log storage a month. The AWS price list states
+    # each as a "Global-" product with location "Any" (#342).
+    ("aws", "AmazonCloudWatch", "CloudWatch-Metric-Month"),
+    ("aws", "AmazonCloudWatch", "CloudWatch-Alarm-Month"),
+    ("aws", "AmazonCloudWatch", "CloudWatch-Log-Ingestion"),
+    ("aws", "AmazonCloudWatch", "CloudWatch-Log-Storage"),
 })
 
 
