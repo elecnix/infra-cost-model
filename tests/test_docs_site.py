@@ -104,3 +104,19 @@ def test_empty_example_falls_back_to_file_name(tmp_path):
     path = tmp_path / "empty.yaml"
     path.write_text("")
     assert hooks.example_page(path).splitlines()[0] == "# empty"
+
+
+def test_navigation_lists_every_page():
+    hooks = _load_hooks()
+
+    def uris(entries):
+        for entry in entries:
+            for value in entry.values():
+                if isinstance(value, list):
+                    yield from uris(value)
+                else:
+                    yield value
+
+    assert sorted(uris(hooks.navigation(REPO_ROOT))) == sorted(
+        hooks.generated_pages(REPO_ROOT)
+    )

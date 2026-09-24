@@ -67,16 +67,17 @@ def cli_reference_markdown() -> str:
 
 
 def _example_title(text: str, stem: str) -> str:
-    first = text.splitlines()[0] if text else ""
+    first = next(iter(text.splitlines()), "")
     if not first.startswith("#"):
         return stem
     title = first.lstrip("#").strip()
     return title.removeprefix("Example:").strip() or stem
 
 
-def example_page(path: Path) -> str:
+def example_page(path: Path, text: str | None = None) -> str:
     """Return the page for one example model."""
-    text = path.read_text()
+    if text is None:
+        text = path.read_text()
     rel = f"examples/{path.name}"
     return "\n".join([
         f"# {_example_title(text, path.stem)}",
@@ -97,31 +98,42 @@ def example_page(path: Path) -> str:
     ])
 
 
+def _examples(root: Path) -> dict[str, tuple[Path, str]]:
+    """Return each example model's page path, file and text."""
+    return {
+        f"examples/{path.stem}.md": (path, path.read_text())
+        for path in sorted((root / "examples").glob("*.yaml"))
+    }
+
+
+def _vendor_notes(root: Path) -> dict[str, Path]:
+    """Return each vendor pricing note's page path and file."""
+    notes = (root / "infra_cost_model" / "vendors").glob("*/pricing-notes.md")
+    return {f"vendors/{path.parent.name}.md": path for path in sorted(notes)}
+
+
 def generated_pages(root: Path) -> dict[str, str]:
     """Return every page of the site, keyed by its path in the site."""
     pages = {name: (root / name).read_text() for name in ROOT_PAGES}
     pages[CONTRIBUTING_PAGE] = (root / CONTRIBUTING_PAGE).read_text()
     pages[CLI_PAGE] = cli_reference_markdown()
-    for path in sorted((root / "examples").glob("*.yaml")):
-        pages[f"examples/{path.stem}.md"] = example_page(path)
-    for path in sorted((root / "infra_cost_model" / "vendors").glob("*/pricing-notes.md")):
-        pages[f"vendors/{path.parent.name}.md"] = path.read_text()
+    for uri, (path, text) in _examples(root).items():
+        pages[uri] = example_page(path, text)
+    for uri, path in _vendor_notes(root).items():
+        pages[uri] = path.read_text()
     return pages
 
 
 def navigation(root: Path) -> list:
-    """Return the site navigation for the pages that generated_pages returns."""
-    pages = generated_pages(root)
+    """Return the site navigation, which lists every page of generated_pages."""
     nav: list = [{title: uri} for uri, title in ROOT_PAGES.items()]
     nav.append({"Command reference": CLI_PAGE})
-    # Each example page starts with "# <title>", so its title comes from the
-    # page itself rather than from a second read of the YAML file.
     nav.append({"Examples": [
-        {pages[uri].splitlines()[0].removeprefix("# "): uri}
-        for uri in pages if uri.startswith("examples/")
+        {_example_title(text, path.stem): uri}
+        for uri, (path, text) in _examples(root).items()
     ]})
     nav.append({"Vendor pricing notes": [
-        {Path(uri).stem: uri} for uri in pages if uri.startswith("vendors/")
+        {Path(uri).stem: uri} for uri in _vendor_notes(root)
     ]})
     nav.append({"Contributing": CONTRIBUTING_PAGE})
     return nav
