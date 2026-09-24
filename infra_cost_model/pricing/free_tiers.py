@@ -15,7 +15,8 @@ fall back to the regional default.
 
 A few providers also give one free allowance to several metrics (#338). AWS
 gives 1,000,000 free SQS requests a month to standard and FIFO queues
-together. ``SHARED_FREE_ALLOWANCES`` lists such groups, for the same reason
+together, and CloudFront gives 10,000,000 free HTTP or HTTPS requests
+(#339). ``SHARED_FREE_ALLOWANCES`` lists such groups, for the same reason
 as above: live rows can't carry a field that says which metrics share an
 allowance. The AWS price list states the SQS allowance as a product of its
 own ("Global-Requests", queue type "Any"), which maps to no metric.
@@ -39,8 +40,6 @@ ACCOUNT_WIDE_FREE_TIERS: frozenset[tuple[str, str, str]] = frozenset({
 })
 
 
-
-
 @dataclass(frozen=True)
 class SharedFreeAllowance:
     """A monthly free allowance that covers several metrics of one service.
@@ -62,6 +61,14 @@ SHARED_FREE_ALLOWANCES: tuple[SharedFreeAllowance, ...] = (
         vendor="aws", service="AmazonSQS",
         metrics=frozenset({"SQS-Standard-Request", "SQS-FIFO-Request"}),
         allowance=1_000_000, unit="requests",
+    ),
+    # https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/: "10,000,000
+    # HTTP or HTTPS Requests per month" in the always-free tier (#339).
+    SharedFreeAllowance(
+        vendor="aws", service="AmazonCloudFront",
+        metrics=frozenset({"CloudFront-HTTP-Request",
+                           "CloudFront-HTTPS-Request"}),
+        allowance=10_000_000, unit="requests",
     ),
 )
 

@@ -120,11 +120,15 @@ def test_grouped_metrics_are_account_wide():
             assert free_tier_scope(group.vendor, group.service, metric) == ACCOUNT
 
 
+# The seed file prices each group's service in one region.
+SEED_REGION = {"AmazonSQS": "us-east-1", "AmazonCloudFront": "global"}
+
+
 def test_seed_rows_use_the_group_unit(seed_catalog):
     for group in SHARED_FREE_ALLOWANCES:
         for metric in group.metrics:
             tiers = seed_catalog.query(group.vendor, group.service,
-                                       "us-east-1", metric).tiers
+                                       SEED_REGION[group.service], metric).tiers
             assert {t.unit for t in tiers} == {group.unit}, metric
 
 
@@ -231,3 +235,52 @@ def test_two_workflows_share_the_allowance(seed_catalog):
                            time_basis="monthly").compute()
     assert costs["std"] == pytest.approx(0.04, rel=1e-9)
     assert costs["fifo"] == pytest.approx(0.05, rel=1e-9)
+
+
+# CloudFront gives 10,000,000 free HTTP or HTTPS requests a month (#339).
+HTTP = "CloudFront-HTTP-Request"
+HTTPS = "CloudFront-HTTPS-Request"
+
+
+def distribution(http, https):
+    return {
+        "nodeType": "routing",
+        "provider": "aws",
+        "service": "AmazonCloudFront",
+        "region": "global",
+        "usageMetrics": {
+            HTTP: {"unit": "requests", "value": http, "fixed": True},
+            HTTPS: {"unit": "requests", "value": https, "fixed": True},
+        },
+    }
+
+
+def test_table_groups_cloudfront_http_and_https_requests():
+    group = shared_free_allowance("aws", "AmazonCloudFront", HTTP)
+    assert group is not None
+    assert group is shared_free_allowance("aws", "AmazonCloudFront", HTTPS)
+    assert group.metrics == frozenset({HTTP, HTTPS})
+    assert group.allowance == 10_000_000
+    assert shared_free_allowance("aws", "AmazonCloudFront",
+                                 "CloudFront-DataTransfer") is None
+
+
+def test_cloudfront_http_and_https_share_one_allowance(seed_catalog):
+    # 8,000,000 + 8,000,000 requests: 6,000,000 billed, 3,000,000 of each,
+    # $2.25 of HTTP at $0.0075 per 10,000 and $3.00 of HTTPS at $0.01.
+    costs = compute(seed_catalog, {"cdn": distribution(8_000_000, 8_000_000)})
+    assert costs["cdn"] == pytest.approx(5.25, rel=1e-9)
+
+
+@pytest.mark.parametrize("http, https", [
+    (8_000_000, 8_000_000), (2_000_000, 6_000_000), (0, 25_000_000),
+    (3_000_000, 30_000_000),
+])
+def test_engine_agrees_with_the_cloudfront_helper(seed_catalog, http, https):
+    from infra_cost_model.resources.cloudfront import _cloudfront_cost
+
+    requests = http + https
+    helper = _cloudfront_cost(requests=requests, https_ratio=https / requests,
+                              catalog=seed_catalog, region="global")
+    costs = compute(seed_catalog, {"cdn": distribution(http, https)})
+    assert costs["cdn"] == pytest.approx(helper, rel=1e-9)
