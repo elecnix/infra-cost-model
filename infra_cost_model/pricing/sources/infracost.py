@@ -252,7 +252,8 @@ class InfracostClient:
         # `region` (see `region_pair_source` below).
         query_region = descriptor.get("query_region", region)
         attribute_filters = descriptor.get("attribute_filters")
-        if descriptor.get("unprefixed_in_us_east_1") and query_region == "us-east-1":
+        if (attribute_filters and descriptor.get("unprefixed_in_us_east_1")
+                and query_region == "us-east-1"):
             # Some services name the us-east-1 product without a region prefix
             # ("LoadBalancerUsage", not "USE1-LoadBalancerUsage").
             attribute_filters = [

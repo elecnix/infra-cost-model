@@ -172,3 +172,13 @@ def test_synced_prices_reach_the_handler_queries(creds, tmp_path):
         assert isinstance(price, Price)
         assert price.source == "infracost"
         assert price.price_usd * quantity == pytest.approx(expected)
+
+
+def test_unprefixed_flag_without_filters_queries_the_family(creds, monkeypatch):
+    """The us-east-1 flag leaves a descriptor that has no attribute filters unchanged."""
+    monkeypatch.setitem(ic.METRIC_DESCRIPTORS, "Test-ECR-Family", {
+        "service": "AmazonECR", "product_family": "EC2 Container Registry",
+        "unprefixed_in_us_east_1": True, "unit": "GB",
+    })
+    rows = _sync("Test-ECR-Family")
+    assert [r.attributes["usagetype"] for r in rows] == ["USE1-Retrieval-Archive"]
