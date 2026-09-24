@@ -32,7 +32,7 @@ SHAPED_ONLY = """\
     nodeType: external
     service: saas
     usageMetrics:
-      Seats: {unit: Seats, value: 3, fixed: true, shape: per_unit_flat, rate: 10.0}
+      Charges: {unit: Charges, value: 3, fixed: true, shape: transactional, per_call: 10.0}
 """
 
 NO_PROVIDER = """\
@@ -55,7 +55,7 @@ MIXED = """\
     nodeType: external
     service: saas
     usageMetrics:
-      Seats: {unit: Seats, value: 3, fixed: true, shape: per_unit_flat, rate: 10.0}
+      Charges: {unit: Charges, value: 3, fixed: true, shape: transactional, per_call: 10.0}
       Requests: {unit: Requests, value: 1}
 """
 

@@ -343,18 +343,18 @@ class TestThePinOnTheBundledExample:
         return yaml.safe_load(self.EXAMPLE.read_text())
 
     def test_example_declares_the_requirement(self):
-        """The example that needs 0.2.0 states it."""
-        assert declared_requirement(self.load()) == ">=0.2.0"
+        """The example needs the vendor rows that ship with 0.3.0, and says so."""
+        assert declared_requirement(self.load()) == ">=0.3.0"
 
     def test_example_requirement_holds_today(self):
         """The shipped engine satisfies its own example."""
         assert check_engine_requirement(self.load()) is None
 
-    def test_shaped_nodes_price_above_zero(self):
-        """The example's whole point: shaped metrics cost something."""
-        engine = CostEngine(self.load(), catalog=None, time_basis="monthly")
+    def test_vendor_nodes_price_above_zero(self, seed_catalog):
+        """The example's whole point: the SaaS nodes cost something."""
+        engine = CostEngine(self.load(), catalog=seed_catalog, time_basis="monthly")
         costs = engine.compute()
-        assert costs["workos_identity"] == pytest.approx(364.0)
+        assert costs["workos_identity"] == pytest.approx(349.0)
         assert costs["datadog_observability"] == pytest.approx(138.0)
 
     def test_example_validates(self):

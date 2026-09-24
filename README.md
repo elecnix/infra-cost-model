@@ -84,6 +84,12 @@ infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
 
 The bundled `infra_cost_model/pricing/seed/aws_pricelist_seed.json` is a small us-east-1 fixture for the test suite and offline use. You don't need it to set up the tool. `seed-pricing` loads it into the local cache.
 
+## SaaS vendor prices
+
+SaaS vendors such as WorkOS, Datadog and GitHub Copilot price from rows in `infra_cost_model/vendors/<id>/prices.yaml`. A node sets `provider` to the vendor id, and the catalog prices its metrics from those rows. To add a vendor, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+Version 0.3.0 removed the `free_tier`, `per_unit_flat` and `flat_subscription` pricing shapes ([#246](https://github.com/elecnix/infra-cost-model/issues/246)). `validate` rejects a model that still sets one, with a message that points to vendor price rows. CONTRIBUTING.md shows how to move each one to price rows.
+
 ## Metrics with no price
 
 The engine prices a usage metric from its `shape`, then from the catalog, then from the node's `pricingRates`. If all three come up empty, the node's cost leaves that metric out. Each command that computes costs prints one warning per such metric on stderr, with the node, the metric, the provider, service and region, and the quantity left out. `analyze --json` also lists them under `unpriced_metrics`. A metric with a quantity of 0 doesn't warn.

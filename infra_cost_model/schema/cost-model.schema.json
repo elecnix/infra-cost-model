@@ -164,20 +164,8 @@
         },
         "shape": {
           "type": "string",
-          "pattern": "^[a-z][a-z_]*$",
-          "description": "SaaS pricing shape name (e.g., flat_subscription, per_unit_flat, free_tier, transactional)"
-        },
-        "rate": {
-          "type": "number",
-          "description": "Flat rate for subscription or per-unit flat shapes"
-        },
-        "free": {
-          "type": "number",
-          "description": "Free tier allowance"
-        },
-        "overage": {
-          "type": "number",
-          "description": "Overage rate for free tier"
+          "enum": ["transactional"],
+          "description": "SaaS pricing shape name (e.g., transactional). A transactional metric charges a percentage of each transaction's value plus fixed fees. Other SaaS prices are vendor price rows in infra_cost_model/vendors/<id>/prices.yaml; version 0.3.0 removed the free_tier, per_unit_flat and flat_subscription shapes."
         },
         "percentage_rate": {
           "type": "number",
@@ -186,37 +174,6 @@
         "per_call": {
           "type": "number",
           "description": "Per-call fee for transactional shapes"
-        },
-        "subscription": {
-          "type": "number",
-          "description": "Subscription cost for credit pool"
-        },
-        "includedCredits": {
-          "type": "number",
-          "description": "Credits included in subscription"
-        },
-        "creditValue": {
-          "type": "number",
-          "description": "Value per credit"
-        },
-        "tiers": {
-          "type": "array",
-          "description": "Stepped overage bands for free_tier, walked in order above the free allowance. Each entry carries an inclusive upper bound and the rate charged below it; omit up_to on the final entry for an open-ended band.",
-          "items": {
-            "type": "object",
-            "required": ["rate"],
-            "properties": {
-              "up_to": {
-                "type": "number",
-                "description": "Upper bound of this band, in billable units above the free allowance. Omit on the final entry for an open-ended band."
-              },
-              "rate": {
-                "type": "number",
-                "description": "Price per unit within this band"
-              }
-            },
-            "additionalProperties": false
-          }
         },
         "volume": {
           "type": "number",

@@ -1,0 +1,7 @@
+# AWS prices come from the live catalog and the seed file. This directory
+# holds only the AWS rows that were ported from the identity-provider module
+# (#254), which the live catalog does not price the same way.
+id: aws
+display_name: Amazon Web Services
+homepage: https://aws.amazon.com
+pricing_page: https://aws.amazon.com/cognito/pricing

@@ -4,8 +4,8 @@
 
 To add a SaaS vendor (for example, Linear, Datadog, or Vercel):
 
-1. Copy `infra_cost_model/vendors/_template/` to `infra_cost_model/vendors/<your-vendor>/` (use a lowercase id with hyphens).
-2. Edit `vendor.yaml`: set `id`, `display_name`, `homepage`, and `pricing_page`.
+1. Copy `infra_cost_model/vendors/_template/` to `infra_cost_model/vendors/<your-vendor>/`. The directory name is the vendor id: a lowercase id with hyphens. A cost model node sets `provider` to this id.
+2. Edit `vendor.yaml`: set `id` to the directory name, and set `display_name`, `homepage`, and `pricing_page`.
 3. Edit `prices.yaml`: add normalized price rows as described below.
 4. Run `python3 -m infra_cost_model.cli validate <file>` for every cost model example you add or change.
 5. Run `python3 -m pytest -q` to verify that the vendor loads correctly.
@@ -13,11 +13,21 @@ To add a SaaS vendor (for example, Linear, Datadog, or Vercel):
 
 Two vendor-only pull requests do not conflict because each changes prices in its own directory.
 
+## Subscriptions, per-unit prices and free allowances
+
+Put these in price rows. Engine versions before 0.3.0 had three SaaS pricing shapes for them. Version 0.3.0 removed them ([#246](https://github.com/elecnix/infra-cost-model/issues/246)), and `validate` rejects a model that sets `shape` to one of them. To move such a metric to price rows, first add the rows to the vendor's `prices.yaml`. In the model, set the node's `provider` to the vendor id and its `service` to the rows' `service`. Rename the metric to the row's `usage_metric`, then delete `shape` and its parameters from the metric.
+
+- `flat_subscription` with `rate: 99` becomes a row with `price_usd: 99` and a `fixed: true` metric whose value is the number of subscriptions.
+- `per_unit_flat` with `rate: 125` becomes a row with `price_usd: 125` and a `fixed: true` metric whose value is the unit count.
+- `free_tier` with `free: 1000000` and `overage: 0.0025` becomes two rows: `price_usd: 0` from `start_usage_amount: 0` to `end_usage_amount: 1000000`, then `price_usd: 0.0025` from `start_usage_amount: 1000000`. The `tiers` parameter becomes more rows.
+
+`examples/saas-subscription-api.yaml` prices WorkOS and Datadog this way. Models can still set `shape: transactional`. It charges a percentage of each transaction's value plus fixed fees. A price row can't state that charge, because it depends on the value of a transaction.
+
 ## Price row reference
 
 Each entry in `prices.yaml` represents one flat price or one tier. Fields use the same snake-case names as the `Price` dataclass:
 
-- `vendor` (required): Canonical provider identity used by cost model nodes and catalog queries. It must be a lowercase id matching `^[a-z][a-z0-9_-]*$`. Use the provider's stable vendor identity, not a product, plan, display name, or reseller name. Normally this is the `id` in the directory's `vendor.yaml`; use a different value only when the row intentionally belongs to another canonical provider identity.
+- `vendor` (required): Canonical provider identity used by cost model nodes and catalog queries. It must equal the directory name and the `id` in the directory's `vendor.yaml`. Use the provider's stable vendor identity, not a product, plan, display name, or reseller name. GitHub Copilot rows use `github`, in `infra_cost_model/vendors/github/`. The loader stops with an error when a row's `vendor` differs from its directory's id, or when a directory has no rows.
 - `service` (required): Stable service or product identifier within the vendor catalog.
 - `region` (required): Pricing region. Use `global` only when the vendor publishes one location-independent price.
 - `product_family` (optional): Provider product-family classification when needed to distinguish otherwise similar offers.
@@ -43,7 +53,7 @@ A few providers give one free allowance to several metrics of a service. AWS giv
 
 The Infracost Cloud Pricing API states each paid price from 0 and leaves out the free allowances, which AWS publishes as separate "Global-" products. `FREE_ALLOWANCES` in the same file gives the monthly allowance of each metric that has a $0 tier in the seed file. When `sync-pricing` stores the live rows of a listed metric, it adds a $0 tier up to the allowance and starts the paid tiers there, so a live catalog prices the same usage as the seed catalog ([#356](https://github.com/elecnix/infra-cost-model/issues/356)). When you add a free tier to the seed file, add its allowance to `FREE_ALLOWANCES` as well. A test checks that the two agree.
 
-A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. References in examples, provider registration, and price rows must use that identity consistently. `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
+A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. Examples, provider registration and price rows use that identity. A few rows for a cloud provider's own services, such as Amazon Cognito, come from outside the live catalog. They go in the directory for that provider (`aws`, `azure` or `gcp`). `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
 
 ## Development
 

@@ -121,21 +121,9 @@ export interface UsageMetric {
    */
   edgeType?: "read" | "write" | "invoke";
   /**
-   * SaaS pricing shape name (e.g., flat_subscription, per_unit_flat, free_tier, transactional)
+   * SaaS pricing shape name (e.g., transactional). A transactional metric charges a percentage of each transaction's value plus fixed fees. Other SaaS prices are vendor price rows in infra_cost_model/vendors/<id>/prices.yaml; version 0.3.0 removed the free_tier, per_unit_flat and flat_subscription shapes.
    */
-  shape?: string;
-  /**
-   * Flat rate for subscription or per-unit flat shapes
-   */
-  rate?: number;
-  /**
-   * Free tier allowance
-   */
-  free?: number;
-  /**
-   * Overage rate for free tier
-   */
-  overage?: number;
+  shape?: "transactional";
   /**
    * Percentage rate for transactional shapes
    */
@@ -144,31 +132,6 @@ export interface UsageMetric {
    * Per-call fee for transactional shapes
    */
   per_call?: number;
-  /**
-   * Subscription cost for credit pool
-   */
-  subscription?: number;
-  /**
-   * Credits included in subscription
-   */
-  includedCredits?: number;
-  /**
-   * Value per credit
-   */
-  creditValue?: number;
-  /**
-   * Stepped overage bands for free_tier, walked in order above the free allowance. Each entry carries an inclusive upper bound and the rate charged below it; omit up_to on the final entry for an open-ended band.
-   */
-  tiers?: {
-    /**
-     * Upper bound of this band, in billable units above the free allowance. Omit on the final entry for an open-ended band.
-     */
-    up_to?: number;
-    /**
-     * Price per unit within this band
-     */
-    rate: number;
-  }[];
   /**
    * Value of one transaction for transactional shapes. Each transaction is charged volume × percentage_rate, plus fixed_per_transaction and per_call.
    */
