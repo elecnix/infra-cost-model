@@ -2,8 +2,9 @@
 
 SQS is the queuing backbone for event-driven architectures.
 Pricing covers:
-- Standard queue requests: $0.40/1M (free tier: 1M/month)
-- FIFO queue requests: $0.50/1M (free tier: 1M/month)
+- Standard queue requests: $0.40/1M
+- FIFO queue requests: $0.50/1M
+- Free tier: 1M requests/month, shared by standard and FIFO queues (#338)
 
 AWS doesn't charge for storing messages in a queue (#324).
 
