@@ -841,14 +841,14 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "productName", "value": "Functions"},
                               {"key": "skuName", "value": "Standard"},
                               {"key": "meterName", "value": "Standard Total Executions"}],
-        "unit": "10", "unit_scale": 10, "store_unit": "Executions",
+        "unit": "10", "unit_scale": 10, "store_unit": "executions",
     },
     "AzureFunctions-GB-Second": {
         "vendor": "azure", "service": "Functions", "store_service": "AzureFunctions",
         "attribute_filters": [{"key": "productName", "value": "Functions"},
                               {"key": "skuName", "value": "Standard"},
                               {"key": "meterName", "value": "Standard Execution Time"}],
-        "unit": "1 GB Second", "store_unit": "GB-Seconds",
+        "unit": "1 GB Second", "store_unit": "GB-s",
     },
     # Cosmos DB serverless: $0.25 per million request units, and transactional
     # storage at $0.25 per GB-month (the "RUs" SKU, which serverless accounts use).
@@ -872,7 +872,7 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "productName", "value": "API Management"},
                               {"key": "skuName", "value": "Consumption"},
                               {"key": "meterName", "value": "Consumption Calls"}],
-        "unit": "10K", "unit_scale": 10_000, "store_unit": "Calls",
+        "unit": "10K", "unit_scale": 10_000, "store_unit": "requests",
     },
     # Blob Storage, general-purpose v2 block blobs in the Hot tier with LRS, the
     # defaults of `azurerm_storage_account`. Storage is tiered at 50 TB and 500 TB.
@@ -888,14 +888,14 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "productName", "value": "General Block Blob v2"},
                               {"key": "skuName", "value": "Hot LRS"},
                               {"key": "meterName", "value": "Hot Read Operations"}],
-        "unit": "10K", "unit_scale": 10_000, "store_unit": "Requests",
+        "unit": "10K", "unit_scale": 10_000, "store_unit": "requests",
     },
     "Blob-Hot-LRS-Write-Operation": {
         "vendor": "azure", "service": "Storage", "store_service": "BlobStorage",
         "attribute_filters": [{"key": "productName", "value": "General Block Blob v2"},
                               {"key": "skuName", "value": "Hot LRS"},
                               {"key": "meterName", "value": "Hot LRS Write Operations"}],
-        "unit": "10K", "unit_scale": 10_000, "store_unit": "Requests",
+        "unit": "10K", "unit_scale": 10_000, "store_unit": "requests",
     },
     # --- GCP (#226) --------------------------------------------------------------
     # GCP rows have two attributes, a description and a resource group. Some
