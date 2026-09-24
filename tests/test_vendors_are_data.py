@@ -148,6 +148,24 @@ class TestSaasExampleOnVendorRows:
             assert yearly[node] == pytest.approx(12 * monthly[node])
 
 
+class TestWorkosBands:
+    """Adjacent rows share a boundary: the end is exclusive, the start inclusive."""
+
+    def _cost(self, seed_catalog, metric, quantity):
+        model = _model({})
+        model["nodes"]["n"]["usageMetrics"] = {metric: {"unit": "u", "value": quantity, "fixed": True}}
+        return CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()["n"]
+
+    def test_fifteen_sso_connections_are_all_in_the_first_band(self, seed_catalog):
+        assert self._cost(seed_catalog, "SSO-Connection", 15) == pytest.approx(15 * 125.0)
+
+    def test_the_sixteenth_connection_is_in_the_second_band(self, seed_catalog):
+        assert self._cost(seed_catalog, "SSO-Connection", 16) == pytest.approx(15 * 125.0 + 100.0)
+
+    def test_one_million_mau_are_free(self, seed_catalog):
+        assert self._cost(seed_catalog, "AuthKit-MAU", 1_000_000) == pytest.approx(0.0)
+
+
 def test_github_copilot_example_stays_600(seed_catalog):
     model = yaml.safe_load((REPO_ROOT / "examples" / "github-copilot.yaml").read_text())
     total = sum(CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute().values())

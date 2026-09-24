@@ -122,6 +122,13 @@ def _shape_errors(model: dict, known_shapes: list[str]) -> list[str]:
     return errors
 
 
+def _schema_shapes(schema: dict) -> list[str]:
+    """The ``shape`` values the schema allows, or none if it lists none."""
+    shape = (schema.get("definitions", {}).get("usageMetric", {})
+             .get("properties", {}).get("shape", {}))
+    return list(shape.get("enum", []))
+
+
 def validate_cost_model(model: dict) -> list[str]:
     """Validate a cost model representation against the JSON Schema.
 
@@ -134,7 +141,7 @@ def validate_cost_model(model: dict) -> list[str]:
     schema = json.loads(SCHEMA_PATH.read_text())
     errors: list[str] = []
 
-    known_shapes = schema["definitions"]["usageMetric"]["properties"]["shape"]["enum"]
+    known_shapes = _schema_shapes(schema)
     validator = Draft202012Validator(schema)
     for error in validator.iter_errors(model):
         # _shape_errors reports an unknown shape with a clearer message.
