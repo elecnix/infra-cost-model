@@ -114,9 +114,10 @@ def navigation(root: Path) -> list:
     pages = generated_pages(root)
     nav: list = [{title: uri} for uri, title in ROOT_PAGES.items()]
     nav.append({"Command reference": CLI_PAGE})
+    # Each example page starts with "# <title>", so its title comes from the
+    # page itself rather than from a second read of the YAML file.
     nav.append({"Examples": [
-        {_example_title((root / "examples" / (Path(uri).stem + ".yaml")).read_text(),
-                        Path(uri).stem): uri}
+        {pages[uri].splitlines()[0].removeprefix("# "): uri}
         for uri in pages if uri.startswith("examples/")
     ]})
     nav.append({"Vendor pricing notes": [

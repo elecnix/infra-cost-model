@@ -87,3 +87,20 @@ def test_root_documents_keep_their_names():
         "CONTRIBUTING.md",
     ):
         assert pages[name] == (REPO_ROOT / name).read_text()
+
+
+def test_navigation_titles_match_example_pages():
+    hooks = _load_hooks()
+    pages = hooks.generated_pages(REPO_ROOT)
+    (examples,) = [entry["Examples"] for entry in hooks.navigation(REPO_ROOT)
+                   if "Examples" in entry]
+    for entry in examples:
+        ((title, uri),) = entry.items()
+        assert pages[uri].splitlines()[0] == f"# {title}"
+
+
+def test_empty_example_falls_back_to_file_name(tmp_path):
+    hooks = _load_hooks()
+    path = tmp_path / "empty.yaml"
+    path.write_text("")
+    assert hooks.example_page(path).splitlines()[0] == "# empty"
