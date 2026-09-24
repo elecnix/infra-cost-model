@@ -323,7 +323,7 @@ class AzureFunction(ComputeResource):
 
     @staticmethod
     def hosting(address: str, plan_ref: Any, plans: list) -> tuple[str, dict]:
-        """The node's service, and the hostingPlan and planSku config (#382).
+        """The node's service, and its hostingPlan, planSku and planTier config (#382).
 
         Only the consumption plan has catalog rows. An app on another plan
         gets that plan's service, so the engine reports its usage as
@@ -339,17 +339,16 @@ class AzureFunction(ComputeResource):
                 f"consumption plan app. Include the plan in the input to price it "
                 f"on its own plan."
             )
-            return "AzureFunctions", {"hostingPlan": None, "planSku": None}
+            return "AzureFunctions", {"hostingPlan": None, "planSku": None, "planTier": None}
         service, label = _HOSTING_PLANS[kind]
-        sku = plan.sku or plan.tier
         if kind != "consumption":
             warnings.warn(
-                f"{address}: runs on the {label} plan {sku}, which the engine "
+                f"{address}: runs on the {label} plan {plan.sku or plan.tier}, which the engine "
                 f"doesn't price yet ({_PLAN_PRICING_ISSUE}). Its node has service "
                 f"{service}, so the engine reports its usage as unpriced instead "
                 f"of pricing it at consumption plan rates."
             )
-        return service, {"hostingPlan": kind, "planSku": sku}
+        return service, {"hostingPlan": kind, "planSku": plan.sku, "planTier": plan.tier}
 
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
@@ -382,8 +381,11 @@ class AzureFunction(ComputeResource):
         address = resource.get("id", "")
         # azure-native names the plan `serverFarmId`, the classic provider
         # `servicePlanId` or, on the older FunctionApp, `appServicePlanId`.
-        plan_ref = next((inputs[key] for key in ("servicePlanId", "serverFarmId", "appServicePlanId")
-                         if inputs.get(key)), None)
+        if resource.get("type", "").startswith("azure-native:"):
+            plan_keys = ("serverFarmId",)
+        else:
+            plan_keys = ("servicePlanId", "appServicePlanId")
+        plan_ref = next((inputs[key] for key in plan_keys if inputs.get(key)), None)
         service, plan = cls.hosting(address, plan_ref, resource.get(SERVICE_PLANS_KEY, []))
         return ResourceExtract(
             resource_address=address,

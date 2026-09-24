@@ -82,8 +82,19 @@ def test_only_known_sku_names_tell_premium_and_flex_plans(sku):
 
 
 def test_arm_tier_alone_tells_the_plan():
-    nodes, _ = extract_quietly(extract_resources_from_arm, arm_template(None, "ElasticPremium"))
-    assert nodes[ARM_FUNC]["config"]["hostingPlan"] == "premium"
+    nodes, messages = extract_quietly(extract_resources_from_arm,
+                                      arm_template(None, "ElasticPremium"))
+    config = nodes[ARM_FUNC]["config"]
+    assert config["hostingPlan"] == "premium"
+    # planSku stays the SKU. The tier has its own field.
+    assert config["planSku"] is None
+    assert config["planTier"] == "ElasticPremium"
+    assert any(ARM_FUNC in m and "ElasticPremium" in m for m in messages)
+
+
+def test_arm_plan_tier_is_kept():
+    nodes, _ = extract_quietly(extract_resources_from_arm, arm_template("EP1", "ElasticPremium"))
+    assert nodes[ARM_FUNC]["config"]["planTier"] == "ElasticPremium"
 
 
 @pytest.mark.parametrize("server_farm_id,parameters", [
@@ -192,6 +203,48 @@ def test_pulumi_azure_native_premium_plan():
     node = nodes[f"{RG}/Microsoft.Web/sites/func-orders"]
     assert node["service"] == "AzureFunctionsPremium"
     assert node["config"]["hostingPlan"] == "premium"
+
+
+def pulumi_stack_with_both_plan_keys(app_type):
+    """Two plans, and an app that carries both plan keys: serverFarmId points
+    to the Premium plan, servicePlanId to the consumption plan."""
+    return {"deployment": {"resources": [
+        {"id": f"{RG}/Microsoft.Web/serverfarms/plan-premium",
+         "type": "azure-native:web:AppServicePlan",
+         "inputs": {"sku": {"name": "EP1", "tier": "ElasticPremium"}}},
+        {"id": f"{RG}/Microsoft.Web/serverFarms/plan-consumption",
+         "type": "azure:appservice/servicePlan:ServicePlan",
+         "inputs": {"skuName": "Y1"}},
+        {"id": f"{RG}/Microsoft.Web/sites/func-orders", "type": app_type,
+         "inputs": {"kind": "functionapp", "location": "eastus",
+                    "serverFarmId": f"{RG}/Microsoft.Web/serverfarms/plan-premium",
+                    "servicePlanId": f"{RG}/Microsoft.Web/serverFarms/plan-consumption"}},
+    ]}}
+
+
+@pytest.mark.parametrize("app_type,plan", [
+    # azure-native names the plan `serverFarmId`.
+    ("azure-native:web:WebApp", "premium"),
+    # The classic provider names it `servicePlanId`.
+    ("azure:appservice/linuxFunctionApp:LinuxFunctionApp", "consumption"),
+])
+def test_pulumi_plan_key_follows_the_provider(app_type, plan):
+    stack = pulumi_stack_with_both_plan_keys(app_type)
+    nodes, _ = extract_quietly(extract_resources_from_pulumi, stack)
+    assert nodes[f"{RG}/Microsoft.Web/sites/func-orders"]["config"]["hostingPlan"] == plan
+
+
+def test_pulumi_classic_function_app_uses_app_service_plan_id():
+    stack = {"deployment": {"resources": [
+        {"id": f"{RG}/Microsoft.Web/serverFarms/plan-orders", "type": "azure:appservice/plan:Plan",
+         "inputs": {"sku": {"tier": "Standard", "size": "S1"}}},
+        {"id": f"{RG}/Microsoft.Web/sites/func-orders",
+         "type": "azure:appservice/functionApp:FunctionApp",
+         "inputs": {"location": "eastus",
+                    "appServicePlanId": f"{RG}/Microsoft.Web/serverFarms/plan-orders"}},
+    ]}}
+    nodes, _ = extract_quietly(extract_resources_from_pulumi, stack)
+    assert nodes[f"{RG}/Microsoft.Web/sites/func-orders"]["config"]["hostingPlan"] == "dedicated"
 
 
 def test_pulumi_classic_service_plan():
