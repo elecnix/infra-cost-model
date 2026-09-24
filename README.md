@@ -13,7 +13,7 @@ This project specifies a model where usage flows through the graph: a frontend r
 ## Core Concepts
 
 - **Workload derivation**: Per-service workload is computed recursively from inbound traffic through a weighted service call graph (Leitner, Cito & Stöckli, *UCC 2016* — "CostHat")
-- **Economic sinks**: Points in the graph where cloud API invocations directly contribute to cost (Ribeiro et al., *ASPLOS 2026* — "Skyler")
+- **Billable nodes**: each **node** in the graph adds cost through its **derived usage**. Ribeiro et al. (*ASPLOS 2026*, "Skyler") call a point where a cloud API call adds cost directly an "economic sink". This project says **node** instead, and the [glossary](UBIQUITOUS_LANGUAGE.md) lists "economic sink" as a term to avoid.
 - **Symbolic cost expressions**: Cost formulas parameterized by input features, enabling what-if analysis without re-derivation (Skyler, ibid.)
 - **What-if & sensitivity analysis**: Exploring cost impact of workload changes or architectural decisions before implementation (CostHat; Skyler)
 

@@ -3,7 +3,7 @@
 Validates:
 - Token-based cost propagation through edges (DP#8)
 - Asymmetric input/output token pricing (5× differential)
-- Bedrock Claude Sonnet as economic sink
+- Bedrock Claude Sonnet as a compute node that calls the processor Lambda
 - Token flow accumulation from upstream edges
 - LLM dominates total cost (orders of magnitude over infrastructure)
 """
