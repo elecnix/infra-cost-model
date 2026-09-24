@@ -146,9 +146,9 @@ def hosting_plan(sku: Any, tier: Any) -> Optional[str]:
     tier = tier.strip().lower() if isinstance(tier, str) else ""
     if tier == "dynamic" or sku == "y1":
         return "consumption"
-    if tier == "flexconsumption" or sku.startswith("fc"):
+    if tier == "flexconsumption" or sku == "fc1":
         return "flexConsumption"
-    if tier == "elasticpremium" or sku.startswith("ep"):
+    if tier == "elasticpremium" or sku in ("ep1", "ep2", "ep3"):
         return "premium"
     if sku or tier:
         return "dedicated"

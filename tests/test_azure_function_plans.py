@@ -75,6 +75,12 @@ def test_arm_consumption_plan_does_not_warn_about_the_plan():
     assert not any(ARM_FUNC in m for m in messages)
 
 
+@pytest.mark.parametrize("sku", ["EP4", "FC2", "EPX"])
+def test_only_known_sku_names_tell_premium_and_flex_plans(sku):
+    nodes, _ = extract_quietly(extract_resources_from_arm, arm_template(sku, None))
+    assert nodes[ARM_FUNC]["config"]["hostingPlan"] == "dedicated"
+
+
 def test_arm_tier_alone_tells_the_plan():
     nodes, _ = extract_quietly(extract_resources_from_arm, arm_template(None, "ElasticPremium"))
     assert nodes[ARM_FUNC]["config"]["hostingPlan"] == "premium"
