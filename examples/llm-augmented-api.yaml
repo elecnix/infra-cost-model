@@ -1,6 +1,6 @@
 # Example: Large Language Model-Augmented API (Terraform)
 # Demonstrates: token-based cost propagation, asymmetric prompt/completion pricing,
-# Bedrock LLM as economic sink, token flow through edges.
+# a Bedrock LLM node that calls a downstream Lambda, token flow through edges.
 #
 # Issue: https://github.com/elecnix/infra-cost-model/issues/9
 
