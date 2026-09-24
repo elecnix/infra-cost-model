@@ -8,6 +8,7 @@ the Azure rows of the seed file, which prices one region, eastus (#363).
 import math
 import re
 import warnings
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from .types import (
@@ -19,6 +20,13 @@ from .types import (
 # calls `extract_arm`. ARM resources never use them.
 ARM_ADDRESS_KEY = "_address"
 ARM_PARAMETERS_KEY = "_templateParameters"
+
+# Key that the `extract_resources_from_*` functions add to each resource: the
+# App Service plans of the input, from `service_plans_from_*` (#382).
+SERVICE_PLANS_KEY = "_servicePlans"
+
+# The issue that tracks pricing the plans other than consumption.
+_PLAN_PRICING_ISSUE = "#383"
 
 _PARAMETER_EXPRESSION = re.compile(r"^\[\s*parameters\(\s*'([^']+)'\s*\)\s*\]$")
 
@@ -108,6 +116,170 @@ def is_function_app_kind(kind: Any) -> bool:
     return "functionapp" in (part.strip().lower() for part in kind.split(","))
 
 
+@dataclass(frozen=True)
+class ServicePlan:
+    """An App Service plan in the input: its resource ID, name and SKU."""
+    id: Optional[str]
+    name: Optional[str]
+    sku: Optional[str]
+    tier: Optional[str]
+
+
+# hostingPlan -> (service of the Function App node, label in warnings)
+_HOSTING_PLANS = {
+    "consumption": ("AzureFunctions", "consumption"),
+    "premium": ("AzureFunctionsPremium", "Elastic Premium"),
+    "flexConsumption": ("AzureFunctionsFlexConsumption", "Flex Consumption"),
+    "dedicated": ("AppService", "dedicated App Service"),
+}
+
+
+def hosting_plan(sku: Any, tier: Any) -> Optional[str]:
+    """The hosting plan of an App Service plan SKU (#382).
+
+    ``Y1`` or tier ``Dynamic`` is the consumption plan, ``EP1`` to ``EP3``
+    or tier ``ElasticPremium`` is Elastic Premium, ``FC1`` or tier
+    ``FlexConsumption`` is Flex Consumption. Any other SKU is a dedicated
+    plan. Gives ``None`` when both are unknown.
+    """
+    sku = sku.strip().lower() if isinstance(sku, str) else ""
+    tier = tier.strip().lower() if isinstance(tier, str) else ""
+    if tier == "dynamic" or sku == "y1":
+        return "consumption"
+    if tier == "flexconsumption" or sku == "fc1":
+        return "flexConsumption"
+    if tier == "elasticpremium" or sku in ("ep1", "ep2", "ep3"):
+        return "premium"
+    if sku or tier:
+        return "dedicated"
+    return None
+
+
+def _last_segment(value: Optional[str]) -> Optional[str]:
+    if not isinstance(value, str) or not value:
+        return None
+    return value.rstrip("/").rsplit("/", 1)[-1]
+
+
+def find_service_plan(plans: list, plan_ref: Any) -> Optional[ServicePlan]:
+    """The plan that ``plan_ref``, a resource ID or a name, points to.
+
+    Tries the resource ID first. When no plan has that ID, as in a
+    Terraform plan where IDs are still unknown, it tries the last segment of
+    the reference against the plan names, and keeps a match only if it is
+    the only one. Resource IDs and names are case-insensitive.
+    """
+    if not isinstance(plan_ref, str) or not plan_ref:
+        return None
+    ref = plan_ref.lower()
+    for plan in plans:
+        if plan.id and plan.id.lower() == ref:
+            return plan
+    name = _last_segment(ref)
+    matches = [plan for plan in plans if plan.name and plan.name.lower() == name]
+    return matches[0] if len(matches) == 1 else None
+
+
+_SERVER_FARM_RESOURCE_ID = re.compile(
+    r"^\[\s*resourceId\(\s*'microsoft\.web/serverfarms'\s*,\s*(.+?)\s*\)\s*\]$",
+    re.IGNORECASE)
+_STRING_LITERAL = re.compile(r"^'([^']*)'$")
+
+
+def resolve_arm_server_farm(value: Any, parameters: dict) -> Optional[str]:
+    """The plan a ``serverFarmId`` points to, as a resource ID or a name.
+
+    Resolves a literal, a ``[parameters('x')]`` with a literal default, or
+    ``[resourceId('Microsoft.Web/serverfarms', name)]`` whose name is a
+    literal or such a parameter. Gives ``None`` for anything else.
+    """
+    resolved, ok = resolve_arm_value(value, parameters)
+    if ok:
+        return resolved if isinstance(resolved, str) else None
+    match = _SERVER_FARM_RESOURCE_ID.match(value)
+    if not match:
+        return None
+    argument = match.group(1)
+    literal = _STRING_LITERAL.match(argument)
+    if literal:
+        return literal.group(1)
+    name, ok = resolve_arm_value(f"[{argument}]", parameters)
+    return name if ok and isinstance(name, str) else None
+
+
+def service_plans_from_arm(resources) -> list:
+    """The ``Microsoft.Web/serverfarms`` of ``(address, resource)`` pairs."""
+    plans = []
+    for address, resource in resources:
+        arm_type, _, name = address.partition(":")
+        if arm_type.lower() != "microsoft.web/serverfarms":
+            continue
+        parameters = resource.get(ARM_PARAMETERS_KEY, {})
+        sku = resource.get("sku") or {}
+        plans.append(ServicePlan(
+            id=None, name=name,
+            sku=resolve_arm_value(sku.get("name"), parameters)[0],
+            tier=resolve_arm_value(sku.get("tier"), parameters)[0],
+        ))
+    return plans
+
+
+def _first_block(value: Any) -> dict:
+    # Terraform JSON gives a nested block as a list of one object.
+    if isinstance(value, list):
+        value = value[0] if value else {}
+    return value if isinstance(value, dict) else {}
+
+
+def service_plans_from_tf(resources: list) -> list:
+    """The ``azurerm_service_plan`` and ``azurerm_app_service_plan`` resources."""
+    plans = []
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        values = resource.get("values") or {}
+        if resource.get("type") == "azurerm_service_plan":
+            sku, tier = values.get("sku_name"), None
+        elif resource.get("type") == "azurerm_app_service_plan":
+            block = _first_block(values.get("sku"))
+            sku, tier = block.get("size"), block.get("tier")
+        else:
+            continue
+        plans.append(ServicePlan(id=values.get("id"), name=values.get("name"),
+                                 sku=sku, tier=tier))
+    return plans
+
+
+def service_plans_from_pulumi(resources: list) -> list:
+    """The App Service plans of a Pulumi stack export.
+
+    Covers ``azure-native:web:AppServicePlan`` and the classic
+    ``azure:appservice`` ``ServicePlan`` and ``Plan``.
+    """
+    plans = []
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        resource_type = resource.get("type", "")
+        properties = {**(resource.get("outputs") or {}), **(resource.get("inputs") or {})}
+        if resource_type == "azure-native:web:AppServicePlan":
+            block = properties.get("sku") or {}
+            sku, tier = block.get("name"), block.get("tier")
+        elif resource_type == "azure:appservice/servicePlan:ServicePlan":
+            sku, tier = properties.get("skuName"), None
+        elif resource_type == "azure:appservice/plan:Plan":
+            block = properties.get("sku") or {}
+            sku, tier = block.get("size"), block.get("tier")
+        else:
+            continue
+        plans.append(ServicePlan(
+            id=resource.get("id"),
+            name=properties.get("name") or _last_segment(resource.get("id")),
+            sku=sku, tier=tier,
+        ))
+    return plans
+
+
 class AzureFunction(ComputeResource):
     """Azure Function App - compute node (equivalent to AWS Lambda)."""
 
@@ -149,18 +321,52 @@ class AzureFunction(ComputeResource):
             return cls()
         return None
 
+    @staticmethod
+    def hosting(address: str, plan_ref: Any, plans: list) -> tuple[str, dict]:
+        """The node's service, and its hostingPlan, planSku and planTier config (#382).
+
+        Only the consumption plan has catalog rows. An app on another plan
+        gets that plan's service, so the engine reports its usage as
+        unpriced, and a UserWarning. An app whose plan isn't in the input
+        is priced as a consumption plan app, with a UserWarning.
+        """
+        plan = find_service_plan(plans, plan_ref)
+        kind = hosting_plan(plan.sku, plan.tier) if plan else None
+        if kind is None:
+            warnings.warn(
+                f"{address}: can't find the App Service plan {plan_ref!r} of this "
+                f"Function App or its SKU in the input, so it is priced as a "
+                f"consumption plan app. Include the plan in the input to price it "
+                f"on its own plan."
+            )
+            return "AzureFunctions", {"hostingPlan": None, "planSku": None, "planTier": None}
+        service, label = _HOSTING_PLANS[kind]
+        if kind != "consumption":
+            warnings.warn(
+                f"{address}: runs on the {label} plan {plan.sku or plan.tier}, which the engine "
+                f"doesn't price yet ({_PLAN_PRICING_ISSUE}). Its node has service "
+                f"{service}, so the engine reports its usage as unpriced instead "
+                f"of pricing it at consumption plan rates."
+            )
+        return service, {"hostingPlan": kind, "planSku": plan.sku, "planTier": plan.tier}
+
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         values = resource.get("values", {})
+        address = resource.get("address", "")
+        # `azurerm_function_app`, the older type, names it `app_service_plan_id`.
+        plan_ref = values.get("service_plan_id", values.get("app_service_plan_id"))
+        service, plan = cls.hosting(address, plan_ref, resource.get(SERVICE_PLANS_KEY, []))
         return ResourceExtract(
-            resource_address=resource.get("address", ""),
+            resource_address=address,
             node_type="compute",
             provider="azure",
-            service="AzureFunctions",
+            service=service,
             region=values.get("location"),
             config={
-                "sku": values.get("service_plan_id"),
+                "sku": plan_ref,
                 "runtime": values.get("app_settings", {}).get("FUNCTIONS_WORKER_RUNTIME"),
+                **plan,
             },
         )
 
@@ -172,15 +378,25 @@ class AzureFunction(ComputeResource):
         if (resource.get("type") == "azure-native:web:WebApp"
                 and not is_function_app_kind(kind)):
             raise NotImplementedError("a web app is not a Function App")
+        address = resource.get("id", "")
+        # azure-native names the plan `serverFarmId`, the classic provider
+        # `servicePlanId` or, on the older FunctionApp, `appServicePlanId`.
+        if resource.get("type", "").startswith("azure-native:"):
+            plan_keys = ("serverFarmId",)
+        else:
+            plan_keys = ("servicePlanId", "appServicePlanId")
+        plan_ref = next((inputs[key] for key in plan_keys if inputs.get(key)), None)
+        service, plan = cls.hosting(address, plan_ref, resource.get(SERVICE_PLANS_KEY, []))
         return ResourceExtract(
-            resource_address=resource.get("id", ""),
+            resource_address=address,
             node_type="compute",
             provider="azure",
-            service="AzureFunctions",
+            service=service,
             region=inputs.get("location"),
             config={
-                "sku": inputs.get("servicePlanId"),
+                "sku": plan_ref,
                 "runtime": inputs.get("appSettings", {}).get("FUNCTIONS_WORKER_RUNTIME"),
+                **plan,
             },
         )
 
@@ -211,15 +427,21 @@ class AzureFunction(ComputeResource):
             for setting in (properties.get("siteConfig") or {}).get("appSettings") or []
             if isinstance(setting, dict)
         }
+        address = resource.get(ARM_ADDRESS_KEY, "")
+        plan_ref = resolve_arm_server_farm(properties.get("serverFarmId"),
+                                           resource.get(ARM_PARAMETERS_KEY, {}))
+        service, plan = cls.hosting(address, plan_ref or properties.get("serverFarmId"),
+                                    resource.get(SERVICE_PLANS_KEY, []))
         return ResourceExtract(
-            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            resource_address=address,
             node_type="compute",
             provider="azure",
-            service="AzureFunctions",
+            service=service,
             region=arm_region(resource),
             config={
                 "sku": properties.get("serverFarmId"),
                 "runtime": app_settings.get("FUNCTIONS_WORKER_RUNTIME"),
+                **plan,
             },
         )
 
@@ -389,6 +611,22 @@ class APIManagement(RoutingResource):
             },
         )
 
+# Cognitive Services account kinds that serve the OpenAI models (#381).
+# `AIServices` accounts serve them too, at the same token rates.
+_OPENAI_KINDS = frozenset({"openai", "aiservices"})
+
+
+def require_openai_kind(kind: Any) -> None:
+    """Raise ``NotImplementedError`` unless ``kind`` names an OpenAI account.
+
+    A Cognitive Services account of another kind, such as
+    ``SpeechServices`` or ``TextAnalytics``, is another Azure AI service. The
+    registry then reports it as unsupported (#381).
+    """
+    if not isinstance(kind, str) or kind.strip().lower() not in _OPENAI_KINDS:
+        raise NotImplementedError(f"a Cognitive Services account of kind {kind!r} is not Azure OpenAI")
+
+
 class AzureOpenAI(ComputeResource):
     """Azure OpenAI Service - compute node (equivalent to Bedrock)."""
 
@@ -404,6 +642,8 @@ class AzureOpenAI(ComputeResource):
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureOpenAI"]:
+        # These types cover every Azure AI service. The address has no kind,
+        # so each `extract_*` method checks it (#381).
         if (resource_address.startswith("azurerm_cognitive_account.") or
                 "azure:cognitiveservices:Account:" in resource_address or
                 matches_arm_type(resource_address, "Microsoft.CognitiveServices/accounts")):
@@ -413,6 +653,7 @@ class AzureOpenAI(ComputeResource):
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         values = resource.get("values", {})
+        require_openai_kind(values.get("kind"))
         return ResourceExtract(
             resource_address=resource.get("address", ""),
             node_type="compute",
@@ -428,6 +669,8 @@ class AzureOpenAI(ComputeResource):
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
+        kind = inputs.get("kind", (resource.get("outputs") or {}).get("kind"))
+        require_openai_kind(kind)
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="compute",
@@ -435,7 +678,7 @@ class AzureOpenAI(ComputeResource):
             service="AzureOpenAI",
             region=inputs.get("location"),
             config={
-                "kind": inputs.get("kind"),
+                "kind": kind,
                 "skuName": inputs.get("sku", {}).get("name"),
             },
         )
@@ -443,6 +686,7 @@ class AzureOpenAI(ComputeResource):
     @classmethod
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
         properties = resource.get("Properties", {})
+        require_openai_kind(properties.get("kind"))
         return ResourceExtract(
             resource_address=resource.get("LogicalId", ""),
             node_type="compute",
@@ -458,6 +702,8 @@ class AzureOpenAI(ComputeResource):
 
     @classmethod
     def extract_arm(cls, resource: dict) -> ResourceExtract:
+        kind, _ = resolve_arm_value(resource.get("kind"), resource.get(ARM_PARAMETERS_KEY, {}))
+        require_openai_kind(kind)
         return ResourceExtract(
             resource_address=resource.get(ARM_ADDRESS_KEY, ""),
             node_type="compute",
@@ -465,7 +711,7 @@ class AzureOpenAI(ComputeResource):
             service="AzureOpenAI",
             region=arm_region(resource),
             config={
-                "kind": resource.get("kind"),
+                "kind": kind,
                 "skuName": _arm_sku_name(resource),
             },
         )

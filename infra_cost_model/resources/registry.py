@@ -27,7 +27,8 @@ from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import (
     AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage,
-    ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, resolve_arm_value,
+    ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, SERVICE_PLANS_KEY, resolve_arm_value,
+    service_plans_from_arm, service_plans_from_pulumi, service_plans_from_tf,
 )
 from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 from .kms import KMSKey
@@ -292,12 +293,15 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
     unsupported: list[str] = []
     # Terraform show -json structure
     resources = tf_json.get("resource", []) or tf_json.get("values", {}).get("root_module", {}).get("resources", [])
+    # Function Apps need the SKU of their App Service plan (#382).
+    plans = service_plans_from_tf(resources)
 
     for resource in resources:
         if isinstance(resource, dict):
             addr = resource.get("address", "")
             if addr:
-                extracted = ResourceRegistry.extract(addr, resource, "terraform")
+                extracted = ResourceRegistry.extract(
+                    addr, {**resource, SERVICE_PLANS_KEY: plans}, "terraform")
                 if extracted:
                     results[addr] = extracted
                 else:
@@ -330,12 +334,15 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
     results = {}
     unsupported: list[str] = []
     resources = pulumi_json.get("deployment", {}).get("resources", [])
+    # Function Apps need the SKU of their App Service plan (#382).
+    plans = service_plans_from_pulumi(resources)
 
     for resource in resources:
         if isinstance(resource, dict):
             addr = resource.get("id", "") or resource.get("name", "")
             if addr:
-                extracted = ResourceRegistry.extract(addr, resource, "pulumi")
+                extracted = ResourceRegistry.extract(
+                    addr, {**resource, SERVICE_PLANS_KEY: plans}, "pulumi")
                 if extracted:
                     results[addr] = extracted
                 else:
@@ -459,9 +466,15 @@ def extract_resources_from_arm(arm_json: dict) -> dict[str, dict]:
     template = _arm_template(arm_json)
     parameters = template.get("parameters") or {}
 
-    for addr, resource in _arm_resources(template.get("resources"), parameters):
-        resource_data = {**resource, ARM_ADDRESS_KEY: addr,
-                         ARM_PARAMETERS_KEY: parameters}
+    resources = [
+        (addr, {**resource, ARM_ADDRESS_KEY: addr, ARM_PARAMETERS_KEY: parameters})
+        for addr, resource in _arm_resources(template.get("resources"), parameters)
+    ]
+    # Function Apps need the SKU of their App Service plan (#382).
+    plans = service_plans_from_arm(resources)
+
+    for addr, resource in resources:
+        resource_data = {**resource, SERVICE_PLANS_KEY: plans}
         extracted = ResourceRegistry.extract(addr, resource_data, "arm")
         if extracted:
             results[addr] = extracted
