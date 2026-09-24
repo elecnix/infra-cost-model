@@ -6,9 +6,18 @@ pattern used for AWS. Full pricing implementations will be added as the
 model is validated against real GCP pricing data.
 """
 
+import math
 from typing import Optional
 
-from .types import ComputeResource, StorageResource, RoutingResource, ResourceExtract
+from .types import (
+    ComputeResource, DerivedCatalogUsage, StorageResource, RoutingResource, ResourceExtract,
+)
+
+# Cloud Run functions (1st gen) memory sizes in MB, and the CPU clock in GHz
+# that each one gets. A function is billed for the smallest size that holds its
+# memory.
+_FUNCTION_CPU_GHZ = ((128, 0.2), (256, 0.4), (512, 0.8), (1024, 1.4),
+                     (2048, 2.4), (4096, 4.8), (8192, 4.8))
 
 
 class CloudFunction(ComputeResource):
@@ -17,6 +26,29 @@ class CloudFunction(ComputeResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["invocations", "avgDurationMs", "memoryMb"]
+
+    def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+        """Derive invocations, GB-seconds and GHz-seconds for a 1st gen function.
+
+        GCP bills the memory size that holds ``memoryMb`` and the CPU clock
+        that comes with it, for the duration rounded up to the next 100 ms.
+        """
+        inputs = ("invocations", "avgDurationMs", "memoryMb")
+        if not all(name in usage for name in inputs):
+            return None
+        invocations = usage["invocations"]
+        memory_mb, ghz = next(
+            ((mb, ghz) for mb, ghz in _FUNCTION_CPU_GHZ if usage["memoryMb"] <= mb),
+            _FUNCTION_CPU_GHZ[-1])
+        seconds = math.ceil(usage["avgDurationMs"] / 100) / 10
+        return DerivedCatalogUsage(
+            consumed=frozenset(inputs),
+            quantities={
+                "CloudFunctions-Invocation": invocations,
+                "CloudFunctions-GB-Second": invocations * memory_mb / 1024 * seconds,
+                "CloudFunctions-GHz-Second": invocations * ghz * seconds,
+            },
+        )
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudFunction"]:
@@ -82,6 +114,14 @@ class CloudStorage(StorageResource):
     def valid_metrics(self) -> list[str]:
         return ["storageGb", "readRequests", "writeRequests", "dataOutGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # Standard class in one region. Writes are Class A operations and
+        # reads are Class B operations.
+        return {"storageGb": "GCS-Standard-GiB-Month",
+                "writeRequests": "GCS-Class-A-Operation",
+                "readRequests": "GCS-Class-B-Operation"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudStorage"]:
         if (resource_address.startswith("google_storage_bucket.") or
@@ -144,6 +184,13 @@ class CloudRun(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["requests", "dataOutGb", "vcpuSeconds", "memoryGbSeconds"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # Request-based billing.
+        return {"requests": "CloudRun-Request",
+                "vcpuSeconds": "CloudRun-vCPU-Second",
+                "memoryGbSeconds": "CloudRun-GiB-Second"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudRun"]:
         if (resource_address.startswith("google_cloud_run_service.") or
@@ -198,6 +245,11 @@ class Firestore(StorageResource):
     @property
     def valid_metrics(self) -> list[str]:
         return ["readRequests", "writeRequests", "storageGb"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"readRequests": "Firestore-Read", "writeRequests": "Firestore-Write",
+                "storageGb": "Firestore-GiB-Month"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["Firestore"]:

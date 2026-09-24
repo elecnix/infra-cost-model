@@ -16,6 +16,7 @@ broken live path can't masquerade as success.
 import dataclasses
 import os
 import json
+import re
 import platform
 import warnings
 import requests
@@ -100,6 +101,79 @@ def _region_usagetype_prefix(region: str) -> str:
     GraphQL variable but the query will return empty.
     """
     return _REGION_PREFIX.get(region, "REGION_PREFIX")
+
+
+# Azure regions to sync (#226). Infracost names an Azure region by its ARM name
+# (eastus), which is also the `location` value the Azure handlers read.
+_AZURE_REGIONS = (
+    "eastus", "eastus2", "centralus", "northcentralus", "southcentralus",
+    "westcentralus", "westus", "westus2", "westus3", "canadacentral", "canadaeast",
+    "brazilsouth", "mexicocentral", "northeurope", "westeurope", "uksouth", "ukwest",
+    "francecentral", "germanywestcentral", "switzerlandnorth", "norwayeast",
+    "swedencentral", "italynorth", "polandcentral", "spaincentral", "eastasia",
+    "southeastasia", "japaneast", "japanwest", "koreacentral", "australiaeast",
+    "australiasoutheast", "centralindia", "southindia", "uaenorth",
+    "southafricanorth", "qatarcentral", "israelcentral",
+)
+
+# GCP location name for each region (#226). Infracost keeps some GCP products,
+# such as Firestore operations, in its global catalogue and names the location
+# in the description ("Cloud Firestore Read Ops Iowa"). `GCP_LOCATION` in a
+# descriptor's filter value is replaced with this name, the way REGION_PREFIX is
+# for AWS. The keys are also the GCP regions to sync.
+_GCP_LOCATION = {
+    "us-central1": "Iowa", "us-east1": "South Carolina", "us-east4": "Northern Virginia",
+    "us-east5": "Columbus", "us-south1": "Dallas", "us-west1": "Oregon",
+    "us-west2": "Los Angeles", "us-west4": "Las Vegas",
+    "northamerica-northeast1": "Montreal", "northamerica-northeast2": "Toronto",
+    "southamerica-east1": "Sao Paulo", "southamerica-west1": "Santiago",
+    "europe-west1": "Belgium", "europe-west2": "London", "europe-west3": "Frankfurt",
+    "europe-west4": "Netherlands", "europe-west8": "Milan", "europe-west9": "Paris",
+    "europe-west10": "Berlin", "europe-west12": "Turin", "europe-southwest1": "Madrid",
+    "europe-north1": "Finland", "me-central1": "Doha", "me-central2": "Dammam",
+    "me-west1": "Tel Aviv", "asia-east1": "Taiwan", "asia-east2": "Hong Kong",
+    "asia-northeast1": "Tokyo", "asia-northeast2": "Osaka", "asia-northeast3": "Seoul",
+    "asia-south1": "Mumbai", "asia-south2": "Delhi", "asia-southeast1": "Singapore",
+    "asia-southeast2": "Jakarta", "australia-southeast1": "Sydney",
+    "australia-southeast2": "Melbourne", "africa-south1": "Johannesburg",
+}
+
+
+def sync_regions(vendor: str) -> list[str]:
+    """The regions that ``sync-pricing`` syncs for *vendor* by default."""
+    regions = {"azure": _AZURE_REGIONS, "gcp": _GCP_LOCATION}.get(vendor, _REGION_PREFIX)
+    return sorted(regions)
+
+
+def _resolve_gcp_location(filters: Optional[list[dict]], region: str) -> Optional[list[dict]]:
+    """Replace ``GCP_LOCATION`` in filter values with *region*'s location name.
+
+    An unknown region keeps the placeholder, so the query matches nothing.
+    """
+    if not filters:
+        return filters
+    location = _GCP_LOCATION.get(region, "GCP_LOCATION")
+    return [{**f, "value": f["value"].replace("GCP_LOCATION", location)} for f in filters]
+
+
+def _scaled(amount: Optional[float], scale: float) -> Optional[float]:
+    return None if amount is None else amount * scale
+
+
+def _close_open_tiers(prices: list[dict]) -> list[dict]:
+    """End each tier where the next tier starts, when the API gives no end.
+
+    Azure tiers come with a start and no end. The catalog charges a tier
+    without an end for every unit above its start, so each tier but the last
+    needs the next tier's start as its end.
+    """
+    ordered = sorted(prices, key=lambda p: p.get("start_usage_amount") or 0)
+    closed = []
+    for p, following in zip(ordered, ordered[1:] + [None]):
+        if p.get("end_usage_amount") is None and following is not None:
+            p = {**p, "end_usage_amount": following.get("start_usage_amount")}
+        closed.append(p)
+    return closed
 
 
 class InfracostClient:
@@ -254,6 +328,8 @@ class InfracostClient:
         descriptor = METRIC_DESCRIPTORS.get(usage_metric)
         if descriptor is None:
             raise KeyError(f"No Infracost descriptor for usage_metric '{usage_metric}'")
+        # Azure and GCP descriptors name their vendor (#226).
+        vendor = descriptor.get("vendor", vendor)
 
         # Some services (notably AWSDataTransfer) catalogue their products
         # globally, with region="". `query_region` lets a descriptor query that
@@ -273,7 +349,7 @@ class InfracostClient:
             service=descriptor["service"],
             region=query_region,
             product_family=descriptor.get("product_family"),
-            attribute_filters=attribute_filters,
+            attribute_filters=_resolve_gcp_location(attribute_filters, region),
             purchase_option=descriptor.get("purchase_option"),
             vendor=vendor,
         )
@@ -317,14 +393,33 @@ class InfracostClient:
         (e.g. NAT Gateway's $0 "Prvd" provisioned rows).
         """
         excludes = descriptor.get("usagetype_exclude") or []
+        # `attribute_patterns` keeps the rows whose attributes match a regular
+        # expression, for values the API can only match exactly. GCP names a
+        # region's price tier in the description ("Services CPU Tier 2 ...").
+        patterns = descriptor.get("attribute_patterns") or {}
         kept = []
         for p in _with_unit(prices, unit_match):
-            usagetype = (p.get("attributes") or {}).get("usagetype", "")
+            attributes = p.get("attributes") or {}
+            usagetype = attributes.get("usagetype", "")
             if any(x in usagetype for x in excludes):
+                continue
+            if not all(re.fullmatch(pattern, attributes.get(key) or "")
+                       for key, pattern in patterns.items()):
                 continue
             kept.append(p)
         _require_one_product(usage_metric, kept)
-        return [_price_row(p, usage_metric, now) for p in kept]
+        kept = _close_open_tiers(kept)
+        # Azure prices some meters per block of units, such as $0.035 per 10K
+        # API calls. `unit_scale` is the block size: the stored row prices one
+        # unit, and its tier bounds count units.
+        scale = descriptor.get("unit_scale", 1)
+        return [
+            _price_row({**p, "price_usd": p["price_usd"] / scale,
+                        "start_usage_amount": _scaled(p.get("start_usage_amount"), scale),
+                        "end_usage_amount": _scaled(p.get("end_usage_amount"), scale)},
+                       usage_metric, now)
+            for p in kept
+        ]
 
     @staticmethod
     def _region_pair_representative(prices, usage_metric, region, unit_match,
@@ -463,7 +558,11 @@ def _require_one_product(usage_metric: str, prices: list[dict]) -> None:
         for p in prices
     }
     if len(products) > 1:
-        usagetypes = sorted(dict(attrs).get("usagetype", "?") for _, attrs in products)
+        # Azure rows name the product by meter, GCP rows by description.
+        usagetypes = sorted(
+            next((dict(attrs)[k] for k in ("usagetype", "meterName", "description")
+                  if k in dict(attrs)), "?")
+            for _, attrs in products)
         raise RuntimeError(
             f"Infracost descriptor for '{usage_metric}' matched {len(products)} "
             f"products (usagetypes: {', '.join(usagetypes)}); it must match one. "
@@ -729,6 +828,170 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "regionless_usagetype": True,
         "usagetype_base": "DataTransfer-Regional-Bytes",
     },
+    # --- Azure (#226) ------------------------------------------------------------
+    # Rows are stored under the service the Azure handler names, since Infracost
+    # names the services differently ("Functions", "Azure Cosmos DB", "Storage").
+    # Each filter names the product, SKU and meter, which picks one product.
+    # Azure prices some meters per block of units ("10", "10K", "1M");
+    # `unit_scale` turns the price and the tier bounds into one unit.
+    # Functions consumption plan: $0.20 per million executions and $0.000016 per
+    # GB-second, after a monthly free 1M executions and 400,000 GB-seconds.
+    "AzureFunctions-Execution": {
+        "vendor": "azure", "service": "Functions", "store_service": "AzureFunctions",
+        "attribute_filters": [{"key": "productName", "value": "Functions"},
+                              {"key": "skuName", "value": "Standard"},
+                              {"key": "meterName", "value": "Standard Total Executions"}],
+        "unit": "10", "unit_scale": 10, "store_unit": "Executions",
+    },
+    "AzureFunctions-GB-Second": {
+        "vendor": "azure", "service": "Functions", "store_service": "AzureFunctions",
+        "attribute_filters": [{"key": "productName", "value": "Functions"},
+                              {"key": "skuName", "value": "Standard"},
+                              {"key": "meterName", "value": "Standard Execution Time"}],
+        "unit": "1 GB Second", "store_unit": "GB-Seconds",
+    },
+    # Cosmos DB serverless: $0.25 per million request units, and transactional
+    # storage at $0.25 per GB-month (the "RUs" SKU, which serverless accounts use).
+    "CosmosDB-Serverless-RU": {
+        "vendor": "azure", "service": "Azure Cosmos DB", "store_service": "CosmosDB",
+        "attribute_filters": [{"key": "productName", "value": "Azure Cosmos DB serverless"},
+                              {"key": "meterName", "value": "1M RUs"}],
+        "unit": "1M", "unit_scale": 1_000_000, "store_unit": "RUs",
+    },
+    "CosmosDB-Storage-GB-Month": {
+        "vendor": "azure", "service": "Azure Cosmos DB", "store_service": "CosmosDB",
+        "attribute_filters": [{"key": "productName", "value": "Azure Cosmos DB"},
+                              {"key": "skuName", "value": "RUs"},
+                              {"key": "meterName", "value": "Data Stored"}],
+        "unit": "1 GB/Month", "store_unit": "GB-Mo",
+    },
+    # API Management consumption tier: $3.50 per million calls after a monthly
+    # free 1M. The other tiers bill per unit-hour, which no handler metric models.
+    "APIM-Consumption-Call": {
+        "vendor": "azure", "service": "API Management", "store_service": "APIManagement",
+        "attribute_filters": [{"key": "productName", "value": "API Management"},
+                              {"key": "skuName", "value": "Consumption"},
+                              {"key": "meterName", "value": "Consumption Calls"}],
+        "unit": "10K", "unit_scale": 10_000, "store_unit": "Calls",
+    },
+    # Blob Storage, general-purpose v2 block blobs in the Hot tier with LRS, the
+    # defaults of `azurerm_storage_account`. Storage is tiered at 50 TB and 500 TB.
+    "Blob-Hot-LRS-GB-Month": {
+        "vendor": "azure", "service": "Storage", "store_service": "BlobStorage",
+        "attribute_filters": [{"key": "productName", "value": "General Block Blob v2"},
+                              {"key": "skuName", "value": "Hot LRS"},
+                              {"key": "meterName", "value": "Hot LRS Data Stored"}],
+        "unit": "1 GB/Month", "store_unit": "GB-Mo",
+    },
+    "Blob-Hot-Read-Operation": {
+        "vendor": "azure", "service": "Storage", "store_service": "BlobStorage",
+        "attribute_filters": [{"key": "productName", "value": "General Block Blob v2"},
+                              {"key": "skuName", "value": "Hot LRS"},
+                              {"key": "meterName", "value": "Hot Read Operations"}],
+        "unit": "10K", "unit_scale": 10_000, "store_unit": "Requests",
+    },
+    "Blob-Hot-LRS-Write-Operation": {
+        "vendor": "azure", "service": "Storage", "store_service": "BlobStorage",
+        "attribute_filters": [{"key": "productName", "value": "General Block Blob v2"},
+                              {"key": "skuName", "value": "Hot LRS"},
+                              {"key": "meterName", "value": "Hot LRS Write Operations"}],
+        "unit": "10K", "unit_scale": 10_000, "store_unit": "Requests",
+    },
+    # --- GCP (#226) --------------------------------------------------------------
+    # GCP rows have two attributes, a description and a resource group. Some
+    # products are in Infracost's global catalogue (`query_region: "global"`) and
+    # are stored under the sync region. Tier 2 regions name the tier in the
+    # description, so `attribute_patterns` matches both spellings.
+    # Cloud Run functions (1st gen): invocations, memory GB-seconds and CPU
+    # GHz-seconds. The first 2M invocations a month are free.
+    "CloudFunctions-Invocation": {
+        "vendor": "gcp", "service": "Cloud Run Functions", "store_service": "CloudFunctions",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description",
+                               "value": "Cloud Run Functions (1st Gen) Invocations"}],
+        "unit": "count",
+    },
+    "CloudFunctions-GB-Second": {
+        "vendor": "gcp", "service": "Cloud Run Functions", "store_service": "CloudFunctions",
+        "attribute_filters": [{"key": "resourceGroup", "value": "Functions"}],
+        "attribute_patterns": {"description": r"Cloud Run functions \(1st Gen\) Memory"
+                                              r"( Tier 2)? +\(Request-based billing\)"},
+        "unit": "gibibyte second",
+    },
+    "CloudFunctions-GHz-Second": {
+        "vendor": "gcp", "service": "Cloud Run Functions", "store_service": "CloudFunctions",
+        "attribute_filters": [{"key": "resourceGroup", "value": "Functions"}],
+        "attribute_patterns": {"description": r"Cloud Run functions \(1st Gen\) CPU"
+                                              r"( Tier 2)? +\(Request-based billing\)"},
+        "unit": "second",
+    },
+    # Cloud Run services with request-based billing. The first 2M requests a
+    # month are free.
+    "CloudRun-Request": {
+        "vendor": "gcp", "service": "Cloud Run", "store_service": "CloudRun",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description", "value": "Requests"}],
+        "unit": "count",
+    },
+    "CloudRun-vCPU-Second": {
+        "vendor": "gcp", "service": "Cloud Run", "store_service": "CloudRun",
+        "attribute_filters": [{"key": "resourceGroup", "value": "Compute"}],
+        "attribute_patterns": {"description": r"Services CPU( Tier 2)? +\(Request-based billing\)"},
+        "unit": "second",
+    },
+    "CloudRun-GiB-Second": {
+        "vendor": "gcp", "service": "Cloud Run", "store_service": "CloudRun",
+        "attribute_filters": [{"key": "resourceGroup", "value": "Compute"}],
+        "attribute_patterns": {"description": r"Services Memory( Tier 2)? +\(Request-based billing\)"},
+        "unit": "gibibyte second",
+    },
+    # Cloud Storage, Standard class in a single region. Storage is in the
+    # regional catalogue. Class A (writes, lists) and Class B (reads) operations
+    # are global, with 5,000 and 50,000 free a month.
+    "GCS-Standard-GiB-Month": {
+        "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+        "attribute_filters": [{"key": "resourceGroup", "value": "RegionalStorage"}],
+        "unit": "gibibyte month",
+    },
+    "GCS-Class-A-Operation": {
+        "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description",
+                               "value": "Regional Standard Class A Operations"}],
+        "unit": "count",
+    },
+    "GCS-Class-B-Operation": {
+        "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description",
+                               "value": "Regional Standard Class B Operations"}],
+        "unit": "count",
+    },
+    # Firestore Standard edition, in the global catalogue with one product for
+    # each location. GCP_LOCATION is resolved from the sync region. The daily
+    # free quota is left out: its tier bounds count a day, and catalog tiers
+    # count a month.
+    "Firestore-Read": {
+        "vendor": "gcp", "service": "Cloud Firestore", "store_service": "Firestore",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description",
+                               "value": "Cloud Firestore Read Ops GCP_LOCATION"}],
+        "unit": "count",
+    },
+    "Firestore-Write": {
+        "vendor": "gcp", "service": "Cloud Firestore", "store_service": "Firestore",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description",
+                               "value": "Cloud Firestore Entity Writes GCP_LOCATION"}],
+        "unit": "count",
+    },
+    "Firestore-GiB-Month": {
+        "vendor": "gcp", "service": "Cloud Firestore", "store_service": "Firestore",
+        "query_region": "global",
+        "attribute_filters": [{"key": "description",
+                               "value": "Cloud Firestore Storage GCP_LOCATION"}],
+        "unit": "gibibyte month",
+    },
 }
 
 
@@ -769,6 +1032,8 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
     for region in regions:
         for metric in metrics:
             if metric not in METRIC_DESCRIPTORS:
+                continue
+            if METRIC_DESCRIPTORS[metric].get("vendor", "aws") != vendor:
                 continue
             try:
                 total += client.sync_to_cache(cache, metric, region, vendor)
