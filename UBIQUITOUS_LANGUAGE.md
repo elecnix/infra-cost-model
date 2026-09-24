@@ -4,10 +4,10 @@
 
 | Term | Definition | Aliases to avoid |
 |------|-----------|-----------------|
-| **Node** | A billable infrastructure component in the DAG (e.g., a Lambda function, a DynamoDB table) | Action, ActionNode, ResourceSlot, vertex |
+| **Node** | A billable infrastructure component in the DAG (e.g., a Lambda function, a DynamoDB table) | Action, ActionNode, ResourceSlot, vertex, economic sink |
 | **Edge** | A directed connection between two nodes representing invocation or data flow | Call, dependency, link, arc |
 | **Entry node** | The node that receives external traffic; the starting point of cost propagation | Entry point, external-facing service, root, source |
-| **Leaf node** | A node with no outgoing edges; it consumes resources but does not invoke other nodes | Terminal node, sink, economic sink |
+| **Leaf node** | A node with no outgoing edges; it consumes resources but does not invoke other nodes | Terminal node, sink |
 | **Flow** | A complete path from an entry node through the DAG, representing one unit of traffic through the system | Request path, call chain, trace |
 
 ## Derivation and propagation
