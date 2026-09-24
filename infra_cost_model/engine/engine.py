@@ -209,6 +209,76 @@ def catalog_location_errors(model: dict) -> list[str]:
     return errors
 
 
+class EdgeTypeMetricWarning(UserWarning):
+    """A usage metric counts no calls because no edge of its type reaches its node.
+
+    Emitted once per (node, metric) pair that ``edge_type_metric_warning``
+    reports (#322).
+    """
+
+
+def edge_type_metric_warning(address: str, node: dict, metric_name: str,
+                             metric_def, received: set[str]) -> Optional[str]:
+    """Why a usage metric's ``edgeType`` counts no calls, or None if it counts some.
+
+    A metric with ``edgeType`` counts only the calls that arrive over edges of
+    that type (#313). If the node receives calls over other edge types and none
+    over this one, the metric counts no calls, which usually means an edge
+    lacks its ``type``. A node that receives no calls at all is left to the unreachable
+    node warning, and a fixed metric ignores ``edgeType``. ``compute`` warns
+    with this message and ``validate`` reports it, so the two always agree.
+    """
+    if not isinstance(metric_def, dict):
+        return None
+    edge_type = metric_def.get("edgeType")
+    if edge_type not in EDGE_TYPES or not received or edge_type in received:
+        return None
+    if _metric_is_fixed(metric_def, node.get("flatOverride", False)):
+        return None
+    return (
+        f"Node '{address}': usage metric '{metric_name}' counts only calls over "
+        f"{edge_type} edges, and no {edge_type} edge reaches the node, so the "
+        f"metric counts no calls. The node receives calls over "
+        f"{', '.join(sorted(received))} edges. Set 'type: {edge_type}' on the "
+        f"edge that carries these calls, or remove the metric."
+    )
+
+
+def edge_type_metric_warnings(model: dict) -> list[str]:
+    """``edge_type_metric_warning`` for every metric of a model, from its edges.
+
+    ``validate`` does not derive traffic, so it takes the edge types a node
+    receives from the edges that end at the node, plus ``invoke`` for a
+    workflow's entry node.
+    """
+    if not isinstance(model, dict) or not isinstance(model.get("nodes"), dict):
+        return []
+    received: dict[str, set[str]] = defaultdict(set)
+    workflows = model.get("workflows") or [model.get("workflow")]
+    for workflow in workflows:
+        if isinstance(workflow, dict) and workflow.get("entry"):
+            received[workflow["entry"]].add(DEFAULT_EDGE_TYPE)
+    for edge in model.get("edges") or []:
+        if isinstance(edge, dict) and edge.get("to"):
+            received[edge["to"]].add(edge.get("type", DEFAULT_EDGE_TYPE))
+    return _edge_type_metric_warnings(model["nodes"], received)
+
+
+def _edge_type_metric_warnings(nodes: dict,
+                               received: dict[str, set[str]]) -> list[str]:
+    """Apply ``edge_type_metric_warning`` to each node's metrics."""
+    messages = []
+    for address, node in nodes.items():
+        if not isinstance(node, dict):
+            continue
+        for metric_name, metric_def in (node.get("usageMetrics") or {}).items():
+            message = edge_type_metric_warning(
+                address, node, metric_name, metric_def, received.get(address, set()))
+            if message is not None:
+                messages.append(message)
+    return messages
+
+
 class DAGValidator:
     """Validates DAG structure for cost model."""
 
@@ -1193,6 +1263,9 @@ class CostEngine:
         # Metrics left out of ``costs`` because nothing could price them.
         # Filled by ``compute``; each one also emits an UnpricedMetricWarning.
         self.unpriced_metrics: list[UnpricedMetric] = []
+        # Metrics whose edgeType never reaches their node (#322). Filled by
+        # ``compute``; each one also emits an EdgeTypeMetricWarning.
+        self.edge_type_warnings: list[str] = []
 
     @property
     def _time_multiplier(self) -> float:
@@ -1263,6 +1336,7 @@ class CostEngine:
         # the output time basis.
         self.costs = self._finalize_costs(aggregator.costs, aggregator.fixed_costs)
         self._report_unpriced(aggregator.unpriced)
+        self._report_edge_types()
 
         return self.costs
 
@@ -1355,8 +1429,23 @@ class CostEngine:
                 + all_fixed.get(addr, 0.0) * fixed_multiplier
             )
         self._report_unpriced(all_unpriced)
+        self._report_edge_types()
 
         return self.costs
+
+    def _report_edge_types(self) -> None:
+        """Store and warn about metrics whose edge type never reaches their node.
+
+        The check runs on the derived usage of every workflow together, so a
+        node that one workflow reads and another writes counts both types.
+        """
+        received = {
+            address: {t for t, count in usage.invocations_by_edge_type.items() if count > 0}
+            for address, usage in self.derived_usage.items()
+        }
+        self.edge_type_warnings = _edge_type_metric_warnings(self.nodes, received)
+        for message in self.edge_type_warnings:
+            warnings.warn(EdgeTypeMetricWarning(message), stacklevel=4)
 
     def _report_unpriced(self, misses: list["_Miss"]) -> None:
         """Store and warn about metrics that no price source covered.
