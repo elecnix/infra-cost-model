@@ -1,6 +1,6 @@
 {
   "name": "@infra-cost-model/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "TypeScript SDK for declaring infrastructure cost models — one of three surfaces (YAML, TypeScript, Python) sharing one schema.",
   "license": "MIT",
   "main": "./dist/index.js",

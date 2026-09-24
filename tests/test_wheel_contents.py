@@ -53,7 +53,7 @@ def test_data_files_found():
     files = _data_files()
     assert "infra_cost_model/schema/cost-model.schema.json" in files
     assert "infra_cost_model/pricing/seed/seed_prices.json" in files
-    assert "infra_cost_model/vendors/github-copilot/prices.yaml" in files
+    assert "infra_cost_model/vendors/github/prices.yaml" in files
 
 
 def test_wheel_contains_every_data_file(wheel_names):

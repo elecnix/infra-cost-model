@@ -154,7 +154,7 @@ def test_vendor_data_lives_inside_the_package():
         for entry in root.iterdir()
         if entry.is_dir() and not entry.name.startswith("_") and entry.joinpath("prices.yaml").is_file()
     )
-    assert "github-copilot" in prices_files
+    assert "github" in prices_files
 
     rows_on_disk = sum(
         len(yaml.safe_load(root.joinpath(name, "prices.yaml").read_text(encoding="utf-8")))

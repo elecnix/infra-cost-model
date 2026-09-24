@@ -29,9 +29,9 @@ def fixed_node():
         "nodeType": "external",
         "resourceAddress": "n",
         "usageMetrics": {
-            "plan": {"unit": "months", "value": 1, "fixed": True,
-                     "shape": "flat_subscription", "rate": SUBSCRIPTION},
+            "plan": {"unit": "months", "value": 1, "fixed": True},
         },
+        "pricingRates": {"plan": SUBSCRIPTION},
     }
 
 
@@ -47,6 +47,7 @@ def usage_node():
 def mixed_node():
     node = usage_node()
     node["usageMetrics"]["plan"] = fixed_node()["usageMetrics"]["plan"]
+    node["pricingRates"]["plan"] = SUBSCRIPTION
     return node
 
 
@@ -121,7 +122,7 @@ def test_cli_labels_the_per_second_total(tmp_path):
     import yaml
     path = tmp_path / "m.yaml"
     path.write_text(yaml.safe_dump(single(mixed_node())))
-    # No catalog: the node prices from its shape and pricingRates.
+    # No catalog: the node prices from its pricingRates.
     old = sys.stdout
     sys.stdout = io.StringIO()
     try:

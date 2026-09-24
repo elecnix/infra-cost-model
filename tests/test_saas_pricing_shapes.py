@@ -1,121 +1,22 @@
-"""Tests for SaaS pricing-shape handlers (#241).
+"""Tests for the SaaS pricing shape (#241, #246).
 
-Covers the built-in shapes (flat_subscription, per_unit_flat, free_tier,
-transactional), the registry, entry-point discovery, and engine integration —
-a shaped metric in a cost model DAG prices through the shape handler instead of
-the catalog / embedded pricingRates path.
+``transactional`` is the one shape left: a percentage of each transaction's
+value plus fixed fees. Other SaaS prices are vendor price rows, and
+``tests/test_vendors_are_data.py`` covers them. This file covers the handler,
+the registry and engine integration: a shaped metric prices through its
+handler instead of the catalog or the embedded ``pricingRates``.
 """
 
 import pytest
 
-from infra_cost_model.saas import (
-    SaaSPricingRegistry,
-    flat_subscription,
-    free_tier,
-    per_unit_flat,
-    transactional,
-)
-from infra_cost_model.saas.pricing_shapes import discover_entry_point_handlers
+from infra_cost_model.saas import SaaSPricingRegistry, transactional
 from infra_cost_model.engine import CostEngine
 from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH
 
-
-# ── Built-in shape handlers ──────────────────────────────────────────────
-
-
-class TestFlatSubscription:
-    """flat_subscription: a fixed monthly fee, charged when enabled."""
-
-    def test_zero_quantity_is_free(self):
-        """A metric at 0 means the feature is off — no charge."""
-        assert flat_subscription(0, {"rate": 99.0}) == 0.0
-
-    def test_enabled_charges_once(self):
-        """Flipping from 0 to 1 charges the rate once."""
-        assert flat_subscription(1, {"rate": 99.0}) == 99.0
-
-    def test_multi_instance_charges_per_unit(self):
-        """3 custom domains → 3 × rate."""
-        assert flat_subscription(3, {"rate": 99.0}) == 297.0
-
-    def test_missing_rate_defaults_to_zero(self):
-        """No rate param → $0 (defensive)."""
-        assert flat_subscription(1, {}) == 0.0
-
-    def test_usage_driven_charges_once(self):
-        """On a usage-driven metric the quantity counts uses: 1,000 uses in a
-        month still charge the rate once (#295)."""
-        assert flat_subscription(1000, {"rate": 49.0, "fixed": False}) == 49.0
-        assert flat_subscription(0, {"rate": 49.0, "fixed": False}) == 0.0
-
-    def test_fractional_quantity_charges_once(self):
-        """A fractional quantity (unusual) charges once, not 0."""
-        assert flat_subscription(0.5, {"rate": 50.0}) == 50.0
+STRIPE = {"percentage_rate": 0.029, "fixed_per_transaction": 0.30, "volume": 50.0}
 
 
-class TestPerUnitFlat:
-    """per_unit_flat: $X × count."""
-
-    def test_basic(self):
-        """5 SSO connections at $125 each."""
-        assert per_unit_flat(5, {"rate": 125.0}) == 625.0
-
-    def test_zero_count(self):
-        """0 connections → $0."""
-        assert per_unit_flat(0, {"rate": 125.0}) == 0.0
-
-    def test_missing_rate(self):
-        assert per_unit_flat(10, {}) == 0.0
-
-
-class TestFreeTier:
-    """free_tier: first N units free, then overage."""
-
-    def test_under_free_allowance(self):
-        """900k MAU under 1M free → $0."""
-        assert free_tier(900_000, {"free": 1_000_000, "overage": 0.0}) == 0.0
-
-    def test_exactly_at_allowance(self):
-        """Exactly 1M MAU → $0 (boundary)."""
-        assert free_tier(1_000_000, {"free": 1_000_000, "overage": 0.0}) == 0.0
-
-    def test_above_allowance_with_overage(self):
-        """1.5M MAU, 1M free, $0.01 overage → 500k × $0.01 = $5000."""
-        assert free_tier(1_500_000, {"free": 1_000_000, "overage": 0.01}) == 5000.0
-
-    def test_zero_overage_above_allowance(self):
-        """Above the free tier but overage rate is 0 → still $0."""
-        assert free_tier(2_000_000, {"free": 1_000_000, "overage": 0.0}) == 0.0
-
-    def test_no_free_allowance(self):
-        """free=0 means every unit is billable."""
-        assert free_tier(100, {"free": 0, "overage": 0.05}) == 5.0
-
-    def test_stepped_tiers(self):
-        """Tiers: first 50k overage at $0.01, above 50k at $0.005.
-
-        75k billable → 50k × $0.01 + 25k × $0.005 = $500 + $125 = $625.
-        """
-        params = {
-            "free": 1_000_000,
-            "overage": 0.0,
-            "tiers": [
-                {"up_to": 50_000, "rate": 0.01},
-                {"up_to": float("inf"), "rate": 0.005},
-            ],
-        }
-        assert free_tier(1_075_000, params) == pytest.approx(625.0)
-
-    def test_stepped_tiers_partial(self):
-        """Only 30k billable, first tier up to 50k → 30k × $0.01 = $300."""
-        params = {
-            "free": 1_000_000,
-            "tiers": [
-                {"up_to": 50_000, "rate": 0.01},
-                {"up_to": float("inf"), "rate": 0.005},
-            ],
-        }
-        assert free_tier(1_030_000, params) == pytest.approx(300.0)
+# ── Built-in shape handler ───────────────────────────────────────────────
 
 
 class TestTransactional:
@@ -153,22 +54,16 @@ class TestTransactional:
 
 
 class TestSaaSPricingRegistry:
-    """The pluggable shape registry."""
+    """The shape registry."""
 
-    def test_builtin_shapes_registered(self):
-        """All four built-in shapes are registered at module load."""
-        shapes = SaaSPricingRegistry.known_shapes()
-        assert "flat_subscription" in shapes
-        assert "per_unit_flat" in shapes
-        assert "free_tier" in shapes
-        assert "transactional" in shapes
+    def test_only_transactional_is_registered(self):
+        assert SaaSPricingRegistry.known_shapes() == {"transactional"}
 
     def test_get_returns_handler(self):
         """get() returns the callable for a known shape."""
-        handler = SaaSPricingRegistry.get("per_unit_flat")
+        handler = SaaSPricingRegistry.get("transactional")
         assert handler is not None
-        assert callable(handler)
-        assert handler(5, {"rate": 10.0}) == 50.0
+        assert handler(5, {"per_call": 2.0}) == 10.0
 
     def test_get_unknown_shape_returns_none(self):
         """get() returns None for an unregistered shape."""
@@ -180,34 +75,50 @@ class TestSaaSPricingRegistry:
             SaaSPricingRegistry.compute("nonexistent", 100, {})
 
     def test_register_custom_shape(self):
-        """A third-party shape can be registered and computed."""
+        """A caller that builds a model in code can register a shape."""
         def my_shape(quantity, params):
             return quantity * float(params.get("rate", 1.0)) + 10.0
 
         SaaSPricingRegistry.register("my_custom_shape", my_shape)
         try:
-            assert SaaSPricingRegistry.get("my_custom_shape") is not None
             assert SaaSPricingRegistry.compute("my_custom_shape", 5, {"rate": 2.0}) == 20.0
         finally:
-            SaaSPricingRegistry.reset()
-            # Re-register built-ins after reset (reset clears everything).
-            SaaSPricingRegistry.register("flat_subscription", flat_subscription)
-            SaaSPricingRegistry.register("per_unit_flat", per_unit_flat)
-            SaaSPricingRegistry.register("free_tier", free_tier)
-            SaaSPricingRegistry.register("transactional", transactional)
+            SaaSPricingRegistry._handlers.pop("my_custom_shape", None)
 
     def test_reset_clears_handlers(self):
         """reset() clears all handlers (for testing)."""
         SaaSPricingRegistry.reset()
-        assert len(SaaSPricingRegistry.known_shapes()) == 0
-        # Restore for other tests.
-        SaaSPricingRegistry.register("flat_subscription", flat_subscription)
-        SaaSPricingRegistry.register("per_unit_flat", per_unit_flat)
-        SaaSPricingRegistry.register("free_tier", free_tier)
-        SaaSPricingRegistry.register("transactional", transactional)
+        try:
+            assert SaaSPricingRegistry.known_shapes() == set()
+        finally:
+            SaaSPricingRegistry.register("transactional", transactional)
 
 
 # ── Engine integration ───────────────────────────────────────────────────
+
+
+ENTRY = {
+    "nodeType": "routing",
+    "resourceAddress": "entry",
+    "provider": "test",
+    "service": "Test",
+    "region": "global",
+    "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
+    "pricingRates": {"requests": 0.0},
+}
+
+
+def _saas_node(metrics, **extra):
+    return {
+        "nodeType": "external",
+        "resourceAddress": "saas_node",
+        "provider": "external",
+        "service": "Payments",
+        "region": "global",
+        "pricingModel": "flat",
+        "usageMetrics": metrics,
+        **extra,
+    }
 
 
 class TestEngineShapeIntegration:
@@ -216,293 +127,68 @@ class TestEngineShapeIntegration:
     def _make_engine(self, nodes, edges=None):
         model = {
             "workflow": {"name": "test", "entry": "entry", "frequency": {"unit": "perMonth", "value": 1000}},
-            "nodes": nodes,
+            "nodes": {"entry": ENTRY, **nodes},
             "edges": edges or [],
         }
         return CostEngine(model, catalog=None, time_basis="monthly")
 
-    def test_per_unit_flat_in_engine(self):
-        """A per_unit_flat metric prices correctly in the engine."""
-        nodes = {
-            "entry": {
-                "nodeType": "routing",
-                "resourceAddress": "entry",
-                "provider": "test",
-                "service": "Test",
-                "region": "global",
-                "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                "pricingRates": {"requests": 0.0},
-            },
-            "saas_node": {
-                "nodeType": "compute",
-                "resourceAddress": "saas_node",
-                "provider": "workos",
-                "service": "WorkOS",
-                "region": "global",
-                "pricingModel": "flat",
-                "flatOverride": True,
-                "usageMetrics": {
-                    "SSO-Connection": {
-                        "unit": "Conns",
-                        "value": 3,
-                        "shape": "per_unit_flat",
-                        "rate": 125.0,
-                    },
-                },
-            },
-        }
-        engine = self._make_engine(nodes)
-        costs = engine.compute()
-        # 3 connections × $125 = $375
-        assert costs["saas_node"] == pytest.approx(375.0)
+    def test_fixed_transactional_in_engine(self):
+        """A fixed count of 3 transactions of $50: 3 × ($1.45 + $0.30)."""
+        nodes = {"saas_node": _saas_node(
+            {"charges": {"unit": "transactions", "value": 3, "shape": "transactional", **STRIPE}},
+            flatOverride=True,
+        )}
+        costs = self._make_engine(nodes).compute()
+        assert costs["saas_node"] == pytest.approx(3 * 1.75)
 
-    def test_free_tier_in_engine(self):
-        """A free_tier metric prices correctly in the engine."""
-        nodes = {
-            "entry": {
-                "nodeType": "routing",
-                "resourceAddress": "entry",
-                "provider": "test",
-                "service": "Test",
-                "region": "global",
-                "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                "pricingRates": {"requests": 0.0},
-            },
-            "saas_node": {
-                "nodeType": "compute",
-                "resourceAddress": "saas_node",
-                "provider": "workos",
-                "service": "WorkOS",
-                "region": "global",
-                "pricingModel": "flat",
-                "flatOverride": True,
-                "usageMetrics": {
-                    "MAU": {
-                        "unit": "Users",
-                        "value": 1_500_000,
-                        "shape": "free_tier",
-                        "free": 1_000_000,
-                        "overage": 0.01,
-                    },
-                },
-            },
-        }
-        engine = self._make_engine(nodes)
-        costs = engine.compute()
-        # 500k overage × $0.01 = $5000
-        assert costs["saas_node"] == pytest.approx(5000.0)
-
-    def test_flat_subscription_in_engine(self):
-        """A flat_subscription metric charges the rate when enabled."""
-        nodes = {
-            "entry": {
-                "nodeType": "routing",
-                "resourceAddress": "entry",
-                "provider": "test",
-                "service": "Test",
-                "region": "global",
-                "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                "pricingRates": {"requests": 0.0},
-            },
-            "saas_node": {
-                "nodeType": "compute",
-                "resourceAddress": "saas_node",
-                "provider": "workos",
-                "service": "WorkOS",
-                "region": "global",
-                "pricingModel": "flat",
-                "flatOverride": True,
-                "usageMetrics": {
-                    "CustomDomain": {
-                        "unit": "Months",
-                        "value": 1,
-                        "shape": "flat_subscription",
-                        "rate": 99.0,
-                    },
-                },
-            },
-        }
-        engine = self._make_engine(nodes)
-        costs = engine.compute()
-        assert costs["saas_node"] == pytest.approx(99.0)
-
-    def test_mixed_shapes_in_one_node(self):
-        """A node with multiple shaped metrics (the WorkOS pattern)."""
-        nodes = {
-            "entry": {
-                "nodeType": "routing",
-                "resourceAddress": "entry",
-                "provider": "test",
-                "service": "Test",
-                "region": "global",
-                "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                "pricingRates": {"requests": 0.0},
-            },
-            "workos": {
-                "nodeType": "compute",
-                "resourceAddress": "workos",
-                "provider": "workos",
-                "service": "WorkOS",
-                "region": "global",
-                "pricingModel": "flat",
-                "flatOverride": True,
-                "usageMetrics": {
-                    "MAU": {
-                        "unit": "Users", "value": 1_200_000,
-                        "shape": "free_tier", "free": 1_000_000, "overage": 0.0,
-                    },
-                    "SSO": {
-                        "unit": "Conns", "value": 2,
-                        "shape": "per_unit_flat", "rate": 125.0,
-                    },
-                    "AuditLog": {
-                        "unit": "Orgs", "value": 3,
-                        "shape": "per_unit_flat", "rate": 5.0,
-                    },
-                    "Domain": {
-                        "unit": "Months", "value": 1,
-                        "shape": "flat_subscription", "rate": 99.0,
-                    },
-                },
-            },
-        }
-        engine = self._make_engine(nodes)
-        costs = engine.compute()
-        # MAU: 200k overage × $0 = $0
-        # SSO: 2 × $125 = $250
-        # AuditLog: 3 × $5 = $15
-        # Domain: 1 × $99 = $99
-        # Total: $364
-        assert costs["workos"] == pytest.approx(364.0)
+    def test_usage_driven_transactional(self):
+        """A shaped metric that's not fixed scales with the invocation count."""
+        nodes = {"saas_node": _saas_node(
+            {"calls": {"unit": "calls", "value": 2, "shape": "transactional", "per_call": 0.01}},
+        )}
+        edges = [{"from": "entry", "to": "saas_node", "rate": 1}]
+        costs = self._make_engine(nodes, edges).compute()
+        # 1,000 requests × 2 calls × $0.01 = $20
+        assert costs["saas_node"] == pytest.approx(20.0)
 
     def test_unknown_shape_raises_error(self):
         """An unregistered shape raises ValueError — no silent fallback."""
-        nodes = {
-            "entry": {
-                "nodeType": "routing",
-                "resourceAddress": "entry",
-                "provider": "test",
-                "service": "Test",
-                "region": "global",
-                "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                "pricingRates": {"requests": 0.0},
-            },
-            "saas_node": {
-                "nodeType": "compute",
-                "resourceAddress": "saas_node",
-                "provider": "datadog",
-                "service": "Datadog",
-                "region": "global",
-                "pricingModel": "flat",
-                "flatOverride": True,
-                "usageMetrics": {
-                    "Hosts": {
-                        "unit": "Hosts", "value": 4,
-                        "shape": "nonexistent_shape",  # not registered
-                    },
-                },
-                "pricingRates": {
-                    "Hosts": 46.0,
-                },
-            },
-        }
-        engine = self._make_engine(nodes)
+        nodes = {"saas_node": _saas_node(
+            {"Hosts": {"unit": "Hosts", "value": 4, "shape": "nonexistent_shape"}},
+            flatOverride=True, pricingRates={"Hosts": 46.0},
+        )}
         with pytest.raises(ValueError, match="Unknown pricing shape 'nonexistent_shape'"):
-            engine.compute()
+            self._make_engine(nodes).compute()
+
+    @pytest.mark.parametrize("shape", ["free_tier", "per_unit_flat", "flat_subscription"])
+    def test_removed_shape_raises_with_the_replacement(self, shape):
+        """A model the schema would reject still fails in the engine (#246)."""
+        nodes = {"saas_node": _saas_node(
+            {"Hosts": {"unit": "Hosts", "value": 4, "shape": shape, "rate": 23.0}},
+            flatOverride=True,
+        )}
+        with pytest.raises(ValueError, match="vendor price rows"):
+            self._make_engine(nodes).compute()
 
     def test_no_shape_uses_existing_path(self):
         """A metric without a shape uses the existing catalog/pricingRates path."""
-        nodes = {
-            "entry": {
-                "nodeType": "routing",
-                "resourceAddress": "entry",
-                "provider": "test",
-                "service": "Test",
-                "region": "global",
-                "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                "pricingRates": {"requests": 0.0},
-            },
-            "saas_node": {
-                "nodeType": "compute",
-                "resourceAddress": "saas_node",
-                "provider": "datadog",
-                "service": "Datadog",
-                "region": "global",
-                "pricingModel": "flat",
-                "flatOverride": True,
-                "usageMetrics": {
-                    "Hosts": {"unit": "Hosts", "value": 4},  # no shape
-                },
-                "pricingRates": {
-                    "Hosts": 46.0,
-                },
-            },
-        }
-        engine = self._make_engine(nodes)
-        costs = engine.compute()
+        nodes = {"saas_node": _saas_node(
+            {"Hosts": {"unit": "Hosts", "value": 4}},
+            flatOverride=True, pricingRates={"Hosts": 46.0},
+        )}
+        costs = self._make_engine(nodes).compute()
         # No shape → existing path → 4 × $46 = $184
         assert costs["saas_node"] == pytest.approx(184.0)
-
-    def test_usage_driven_shaped_metric(self):
-        """A shaped metric that's NOT fixed scales with invocation count."""
-        nodes = {
-            "entry": {
-                "nodeType": "routing",
-                "resourceAddress": "entry",
-                "provider": "test",
-                "service": "Test",
-                "region": "global",
-                "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                "pricingRates": {"requests": 0.0},
-            },
-            "saas_node": {
-                "nodeType": "compute",
-                "resourceAddress": "saas_node",
-                "provider": "datadog",
-                "service": "Datadog",
-                "region": "global",
-                "pricingModel": "flat",
-                # NO flatOverride — metrics are usage-driven by default
-                "usageMetrics": {
-                    "LogIngestion": {
-                        "unit": "GB",
-                        "value": 0.00002,  # per-request
-                        "shape": "per_unit_flat",
-                        "rate": 0.10,
-                    },
-                },
-            },
-        }
-        edges = [{"from": "entry", "to": "saas_node", "rate": 1}]
-        engine = self._make_engine(nodes, edges)
-        costs = engine.compute()
-        # 1000 requests × 0.00002 GB/req = 0.02 GB
-        # 0.02 GB × $0.10/GB = $0.002
-        assert costs["saas_node"] == pytest.approx(0.002)
 
 
 class TestShapesGetMonthlyQuantities:
     """A usage-driven shaped metric is priced on a month of usage (#295).
 
-    The engine derives usage per second, while shape parameters (a
-    subscription rate, a free allowance) describe a month. The engine passes
-    each handler the monthly quantity and converts the monthly cost to the
-    output time basis, the way catalog tiers work since #292.
+    The engine derives usage per second, while shape parameters describe a
+    month. The engine passes each handler the monthly quantity and converts
+    the monthly cost to the output time basis, the way catalog tiers work
+    since #292.
     """
-
-    # Each case: shape parameters, invocations a month, expected monthly cost.
-    CASES = {
-        # Any use in the month charges the subscription once.
-        "flat_subscription": ({"rate": 49.0}, 1000, 49.0),
-        "per_unit_flat": ({"rate": 0.10}, 1000, 100.0),
-        # 20,000 used, 10,000 free, 10,000 × $0.02 = $200.
-        "free_tier": ({"free": 10_000, "overage": 0.02}, 20_000, 200.0),
-        # 1,000 × ($50 × 0.029 + $0.30) = $1,750 (#288).
-        "transactional": (
-            {"percentage_rate": 0.029, "fixed_per_transaction": 0.30, "volume": 50.0},
-            1000, 1750.0,
-        ),
-    }
 
     # Output time basis → how many months it covers.
     BASES = {
@@ -522,56 +208,37 @@ class TestShapesGetMonthlyQuantities:
                 "frequency": {"unit": "perMonth", "value": invocations},
             },
             "nodes": {
-                "entry": {
-                    "nodeType": "routing",
-                    "resourceAddress": "entry",
-                    "provider": "test",
-                    "service": "Test",
-                    "region": "global",
-                    "usageMetrics": {"requests": {"unit": "requests", "value": 1}},
-                    "pricingRates": {"requests": 0.0},
-                },
-                "saas_node": {
-                    "nodeType": "external",
-                    "resourceAddress": "saas_node",
-                    "provider": "external",
-                    "service": "SaaS",
-                    "region": "global",
-                    "pricingModel": pricing_model,
-                    "usageMetrics": {"Metric": metric},
-                },
+                "entry": ENTRY,
+                "saas_node": _saas_node({"Metric": metric}, pricingModel=pricing_model),
             },
             # A fixed node takes no edge, which would only warn (DP#9).
             "edges": [] if fixed else [{"from": "entry", "to": "saas_node", "rate": 1}],
         }
 
     @pytest.mark.parametrize("basis", list(BASES))
-    @pytest.mark.parametrize("shape", list(CASES))
-    def test_builtin_shape_at_time_basis(self, shape, basis):
-        params, invocations, monthly = self.CASES[shape]
-        model = self._model({"shape": shape, **params}, invocations)
+    def test_transactional_at_time_basis(self, basis):
+        """1,000 × ($50 × 0.029 + $0.30) = $1,750 a month (#288)."""
+        model = self._model({"shape": "transactional", **STRIPE}, 1000)
         costs = CostEngine(model, catalog=None, time_basis=basis).compute()
-        assert costs["saas_node"] == pytest.approx(monthly * self.BASES[basis])
+        assert costs["saas_node"] == pytest.approx(1750.0 * self.BASES[basis])
 
-    @pytest.mark.parametrize("shape", list(CASES))
-    def test_tiered_pricing_model_gets_monthly_quantity(self, shape):
+    def test_tiered_pricing_model_gets_monthly_quantity(self):
         """The tiered pricing model dispatches shapes the same way."""
-        params, invocations, monthly = self.CASES[shape]
-        model = self._model({"shape": shape, **params}, invocations,
+        model = self._model({"shape": "transactional", **STRIPE}, 1000,
                             pricing_model="tiered")
         costs = CostEngine(model, catalog=None, time_basis="monthly").compute()
-        assert costs["saas_node"] == pytest.approx(monthly)
+        assert costs["saas_node"] == pytest.approx(1750.0)
 
     @pytest.mark.parametrize("basis", ["monthly", "yearly"])
-    def test_fixed_metric_is_unchanged(self, basis):
-        """A fixed metric's value is already a monthly total: 2 × $49."""
-        model = self._model({"shape": "flat_subscription", "rate": 49.0, "value": 2},
+    def test_fixed_metric_is_a_monthly_total(self, basis):
+        """A fixed metric's value is already a monthly total: 2 × $1.75."""
+        model = self._model({"shape": "transactional", **STRIPE, "value": 2},
                             1000, fixed=True)
         costs = CostEngine(model, catalog=None, time_basis=basis).compute()
-        assert costs["saas_node"] == pytest.approx(98.0 * self.BASES[basis])
+        assert costs["saas_node"] == pytest.approx(3.5 * self.BASES[basis])
 
-    def test_plugin_shape_gets_monthly_quantity(self):
-        """A shape that a plugin registers also receives the monthly quantity."""
+    def test_registered_shape_gets_monthly_quantity(self):
+        """A shape registered in code also receives the monthly quantity."""
         seen = []
 
         def recording_shape(quantity, params):
@@ -586,18 +253,3 @@ class TestShapesGetMonthlyQuantities:
             SaaSPricingRegistry._handlers.pop("recording_shape", None)
         assert seen == [pytest.approx(1000.0)]
         assert costs["saas_node"] == pytest.approx(500.0)
-
-
-# ── Entry-point discovery ────────────────────────────────────────────────
-
-
-class TestEntryPointDiscovery:
-    """Entry-point plugin discovery (no real plugins installed in tests)."""
-
-    def test_discover_does_not_crash_without_plugins(self):
-        """discover_entry_point_handlers() is safe to call with no plugins."""
-        # Should not raise even though no infra_cost_model.saas_handlers
-        # entry-points are installed in the test environment.
-        discover_entry_point_handlers()
-        # Built-ins should still be present.
-        assert "flat_subscription" in SaaSPricingRegistry.known_shapes()
