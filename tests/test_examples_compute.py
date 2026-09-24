@@ -130,7 +130,7 @@ MONTHLY_TOTALS = {
     # are inside the free 1,000,000) and Datadog 6 x $23 = $487; DynamoDB 21.915M
     # reads x $0.125/M = $2.74, and no writes because no write edge reaches
     # the table (#313); API $21.92 + egress (438.3 GB - 100 GB free) x $0.09 =
-    # $30.45; Lambda $15.78.
+    # $30.45; Lambda $15.78. The low end is $487 + $70.87 = $557.87.
     "saas-subscription-api.yaml": (557.87, 573.75),
     # API 43.83M x $1/M = $43.83; egress (2,191.5 GB - 100 GB free) x $0.09 =
     # $188.24; DynamoDB 30.681M reads x $0.125/M + 13.149M writes x $0.625/M =
