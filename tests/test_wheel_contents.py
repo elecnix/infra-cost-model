@@ -52,7 +52,7 @@ def test_data_files_found():
     """The source tree has data files, so an empty check can't pass by accident."""
     files = _data_files()
     assert "infra_cost_model/schema/cost-model.schema.json" in files
-    assert "infra_cost_model/pricing/seed/aws_pricelist_seed.json" in files
+    assert "infra_cost_model/pricing/seed/seed_prices.json" in files
     assert "infra_cost_model/vendors/github-copilot/prices.yaml" in files
 
 

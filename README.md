@@ -82,7 +82,7 @@ infra-cost-model sync-pricing                              # all services, all r
 infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
 ```
 
-The bundled `infra_cost_model/pricing/seed/aws_pricelist_seed.json` is a small us-east-1 fixture for the test suite and offline use. You don't need it to set up the tool. `seed-pricing` loads it into the local cache.
+The bundled `infra_cost_model/pricing/seed/seed_prices.json` is a small fixture, with AWS prices for us-east-1 and Azure prices for eastus, for the test suite and offline use. You don't need it to set up the tool. `seed-pricing` loads it into the local cache.
 
 ## Metrics with no price
 

@@ -49,6 +49,12 @@ ACCOUNT_WIDE_FREE_TIERS: frozenset[tuple[str, str, str]] = frozenset({
     ("aws", "AmazonCloudWatch", "CloudWatch-Alarm-Month"),
     ("aws", "AmazonCloudWatch", "CloudWatch-Log-Ingestion"),
     ("aws", "AmazonCloudWatch", "CloudWatch-Log-Storage"),
+    # https://azure.microsoft.com/en-us/pricing/details/functions/: the
+    # consumption plan's free grant of 1 million requests and 400,000 GB-s is
+    # "per month per subscription ... across all function apps in that
+    # subscription" (#363).
+    ("azure", "AzureFunctions", "AzureFunctions-Execution"),
+    ("azure", "AzureFunctions", "AzureFunctions-GB-Second"),
 })
 
 
@@ -135,4 +141,8 @@ FREE_ALLOWANCES: dict[tuple[str, str, str], float] = {
     ("aws", "AmazonSNS", "SNS-Delivery-HTTP"): 100_000,
     ("aws", "AmazonSQS", "SQS-Standard-Request"): 1_000_000,
     ("aws", "AmazonSQS", "SQS-FIFO-Request"): 1_000_000,
+    # Azure Retail Prices API (#363): the first tier of each meter is $0.
+    ("azure", "AzureFunctions", "AzureFunctions-Execution"): 1_000_000,
+    ("azure", "AzureFunctions", "AzureFunctions-GB-Second"): 400_000,
+    ("azure", "APIManagement", "APIM-Consumption-Call"): 1_000_000,
 }

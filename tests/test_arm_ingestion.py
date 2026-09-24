@@ -213,16 +213,21 @@ class TestCost:
         for addr in model["nodes"]:
             assert addr in costs, f"Node '{addr}' missing from costs"
 
-    def test_unpriced_azure_metrics_are_reported(self, seed_catalog):
-        """The seed has no Azure rows, so the engine names each metric it left out."""
+    def test_only_cosmos_reads_are_unpriced(self, seed_catalog):
+        """The seed prices the Azure handlers in eastus (#363).
+
+        Cosmos DB serverless bills request units, not reads, so the engine
+        reports `readRequests` as unpriced and prices every other metric.
+        """
         nodes, _ = extract_fixture()
         engine = CostEngine(build_model(nodes), catalog=seed_catalog, time_basis="monthly")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            engine.compute()
-        assert {u.provider for u in engine.unpriced_metrics} == {"azure"}
+            costs = engine.compute()
+        assert [(u.node, u.metric) for u in engine.unpriced_metrics] == [
+            (COSMOS, "readRequests")]
+        assert all(costs[addr] > 0 for addr in (APIM, FUNC, BLOB, OPENAI))
 
-    @pytest.mark.xfail(strict=True, reason="The seed has no Azure rows yet (#363)")
     def test_extracted_model_has_a_price(self, seed_catalog):
         nodes, _ = extract_fixture()
         with warnings.catch_warnings():
