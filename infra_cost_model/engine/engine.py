@@ -17,6 +17,9 @@ from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
 from infra_cost_model.pricing.free_tiers import (
     ACCOUNT, SharedFreeAllowance, free_tier_scope, shared_free_allowance,
 )
+from infra_cost_model.pricing.global_services import (
+    GLOBAL_PRICE_REGIONS, is_global_metric,
+)
 from infra_cost_model.version_requirement import require_engine
 
 
@@ -561,7 +564,8 @@ def _price_pooled_charges(catalog: PricingCatalog,
     month), and updates ``cost`` on each charge. A pool with one charge
     keeps its cost, unless it shares an account-wide free allowance with a
     pool in another region (#336), or its metric shares a free allowance
-    with other metrics (#338).
+    with other metrics (#338), or its metric belongs to a global service
+    used in another region (#378).
     """
     pools: dict[tuple, list[_CatalogCharge]] = defaultdict(list)
     for charge in charges:
@@ -569,6 +573,7 @@ def _price_pooled_charges(catalog: PricingCatalog,
 
     pool_costs = _price_account_wide_pools(catalog, pools)
     pool_costs.update(_price_shared_allowance_pools(catalog, pools))
+    pool_costs.update(_price_global_pools(catalog, pools))
 
     deltas: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
     for key, members in pools.items():
@@ -611,6 +616,8 @@ def _price_account_wide_pools(catalog: PricingCatalog,
         provider, service, _, metric, scaling = key
         if shared_free_allowance(provider, service, metric) is not None:
             continue  # _price_shared_allowance_pools prices it (#338).
+        if is_global_metric(provider, service, metric):
+            continue  # _price_global_pools prices it (#378).
         if (free_tier_scope(provider, service, metric) == ACCOUNT
                 and sum(c.quantity for c in members) > 0):
             accounts[(provider, service, metric, scaling)].append(key)
@@ -640,6 +647,46 @@ def _price_account_wide_pools(catalog: PricingCatalog,
                 parameters=pools[k][0].parameters,
                 include_free_tier=False,
                 period_seconds=SECONDS_PER_MONTH).total_cost
+    return costs
+
+
+def _price_global_pools(catalog: PricingCatalog,
+                        pools: dict[tuple, list[_CatalogCharge]]
+                        ) -> dict[tuple, float]:
+    """Price each global metric once across all regions (#378).
+
+    A global service, such as Route 53, bills the account's use in every
+    region together at one price. For each such metric used in more than one
+    region, this prices the total quantity once and gives each regional pool
+    a part of the cost in proportion to its quantity. The rows stored under
+    ``GLOBAL_PRICE_REGIONS`` price the total, or else the rows of the first
+    region of the pool that has some. Returns the monthly cost of each
+    regional pool it priced. The pricing layer says which metrics are global.
+    """
+    accounts: dict[tuple, list[tuple]] = defaultdict(list)
+    for key, members in pools.items():
+        provider, service, _, metric, scaling = key
+        if (is_global_metric(provider, service, metric)
+                and sum(c.quantity for c in members) > 0):
+            accounts[(provider, service, metric, scaling)].append(key)
+
+    costs: dict[tuple, float] = {}
+    for (provider, service, metric, _), keys in accounts.items():
+        if len(keys) < 2:
+            continue
+        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
+        total = sum(quantities.values())
+        regions = list(GLOBAL_PRICE_REGIONS) + sorted(k[2] for k in keys)
+        for region in regions:
+            result = catalog.query(provider, service, region, metric, total,
+                                   parameters=pools[keys[0]][0].parameters,
+                                   period_seconds=SECONDS_PER_MONTH)
+            if result is not None:
+                break
+        if result is None:
+            continue
+        for k in keys:
+            costs[k] = result.total_cost * quantities[k] / total
     return costs
 
 
