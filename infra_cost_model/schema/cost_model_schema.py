@@ -4,7 +4,7 @@ import json
 from importlib import resources
 from jsonschema import validate, Draft202012Validator
 
-from infra_cost_model.saas.pricing_shapes import SaaSPricingRegistry
+from infra_cost_model.saas.pricing_shapes import REMOVED_SHAPES, removed_shape_message
 
 try:  # pyyaml is an existing dependency (see validate_yaml) but stay safe offline.
     from yaml import safe_load as _yaml_safe_load, YAMLError as _YAMLError
@@ -25,6 +25,9 @@ _BASE_PROVIDERS = {"aws", "azure", "gcp", "bedrock", "openai", "external"}
 def _load_known_providers() -> set[str]:
     """Known provider ids at load time: builtins plus every vendor declared under
     ``infra_cost_model/vendors/<id>/vendor.yaml``. To register a new provider, add one such file.
+
+    The loader requires each vendor directory to hold rows whose ``vendor`` is
+    the directory's id, so every id here has prices (#246).
     """
     known = set(_BASE_PROVIDERS)
     try:
@@ -48,18 +51,6 @@ def _load_known_providers() -> set[str]:
         if isinstance(pid, str) and _PROVIDER_ID_RE.fullmatch(pid):
             known.add(pid)
 
-        # Price rows may use provider aliases (for example github-copilot -> github).
-        prices_file = vendor_dir.joinpath("prices.yaml")
-        if prices_file.is_file():
-            try:
-                prices_data = _yaml_safe_load(prices_file.read_text(encoding="utf-8"))
-                if isinstance(prices_data, list):
-                    for row in prices_data:
-                        alias = row.get("vendor") if isinstance(row, dict) else None
-                        if isinstance(alias, str) and _PROVIDER_ID_RE.fullmatch(alias):
-                            known.add(alias)
-            except (OSError, UnicodeError, _YAMLError, ValueError):
-                pass
     return known
 
 
@@ -95,48 +86,50 @@ def _provider_errors(model: dict) -> list[str]:
     return errors
 
 
-def _shape_errors(model: dict) -> list[str]:
-    """Report usage metrics that reference an unregistered pricing shape."""
+def _shape_errors(model: dict, known_shapes: list[str]) -> list[str]:
+    """Report usage metrics that name a shape the schema does not list.
+
+    A shape that version 0.3.0 removed gets a message that says to use vendor
+    price rows instead (#246).
+    """
     errors: list[str] = []
     nodes = model.get("nodes") if isinstance(model, dict) else None
     if not isinstance(nodes, dict):
         return errors
 
-    # Importing built-ins on every validation makes this check robust when a
-    # caller or test resets the mutable plugin registry.
-    from infra_cost_model.saas.pricing_shapes import (
-        flat_subscription,
-        free_tier,
-        per_unit_flat,
-        transactional,
-    )
-
-    shapes = SaaSPricingRegistry.known_shapes() | {
-        "flat_subscription",
-        "free_tier",
-        "per_unit_flat",
-        "transactional",
-    }
     for name, node in nodes.items():
         if not isinstance(node, dict):
             continue
         metrics = node.get("usageMetrics")
         if metrics is None:
+            # A node may give one metric under the singular key instead.
             metric = node.get("usageMetric")
-            metrics = [metric] if isinstance(metric, dict) else []
+            paths = {f"nodes.{name}.usageMetric": metric}
         elif isinstance(metrics, dict):
-            metrics = list(metrics.values())
-        if not isinstance(metrics, list):
+            paths = {f"nodes.{name}.usageMetrics.{key}": value
+                     for key, value in metrics.items()}
+        else:
             continue
-        for metric in metrics:
+        for path, metric in paths.items():
             if not isinstance(metric, dict):
                 continue
             shape = metric.get("shape")
-            if isinstance(shape, str) and shape not in shapes:
+            if not isinstance(shape, str) or shape in known_shapes:
+                continue
+            if shape in REMOVED_SHAPES:
+                errors.append(f"{path}.shape: " + removed_shape_message(shape))
+            else:
                 errors.append(
-                    f"Unknown shape '{shape}' on node '{name}'. Known shapes: {sorted(shapes)}"
+                    f"Unknown shape '{shape}' on node '{name}'. Known shapes: {known_shapes}"
                 )
     return errors
+
+
+def _schema_shapes(schema: dict) -> list[str]:
+    """The ``shape`` values the schema allows, or none if it lists none."""
+    shape = (schema.get("definitions", {}).get("usageMetric", {})
+             .get("properties", {}).get("shape", {}))
+    return list(shape.get("enum", []))
 
 
 def validate_cost_model(model: dict) -> list[str]:
@@ -151,14 +144,18 @@ def validate_cost_model(model: dict) -> list[str]:
     schema = json.loads(SCHEMA_PATH.read_text())
     errors: list[str] = []
 
+    known_shapes = _schema_shapes(schema)
     validator = Draft202012Validator(schema)
     for error in validator.iter_errors(model):
+        # _shape_errors reports an unknown shape with a clearer message.
+        if error.path and error.path[-1] == "shape" and error.validator == "enum":
+            continue
         path = ".".join(str(p) for p in error.path)
         errors.append(f"{path}: {error.message}" if path else error.message)
 
     # Semantic provider whitelist (see DP: validate against loaded vendor ids at load time).
     errors.extend(_provider_errors(model))
-    errors.extend(_shape_errors(model))
+    errors.extend(_shape_errors(model, known_shapes))
 
     return errors
 

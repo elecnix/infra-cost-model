@@ -140,10 +140,20 @@ def _read_vendor_prices() -> list[Price]:
             raise ValueError(f"{source}: invalid YAML: {exc}") from exc
         if not isinstance(data, list):
             raise ValueError(f"{source}: expected a list of price rows")
-        parsed.extend(
-            _parse_row(row, source, index, fetched_at)
-            for index, row in enumerate(data, start=1)
-        )
+        for index, row in enumerate(data, start=1):
+            price = _parse_row(row, source, index, fetched_at)
+            # The directory id is the provider id a model names, so a row
+            # under another id would give that directory a provider with no
+            # prices (#246).
+            if price.vendor != vendor_id:
+                raise _row_error(
+                    source, index,
+                    f"'vendor' is '{price.vendor}', but rows in this directory "
+                    f"must use the directory's id '{vendor_id}'",
+                )
+            parsed.append(price)
+        if not data:
+            raise ValueError(f"{source}: has no price rows for vendor '{vendor_id}'")
     return parsed
 
 

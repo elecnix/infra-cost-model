@@ -1,16 +1,18 @@
-# Example: SaaS subscription stack (Vercel + WorkOS + Datadog)
-# Demonstrates: declarative SaaS pricing shapes, the engine pin that keeps them
-# honest, and per-unit / free-tier / flat-subscription pricing on non-IaC nodes.
+# Example: SaaS subscription stack (WorkOS + Datadog on AWS)
+# Demonstrates: SaaS vendors priced from vendor price rows
+# (infra_cost_model/vendors/workos and infra_cost_model/vendors/datadog) next
+# to AWS resources, with fixed monthly counts on non-IaC nodes.
 #
-# Issue: https://github.com/elecnix/infra-cost-model/issues/241
+# Issues: https://github.com/elecnix/infra-cost-model/issues/241,
+# https://github.com/elecnix/infra-cost-model/issues/246
 
 version: "1.0"
 
-# The SaaS `shape` vocabulary is an engine feature. An engine without shape
-# dispatch prices each of these metrics at $0 and reports a total that looks
-# reasonable, so the model states the version it needs and the engine refuses
-# rather than reporting a number it cannot stand behind.
-requiresEngine: ">=0.2.0"
+# The WorkOS and Datadog price rows ship with engine 0.3.0. An older engine
+# prices these nodes differently or not at all, so the model states the
+# version it needs and the engine refuses rather than reporting a number it
+# cannot stand behind.
+requiresEngine: ">=0.3.0"
 
 workflow:
   name: saas-subscription-api
@@ -51,9 +53,10 @@ nodes:
       avgDurationMs: { unit: ms, value: 200 }
       memoryMb: { unit: MB, value: 256 }
 
-  # WorkOS: identity, priced per connection and per organization. These are
-  # counts, not traffic, so they carry `fixed: true` and their value is a flat
-  # monthly total rather than a per-invocation multiplier.
+  # WorkOS: identity, priced per user, per connection and per feature. These
+  # are counts, not traffic, so they carry `fixed: true` and their value is a
+  # monthly total rather than a per-invocation multiplier. The price rows are
+  # in infra_cost_model/vendors/workos/prices.yaml.
   workos_identity:
     nodeType: external
     resourceAddress: workos_identity
@@ -61,24 +64,23 @@ nodes:
     service: WorkOS
     region: global
     usageMetrics:
-      # First 1M monthly active users are free; overage is $0 on this plan.
-      WorkOS-MAU:            { unit: Users,  value: 1200000, fixed: true, shape: free_tier, free: 1000000, overage: 0.0 }
-      # $125/mo per SSO connection.
-      WorkOS-SSO-Connection: { unit: Conns,  value: 2,       fixed: true, shape: per_unit_flat, rate: 125.0 }
-      # $5/mo per organization for audit logs.
-      WorkOS-AuditLog-Org:   { unit: Orgs,   value: 3,       fixed: true, shape: per_unit_flat, rate: 5.0 }
-      # A flat $99/mo feature, charged once when enabled (value 1).
-      WorkOS-CustomDomain:   { unit: Months, value: 1,       fixed: true, shape: flat_subscription, rate: 99.0 }
+      # The first 1,000,000 monthly active users are free.
+      AuthKit-MAU:    { unit: users,       value: 900000, fixed: true }
+      # $125 a month for each of the first 15 SSO connections.
+      SSO-Connection: { unit: connections, value: 2,      fixed: true }
+      # $99 a month for a custom domain.
+      Custom-Domain:  { unit: months,      value: 1,      fixed: true }
 
-  # Datadog: a flat subscription per host.
+  # Datadog: Infrastructure Monitoring Enterprise, $23 per host a month billed
+  # annually. The price rows are in infra_cost_model/vendors/datadog/prices.yaml.
   datadog_observability:
     nodeType: external
     resourceAddress: datadog_observability
-    provider: external   # no infra_cost_model/vendors/datadog price rows; the shape carries the rate
-    service: Datadog
+    provider: datadog
+    service: Infrastructure
     region: global
     usageMetrics:
-      Hosts: { unit: Hosts, value: 6, fixed: true, shape: flat_subscription, rate: 23.0 }
+      Infra-Enterprise-Host: { unit: hosts, value: 6, fixed: true }
 
   aws_dynamodb_table.tenants:
     nodeType: storage

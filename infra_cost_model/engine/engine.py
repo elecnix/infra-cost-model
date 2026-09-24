@@ -876,14 +876,13 @@ class CostAggregator:
             )
 
             # SaaS pricing shapes (#241): if the metric declares a ``shape``,
-            # dispatch to the pluggable SaaS pricing-handler registry before
-            # the catalog / embedded-rates path. A shaped metric is priced by
-            # its shape handler (flat_subscription, per_unit_flat, free_tier,
-            # transactional, or a plugin-registered shape) using the metric's
-            # inline parameters — this is the first-class path for non-IaC SaaS
-            # resources that the catalog cannot reach. An unknown shape raises
-            # ValueError from the registry rather than falling through to the
-            # catalog, so a misspelled shape cannot price at $0.
+            # dispatch to the SaaS pricing-handler registry before the catalog
+            # / embedded-rates path. A shaped metric is priced by its shape
+            # handler (transactional, or a shape registered in code) using the
+            # metric's inline parameters. Other SaaS prices are vendor price
+            # rows in the catalog (#246). An unknown shape raises ValueError
+            # from the registry rather than falling through to the catalog, so
+            # a misspelled shape cannot price at $0.
             metric_cost = self._price_shape(metric_name, metric_def,
                                             total_quantity, metric_fixed)
 
