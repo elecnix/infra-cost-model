@@ -251,11 +251,20 @@ class InfracostClient:
         # global catalogue while the price is still stored under the caller's
         # `region` (see `region_pair_source` below).
         query_region = descriptor.get("query_region", region)
+        attribute_filters = descriptor.get("attribute_filters")
+        if (attribute_filters and descriptor.get("unprefixed_in_us_east_1")
+                and query_region == "us-east-1"):
+            # Some services name the us-east-1 product without a region prefix
+            # ("LoadBalancerUsage", not "USE1-LoadBalancerUsage").
+            attribute_filters = [
+                {"key": f["key"], "value": f["value"].replace("REGION_PREFIX-", "")}
+                for f in attribute_filters
+            ]
         prices = self.query_prices(
             service=descriptor["service"],
             region=query_region,
             product_family=descriptor.get("product_family"),
-            attribute_filters=descriptor.get("attribute_filters"),
+            attribute_filters=attribute_filters,
             purchase_option=descriptor.get("purchase_option"),
             vendor=vendor,
         )
@@ -450,15 +459,22 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Fargate-EphemeralStorage-GB-Hours"}],
         "unit": "GB-Hours",
     },
-    # Application Load Balancer: ALB-hours (resource type ELB:Balancing) + LCU.
+    # Application Load Balancer (#352): ALB-hours and used LCU-hours. The group
+    # "ELB:Balancing" also holds the Outposts-, TS- and ReservedLCU products, so
+    # each descriptor names its usagetype. `store_service` stores the rows under
+    # "AmazonALB", the service that the handler and seed use.
     "ALB-Hour": {
-        "service": "AWSELB", "product_family": "Load Balancer-Application",
-        "attribute_filters": [{"key": "group", "value": "ELB:Balancing"}],
+        "service": "AWSELB", "store_service": "AmazonALB",
+        "product_family": "Load Balancer-Application",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-LoadBalancerUsage"}],
+        "unprefixed_in_us_east_1": True,
         "unit": "Hrs",
     },
     "ALB-LCU-ProcessedBytes": {
-        "service": "AWSELB", "product_family": "Load Balancer-Application",
-        "attribute_filters": [{"key": "group", "value": "ELB:Balancing"}],
+        "service": "AWSELB", "store_service": "AmazonALB",
+        "product_family": "Load Balancer-Application",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-LCUUsage"}],
+        "unprefixed_in_us_east_1": True,
         "unit": "LCU-Hrs",
     },
     # NAT Gateway: Infracost prices this under service "AmazonEC2" / productFamily
@@ -511,10 +527,11 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "service": "AWSSecretsManager", "product_family": "Secret",
         "unit": "Secrets",
     },
-    # ECR: image storage per GB-month.
+    # ECR (#353): standard image storage per GB-month, not archive storage.
     "ECR-Storage": {
         "service": "AmazonECR", "product_family": "EC2 Container Registry",
-        "attribute_filters": [{"key": "groupDescription", "value": ""}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-TimedStorage-ByteHrs"}],
+        "unprefixed_in_us_east_1": True,
         "unit": "GB-Mo",
     },
     # Route53: per hosted zone per month.
@@ -522,10 +539,11 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "service": "AmazonRoute53", "product_family": "DNS Domain Names",
         "unit": "Mo",
     },
-    # S3: PUT requests.
+    # S3 (#354): AWS bills PUT, COPY, POST and LIST requests as Tier 1 requests.
     "S3-PutRequest": {
         "service": "AmazonS3", "product_family": "API Request",
-        "attribute_filters": [{"key": "group", "value": "S3-API-PutObject"}],
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Requests-Tier1"}],
+        "unprefixed_in_us_east_1": True,
         "unit": "Requests",
     },
     # KMS (#208): $1/customer-managed key-month + per-symmetric-request.
