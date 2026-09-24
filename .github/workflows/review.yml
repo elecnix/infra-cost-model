@@ -11,6 +11,10 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
+    # Over the last 73 successful runs, the median took 222 s, the 90th
+    # percentile 826 s, and the longest 2,013 s (about 34 minutes). The limit
+    # is above the longest run and stops a hung run within the hour (#344).
+    timeout-minutes: 45
     steps:
       - name: Review this pull request with Cite
         uses: elecnix/cite@7bbe8f051e9df569744c18e0fa8285f4129c1c79  # v0.10.0
