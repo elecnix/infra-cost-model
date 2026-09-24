@@ -95,23 +95,27 @@ def _seed_paid_row(metric):
 def test_log_ingestion_stores_only_standard_ingestion(creds):
     rows = _sync("CloudWatch-Log-Ingestion")
     # The free first 5 (#356), then the paid row.
-    assert [r.attributes["usagetype"] for r in rows] == ["USE1-DataProcessing-Bytes"] * 2
-    assert rows[0].price_usd == 0
+    free, paid = rows
+    assert free.attributes["usagetype"] == "USE1-DataProcessing-Bytes"
+    assert paid.attributes["usagetype"] == "USE1-DataProcessing-Bytes"
+    assert (free.price_usd, free.start_usage_amount, free.end_usage_amount) == (0, 0, 5)
     seed = _seed_paid_row("CloudWatch-Log-Ingestion")
-    assert rows[1].price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.50)
-    assert rows[1].start_usage_amount == seed.start_usage_amount == 5
-    assert rows[1].unit == seed.unit == "GB"
+    assert paid.price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.50)
+    assert paid.start_usage_amount == seed.start_usage_amount == 5
+    assert paid.unit == seed.unit == "GB"
 
 
 def test_log_storage_stores_standard_storage_not_centralization(creds):
     rows = _sync("CloudWatch-Log-Storage")
     # The free first 5 (#356), then the paid row.
-    assert [r.attributes["usagetype"] for r in rows] == ["USE1-TimedStorage-ByteHrs"] * 2
-    assert rows[0].price_usd == 0
+    free, paid = rows
+    assert free.attributes["usagetype"] == "USE1-TimedStorage-ByteHrs"
+    assert paid.attributes["usagetype"] == "USE1-TimedStorage-ByteHrs"
+    assert (free.price_usd, free.start_usage_amount, free.end_usage_amount) == (0, 0, 5)
     seed = _seed_paid_row("CloudWatch-Log-Storage")
-    assert rows[1].price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.03)
-    assert rows[1].start_usage_amount == seed.start_usage_amount == 5
-    assert rows[1].unit == seed.unit == "GB-Mo"
+    assert paid.price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.03)
+    assert paid.start_usage_amount == seed.start_usage_amount == 5
+    assert paid.unit == seed.unit == "GB-Mo"
 
 
 @pytest.mark.parametrize("region,prefix", [("ca-central-1", "CAN1"), ("eu-west-1", "EU")])

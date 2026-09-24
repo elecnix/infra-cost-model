@@ -290,6 +290,8 @@ class PricingCache:
         keeps the old rows. Rows from other sources, such as the seed file
         and the vendor files, stay as they are (#355).
         """
+        if self._replace_conn is not None:
+            raise RuntimeError("PricingCache.replacing blocks can't be nested")
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute(
@@ -314,7 +316,18 @@ class PricingCache:
         """
         attrs_hash = _hash_attributes(price.attributes)
 
-        conn = self._replace_conn or sqlite3.connect(self.db_path)
+        if self._replace_conn is not None:
+            self._write(self._replace_conn, price, attrs_hash)
+            return
+        conn = sqlite3.connect(self.db_path)
+        try:
+            self._write(conn, price, attrs_hash)
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _write(conn: sqlite3.Connection, price: Price, attrs_hash: str) -> None:
         conn.execute("""
             INSERT OR REPLACE INTO prices (
                 vendor, service, region, product_family, attributes,
@@ -329,9 +342,6 @@ class PricingCache:
             price.purchase_option, price.effective_date, price.source,
             price.fetched_at, price.per
         ))
-        if conn is not self._replace_conn:
-            conn.commit()
-            conn.close()
 
     def query(self, vendor: str, service: str, region: str,
               usage_metric: str, quantity: float | None = None) -> TieredPrice | Price | None:

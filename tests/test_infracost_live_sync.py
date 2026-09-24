@@ -237,3 +237,15 @@ def test_sync_adds_the_free_tier_once(creds, tmp_path):
     rows = _rows(catalog, "CloudWatch-Metric-Month", "infracost")
     assert [(price, start) for _, price, start in rows] == [
         (0.0, 0.0), (0.3, 10.0), (0.1, 10_000.0), (0.05, 250_000.0), (0.02, 1_000_000.0)]
+
+
+def test_replacing_blocks_do_not_nest(tmp_path):
+    """A nested block raises, and the outer block keeps its transaction."""
+    catalog = PricingCatalog(db_path=tmp_path / "pricing.db")
+    cache = catalog._cache
+    with pytest.raises(RuntimeError, match="can't be nested"):
+        with cache.replacing("aws", "AmazonCloudWatch", "us-east-1", STORAGE, "infracost"):
+            with cache.replacing("aws", "AWSLambda", "us-east-1", "Lambda-Request",
+                                 "infracost"):
+                pass
+    assert cache._replace_conn is None
