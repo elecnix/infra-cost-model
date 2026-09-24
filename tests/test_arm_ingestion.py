@@ -145,6 +145,19 @@ class TestInputShapes:
     def test_empty_template(self):
         assert extract_resources_from_arm({}) == {}
 
+    @pytest.mark.parametrize("resources", [5, "abc", None, True])
+    def test_resources_of_another_json_type_extract_nothing(self, resources):
+        assert extract_resources_from_arm({"resources": resources}) == {}
+
+    def test_nested_child_with_a_full_type_keeps_its_full_name(self):
+        """A child may give its full type and name inside the parent."""
+        template = {"resources": [{
+            "type": "Microsoft.Web/sites", "name": "app", "location": "eastus",
+            "resources": [{"type": "Microsoft.Web/sites/slots", "name": "app/staging"}],
+        }]}
+        with pytest.warns(UserWarning, match="Microsoft.Web/sites/slots:app/staging[,.]"):
+            extract_resources_from_arm(template)
+
 
 class TestCli:
     def test_extract_from_arm(self, capsys):

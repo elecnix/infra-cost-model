@@ -419,13 +419,15 @@ def _arm_resources(resources, parameters: dict, parent_type: str = "",
     """
     if isinstance(resources, dict):
         resources = list(resources.values())
-    for resource in resources or []:
+    if not isinstance(resources, list):
+        return
+    for resource in resources:
         if not isinstance(resource, dict):
             continue
         arm_type = resource.get("type", "")
         name, _ = resolve_arm_value(resource.get("name", ""), parameters)
         name = name if isinstance(name, str) else resource.get("name", "")
-        if parent_type and "/" not in arm_type:
+        if parent_type and arm_type and "/" not in arm_type:
             arm_type = f"{parent_type}/{arm_type}"
             name = f"{parent_name}/{name}"
         if not arm_type:
