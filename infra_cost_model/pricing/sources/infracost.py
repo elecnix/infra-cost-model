@@ -167,11 +167,16 @@ def _close_open_tiers(prices: list[dict]) -> list[dict]:
     without an end for every unit above its start, so each tier but the last
     needs the next tier's start as its end.
     """
-    ordered = sorted(prices, key=lambda p: p.get("start_usage_amount") or 0)
+    def start(p):
+        return p.get("start_usage_amount") or 0
+
+    ordered = sorted(prices, key=start)
     closed = []
-    for p, following in zip(ordered, ordered[1:] + [None]):
-        if p.get("end_usage_amount") is None and following is not None:
-            p = {**p, "end_usage_amount": following.get("start_usage_amount")}
+    for p in ordered:
+        # The next tier is the first one that starts above this one.
+        later = [start(q) for q in ordered if start(q) > start(p)]
+        if p.get("end_usage_amount") is None and later:
+            p = {**p, "end_usage_amount": min(later)}
         closed.append(p)
     return closed
 

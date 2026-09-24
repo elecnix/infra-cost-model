@@ -314,6 +314,17 @@ def test_firestore_descriptor_resolves_gcp_location(creds, region, location):
         {"key": "description", "value": f"Cloud Firestore Read Ops {location}"}]
 
 
+def test_close_open_tiers_leaves_a_tier_open_when_the_next_one_starts_with_it():
+    """Two rows with one start can't bound each other: an end at the start
+    would make an empty tier."""
+    rows = [{"start_usage_amount": 0.0, "end_usage_amount": None, "price_usd": 1.0},
+            {"start_usage_amount": 0.0, "end_usage_amount": None, "price_usd": 2.0},
+            {"start_usage_amount": 10.0, "end_usage_amount": None, "price_usd": 3.0}]
+    closed = ic._close_open_tiers(rows)
+    assert [(r["start_usage_amount"], r["end_usage_amount"]) for r in closed] == [
+        (0.0, 10.0), (0.0, 10.0), (10.0, None)]
+
+
 def test_unknown_gcp_region_stores_nothing(creds):
     assert _sync("Firestore-Read", "mars-north1") == []
 
@@ -325,8 +336,6 @@ def test_unknown_gcp_region_stores_nothing(creds):
 ])
 def test_sync_regions_per_vendor(vendor, expected):
     assert ic.sync_regions(vendor) == expected
-    assert "eastus" in ic.sync_regions("azure")
-    assert "us-central1" in ic.sync_regions("gcp")
 
 
 # --- Vendor dispatch in sync_pricing_catalog -----------------------------------
