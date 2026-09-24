@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from infra_cost_model.pricing.cache import Price, PricingCache, load_seed_rows
+from infra_cost_model.pricing.cache import PricingCache, TieredPrice, load_seed_rows
 from infra_cost_model.pricing.sources import infracost as ic
 
 
@@ -94,18 +94,28 @@ def _seed_paid_row(metric):
 
 def test_log_ingestion_stores_only_standard_ingestion(creds):
     rows = _sync("CloudWatch-Log-Ingestion")
-    assert [r.attributes["usagetype"] for r in rows] == ["USE1-DataProcessing-Bytes"]
+    # The free first 5 (#356), then the paid row.
+    free, paid = rows
+    assert free.attributes["usagetype"] == "USE1-DataProcessing-Bytes"
+    assert paid.attributes["usagetype"] == "USE1-DataProcessing-Bytes"
+    assert (free.price_usd, free.start_usage_amount, free.end_usage_amount) == (0, 0, 5)
     seed = _seed_paid_row("CloudWatch-Log-Ingestion")
-    assert rows[0].price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.50)
-    assert rows[0].unit == seed.unit == "GB"
+    assert paid.price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.50)
+    assert paid.start_usage_amount == seed.start_usage_amount == 5
+    assert paid.unit == seed.unit == "GB"
 
 
 def test_log_storage_stores_standard_storage_not_centralization(creds):
     rows = _sync("CloudWatch-Log-Storage")
-    assert [r.attributes["usagetype"] for r in rows] == ["USE1-TimedStorage-ByteHrs"]
+    # The free first 5 (#356), then the paid row.
+    free, paid = rows
+    assert free.attributes["usagetype"] == "USE1-TimedStorage-ByteHrs"
+    assert paid.attributes["usagetype"] == "USE1-TimedStorage-ByteHrs"
+    assert (free.price_usd, free.start_usage_amount, free.end_usage_amount) == (0, 0, 5)
     seed = _seed_paid_row("CloudWatch-Log-Storage")
-    assert rows[0].price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.03)
-    assert rows[0].unit == seed.unit == "GB-Mo"
+    assert paid.price_usd == pytest.approx(seed.price_usd) == pytest.approx(0.03)
+    assert paid.start_usage_amount == seed.start_usage_amount == 5
+    assert paid.unit == seed.unit == "GB-Mo"
 
 
 @pytest.mark.parametrize("region,prefix", [("ca-central-1", "CAN1"), ("eu-west-1", "EU")])
@@ -126,17 +136,17 @@ def test_log_descriptors_resolve_region_prefix(creds, region, prefix):
 
 
 def test_synced_log_prices_cost_10_gb(creds, tmp_path):
-    """10 GB costs $5.00 to ingest and $0.30 a month to store, before the free tier."""
+    """10 GB costs $2.50 to ingest and $0.15 a month to store, after the free 5 GB."""
     cache = PricingCache(db_path=tmp_path / "pricing.db")
     client = ic.InfracostClient()
     with patch.object(ic.requests, "post", side_effect=_fake_post(CLOUDWATCH_LOGS_US_EAST_1)):
         client.sync_to_cache(cache, "CloudWatch-Log-Ingestion", "us-east-1")
         client.sync_to_cache(cache, "CloudWatch-Log-Storage", "us-east-1")
-    for metric, expected in (("CloudWatch-Log-Ingestion", 5.00),
-                             ("CloudWatch-Log-Storage", 0.30)):
+    for metric, expected in (("CloudWatch-Log-Ingestion", 2.50),
+                             ("CloudWatch-Log-Storage", 0.15)):
         price = cache.query("aws", "AmazonCloudWatch", "us-east-1", metric)
-        assert isinstance(price, Price)
-        assert price.price_usd * 10 == pytest.approx(expected)
+        assert isinstance(price, TieredPrice)
+        assert price.total_cost(10) == pytest.approx(expected)
 
 
 # --- Guard: one product per metric ---------------------------------------------
@@ -164,7 +174,8 @@ def test_sync_keeps_every_tier_of_one_product(creds):
         ("0.05", "Metrics", "250000", "1000000"), ("0.02", "Metrics", "1000000", None),
     ], family="Metric")]
     rows = _sync("CloudWatch-Metric-Month", catalogue=products)
-    assert [r.price_usd for r in rows] == pytest.approx([0.3, 0.1, 0.05, 0.02])
+    # The free first 10 metrics (#356), then every paid tier.
+    assert [r.price_usd for r in rows] == pytest.approx([0, 0.3, 0.1, 0.05, 0.02])
 
 
 def test_guard_failure_is_reported_by_sync_pricing_catalog(creds, monkeypatch, tmp_path):

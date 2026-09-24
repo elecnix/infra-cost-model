@@ -121,9 +121,12 @@ def test_sync_to_cache_filters_by_unit_and_upserts(monkeypatch):
     cache.upsert.side_effect = lambda p: upserted.append(p)
     with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
         n = ic.InfracostClient().sync_to_cache(cache, "Lambda-Request", "us-east-1")
-    assert n == 1
-    assert upserted[0].usage_metric == "Lambda-Request"
-    assert upserted[0].source == "infracost"
+    # The free first 1,000,000 requests, then the Requests row (#356).
+    assert n == 2
+    assert [(p.price_usd, p.start_usage_amount) for p in upserted] == [
+        (0.0, 0.0), (0.0000002, 1_000_000)]
+    assert all(p.usage_metric == "Lambda-Request" for p in upserted)
+    assert all(p.source == "infracost" for p in upserted)
 
 
 def test_sync_to_cache_unknown_metric_raises(monkeypatch):
@@ -403,11 +406,15 @@ def test_internet_egress_preserves_tiers_us_east_1(monkeypatch):
     cache.upsert.side_effect = lambda p: upserted.append(p)
     with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
         n = ic.InfracostClient().sync_to_cache(cache, "DataTransfer-Internet-Out-GB", "us-east-1")
-    assert n == 4  # four tiers of the unprefixed us-east-1 usagetype only
+    # The free first 100 GB (#356), then the four tiers of the unprefixed
+    # us-east-1 usagetype only.
+    assert n == 5
     assert all(p.region == "us-east-1" and p.usage_metric == "DataTransfer-Internet-Out-GB"
                for p in upserted)
-    assert sorted(p.price_usd for p in upserted) == [0.05, 0.07, 0.085, 0.09]
-    first = next(p for p in upserted if p.start_usage_amount == 0)
+    assert sorted(p.price_usd for p in upserted) == [0.0, 0.05, 0.07, 0.085, 0.09]
+    free = next(p for p in upserted if p.start_usage_amount == 0)
+    assert free.price_usd == 0 and free.end_usage_amount == pytest.approx(100)
+    first = next(p for p in upserted if p.start_usage_amount == 100)
     assert first.price_usd == pytest.approx(0.09) and first.end_usage_amount == pytest.approx(10240)
 
 
@@ -423,9 +430,9 @@ def test_internet_egress_prefixes_non_us_east_1(monkeypatch):
     cache.upsert.side_effect = lambda p: upserted.append(p)
     with patch.object(ic.requests, "post", return_value=_graphql_response(products)):
         n = ic.InfracostClient().sync_to_cache(cache, "DataTransfer-Internet-Out-GB", "us-west-1")
-    assert n == 1
-    assert upserted[0].region == "us-west-1"
-    assert upserted[0].attributes["usagetype"] == "USW1-DataTransfer-Out-Bytes"
+    assert n == 2  # the free first 100 GB (#356) and the paid row
+    assert all(p.region == "us-west-1" for p in upserted)
+    assert all(p.attributes["usagetype"] == "USW1-DataTransfer-Out-Bytes" for p in upserted)
 
 
 def test_inter_az_flat_rate_us_east_1(monkeypatch):

@@ -1,6 +1,7 @@
 """SQLite cache layer for cloud pricing data."""
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -202,6 +203,8 @@ class PricingCache:
         self.db_path = Path(db_path) if db_path else DB_PATH
         self.ttl_days = ttl_days
         self._seed_loaded = False
+        # The connection of an open `replacing` block, which `upsert` writes to.
+        self._replace_conn: sqlite3.Connection | None = None
         self._ensure_db()
         if seed:
             seed_prices(self)
@@ -275,11 +278,56 @@ class PricingCache:
         conn.close()
         return result
 
+    @contextmanager
+    def replacing(self, vendor: str, service: str, region: str,
+                  usage_metric: str, source: str):
+        """Replace the rows of one metric from one source, in one transaction.
+
+        On entry, deletes the rows with this vendor, service, region, usage
+        metric and source. The block then writes the new rows with
+        ``upsert``. The deletion and the new rows are committed together
+        when the block ends, and rolled back if it raises, so a failed sync
+        keeps the old rows. Rows from other sources, such as the seed file
+        and the vendor files, stay as they are (#355).
+        """
+        if self._replace_conn is not None:
+            raise RuntimeError("PricingCache.replacing blocks can't be nested")
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute(
+                "DELETE FROM prices WHERE vendor = ? AND service = ? AND region = ?"
+                " AND usage_metric = ? AND source = ?",
+                (vendor, service, region, usage_metric, source))
+            self._replace_conn = conn
+            yield
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            self._replace_conn = None
+            conn.close()
+
     def upsert(self, price: Price) -> None:
-        """Insert or update a price record."""
+        """Insert or update a price record.
+
+        Inside a ``replacing`` block, the row is written in that block's
+        transaction.
+        """
         attrs_hash = _hash_attributes(price.attributes)
 
+        if self._replace_conn is not None:
+            self._write(self._replace_conn, price, attrs_hash)
+            return
         conn = sqlite3.connect(self.db_path)
+        try:
+            self._write(conn, price, attrs_hash)
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _write(conn: sqlite3.Connection, price: Price, attrs_hash: str) -> None:
         conn.execute("""
             INSERT OR REPLACE INTO prices (
                 vendor, service, region, product_family, attributes,
@@ -294,8 +342,6 @@ class PricingCache:
             price.purchase_option, price.effective_date, price.source,
             price.fetched_at, price.per
         ))
-        conn.commit()
-        conn.close()
 
     def query(self, vendor: str, service: str, region: str,
               usage_metric: str, quantity: float | None = None) -> TieredPrice | Price | None:

@@ -110,3 +110,29 @@ def free_tier_scope(vendor: str | None, service: str | None,
     if shared_free_allowance(vendor, service, usage_metric) is not None:
         return ACCOUNT
     return REGION
+
+
+# The monthly free allowance of each metric, in the unit of its rows (#356).
+# The seed file states each one as a $0 tier from 0, and the metric's paid
+# tiers start where the allowance ends. The Infracost Cloud Pricing API
+# states only the paid prices, from 0: AWS publishes the allowances as
+# separate "Global-" products that no descriptor selects. A live sync adds
+# each allowance as a $0 tier, so a live catalog prices the same usage as the
+# seed catalog does. A test checks that this table matches the seed file.
+FREE_ALLOWANCES: dict[tuple[str, str, str], float] = {
+    ("aws", "AWSDataTransfer", "DataTransfer-Internet-Out-GB"): 100,
+    ("aws", "AWSLambda", "Lambda-Request"): 1_000_000,
+    ("aws", "AWSLambda", "Lambda-GB-Second"): 400_000,
+    ("aws", "AWSKMS", "KMS-API-Request"): 20_000,
+    ("aws", "AmazonCloudFront", "CloudFront-DataTransfer"): 1024,
+    ("aws", "AmazonCloudFront", "CloudFront-HTTP-Request"): 10_000_000,
+    ("aws", "AmazonCloudFront", "CloudFront-HTTPS-Request"): 10_000_000,
+    ("aws", "AmazonCloudWatch", "CloudWatch-Metric-Month"): 10,
+    ("aws", "AmazonCloudWatch", "CloudWatch-Alarm-Month"): 10,
+    ("aws", "AmazonCloudWatch", "CloudWatch-Log-Ingestion"): 5,
+    ("aws", "AmazonCloudWatch", "CloudWatch-Log-Storage"): 5,
+    ("aws", "AmazonSNS", "SNS-Publish"): 1_000_000,
+    ("aws", "AmazonSNS", "SNS-Delivery-HTTP"): 100_000,
+    ("aws", "AmazonSQS", "SQS-Standard-Request"): 1_000_000,
+    ("aws", "AmazonSQS", "SQS-FIFO-Request"): 1_000_000,
+}
