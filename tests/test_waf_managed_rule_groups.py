@@ -158,11 +158,13 @@ def test_tf_bot_control_without_a_config_is_common():
     assert WAFv2WebACL.extract_tf(resource).config["botControlInspectionLevel"] == "COMMON"
 
 
-def test_tf_targeted_bot_control_stays_targeted_after_a_common_group():
+@pytest.mark.parametrize("levels", [("TARGETED", None), (None, "TARGETED"),
+                                    ("TARGETED", "COMMON"), ("COMMON", "TARGETED")])
+def test_tf_one_targeted_bot_control_group_sets_the_level(levels):
     resource = {"address": "aws_wafv2_web_acl.api", "values": {
         "region": "us-east-1",
-        "rule": [_tf_rule("AWSManagedRulesBotControlRuleSet", "TARGETED"),
-                 _tf_rule("AWSManagedRulesBotControlRuleSet")]}}
+        "rule": [_tf_rule("AWSManagedRulesBotControlRuleSet", level)
+                 for level in levels]}}
     assert WAFv2WebACL.extract_tf(resource).config["botControlInspectionLevel"] == "TARGETED"
 
 

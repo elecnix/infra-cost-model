@@ -68,7 +68,7 @@ def _managed_rule_groups(rules, keys) -> dict:
     ``TARGETED``, or ``None`` without Bot Control) and
     ``fraudControlRuleGroups`` (the names of the Fraud Control rule groups).
     """
-    level = None
+    levels = set()
     fraud = []
     for rule in rules or []:
         statement = _block(_block(rule).get(keys["statement"]))
@@ -77,15 +77,15 @@ def _managed_rule_groups(rules, keys) -> dict:
             continue
         name = managed.get(keys["name"])
         if name == _BOT_CONTROL:
-            # A Targeted group sets the level, whatever the other groups state.
             group_level = "COMMON"
             for config in managed.get(keys["configs"]) or []:
                 bot = _block(_block(config).get(keys["bot"]))
                 group_level = bot.get(keys["level"]) or group_level
-            if level != "TARGETED":
-                level = group_level
+            levels.add(group_level)
         elif name in _FRAUD_CONTROL:
             fraud.append(name)
+    # One Targeted group bills the web ACL's requests at the Targeted price.
+    level = "TARGETED" if "TARGETED" in levels else ("COMMON" if levels else None)
     return {"botControlInspectionLevel": level, "fraudControlRuleGroups": fraud}
 
 
