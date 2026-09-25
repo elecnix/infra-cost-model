@@ -78,6 +78,8 @@ class TestExtract:
         assert nodes[BLOB]["config"] == {
             "accountTier": "Standard", "replicationType": "LRS", "accessTier": "Hot"}
         assert nodes[OPENAI]["config"] == {"kind": "OpenAI", "skuName": "S0"}
+        # The Function App's plan is a node of its own since #383.
+        assert nodes[PLAN]["config"]["hostingPlan"] == "consumption"
 
     def test_child_resources_warn_as_unsupported(self):
         """Top-level and nested children are not priced as their parent."""
@@ -91,8 +93,7 @@ class TestExtract:
         assert "Microsoft.ApiManagement/service/apis:apim-orders/orders" in message
         assert "Microsoft.DocumentDB/databaseAccounts/sqlDatabases:cosmos-orders/orders" in message
         # The plan has a handler of its own since #383.
-        nodes, _ = extract_fixture()
-        assert nodes[PLAN]["config"]["hostingPlan"] == "consumption"
+        assert PLAN not in message
 
 
 class TestRegionExpressions:
