@@ -136,6 +136,7 @@ def test_blob_defaults_to_hot_lrs():
     ("cold", "zrs", "Blob-Cold-ZRS-GB-Month"),
     ("Hot", "RAGRS", "Blob-Hot-RAGRS-GB-Month"),
     ("Hot", "RA-GRS", "Blob-Hot-RAGRS-GB-Month"),
+    ("Hot", "RA_GRS", "Blob-Hot-RAGRS-GB-Month"),
     ("Archive", "LRS", "Blob-Archive-LRS-GB-Month"),
 ])
 def test_blob_settings_select_the_rows(tier, replication, storage):
@@ -328,3 +329,12 @@ def test_shared_meters_select_their_own_sku():
     filters = {f["key"]: f["value"] for f in descriptor["attribute_filters"]}
     assert filters == {"productName": "General Block Blob v2", "skuName": "Hot GRS",
                        "meterName": "Hot Read Operations"}
+
+
+def test_null_values_dont_crash_the_storage_extractors():
+    tf = {"address": "azurerm_storage_account.s", "type": "azurerm_storage_account",
+          "values": None}
+    assert AzureBlobStorage.extract_tf(tf).config["accessTier"] is None
+    pulumi = {"id": "/subscriptions/0/resourceGroups/rg/providers/Microsoft.Storage/"
+                    "storageAccounts/s", "inputs": None}
+    assert AzureBlobStorage.extract_pulumi(pulumi).config["accountTier"] is None

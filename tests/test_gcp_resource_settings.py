@@ -203,7 +203,8 @@ def test_nearline_sync_keeps_the_regional_product():
 
 
 @pytest.mark.parametrize("value,mb", [("256M", 256), ("1Gi", 1024), (512, 512), (True, None),
-                                      ("lots", None), (None, None)])
+                                      ("lots", None), (None, None), (["256M"], None),
+                                      ({"size": 1}, None)])
 def test_parse_memory_mb(value, mb):
     from infra_cost_model.resources.gcp import parse_memory_mb
     assert parse_memory_mb(value) == mb

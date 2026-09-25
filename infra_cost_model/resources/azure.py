@@ -1160,7 +1160,8 @@ def blob_product(config: dict) -> tuple[str, str]:
     tier = _text(config.get("accessTier")) or "Hot"
     replication = _text(config.get("replicationType")) or "LRS"
     return (_BLOB_TIERS.get(tier.lower(), tier),
-            _BLOB_REPLICATIONS.get(replication.lower().replace("-", ""), replication))
+            _BLOB_REPLICATIONS.get(replication.lower().replace("-", "").replace("_", ""),
+                                   replication))
 
 
 def blob_pricing_warning(address: str, config: dict) -> Optional[str]:
@@ -1243,7 +1244,7 @@ class AzureBlobStorage(StorageResource):
 
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
-        values = resource.get("values", {})
+        values = resource.get("values") or {}
         return cls._extract(resource.get("address", ""), values.get("location"), {
             "accountTier": values.get("account_tier"),
             "replicationType": values.get("account_replication_type"),
@@ -1252,7 +1253,7 @@ class AzureBlobStorage(StorageResource):
 
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
-        inputs = resource.get("inputs", {})
+        inputs = resource.get("inputs") or {}
         tier, replication = inputs.get("accountTier"), inputs.get("accountReplicationType")
         if tier is None and isinstance(inputs.get("sku"), dict):
             # azure-native joins them in the SKU name, as in `Standard_GRS`.
