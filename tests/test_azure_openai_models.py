@@ -359,3 +359,12 @@ def test_sync_stores_the_one_meter_per_token():
     assert (row.vendor, row.service, row.usage_metric, row.unit) == (
         "azure", "AzureOpenAI", metric, "tokens")
     assert row.price_usd == pytest.approx(0.0000001)
+
+
+def test_deployment_of_an_account_missing_from_the_input_warns():
+    """A known account ID that matches no account in the input is another account."""
+    other = f"{RG}/Microsoft.CognitiveServices/accounts/elsewhere"
+    with pytest.warns(UserWarning, match=r"chat.*can't find the account"):
+        nodes = extract_resources_from_tf(
+            {"resource": [tf_account(), tf_deployment(account_id=other)]})
+    assert nodes["azurerm_cognitive_deployment.chat"]["region"] is None

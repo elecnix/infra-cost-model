@@ -14,7 +14,7 @@ from infra_cost_model.engine.engine import CostEngine
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH, load_seed_rows
 from infra_cost_model.pricing.free_tiers import ACCOUNT, REGION as REGIONAL, free_tier_scope
 from infra_cost_model.resources.azure import (
-    APIManagement, AzureBlobStorage, AzureFunction, AzureOpenAI, CosmosDB,
+    OPENAI_MODELS, APIManagement, AzureBlobStorage, AzureFunction, AzureOpenAI, CosmosDB,
 )
 
 REGION = "eastus"
@@ -58,13 +58,24 @@ def test_handler_metrics_have_seed_rows(handler, service, metrics):
     assert {(handler().catalog_services.get(m, service), m) for m in metrics} <= seeded
 
 
+def openai_metrics() -> set[str]:
+    """The catalog metrics of every supported model and deployment type."""
+    return {
+        metric
+        for model in OPENAI_MODELS
+        for tier in ("GlobalStandard", "DataZoneStandard", "Standard")
+        for metric in AzureOpenAI().catalog_metrics_for(
+            {"model": model, "deploymentType": tier}).values()
+    }
+
+
 def test_every_azure_row_belongs_to_a_handler_metric():
     known = {(handler().catalog_services.get(m, service), m)
              for handler, service, metrics in HANDLER_METRICS for m in metrics}
     for row in azure_rows():
         if row.service == "AzureOpenAI":
-            # Each model has rows of its own (#371).
-            assert row.usage_metric.startswith("AzureOpenAI-"), row
+            # Each model and deployment type has rows of its own (#371).
+            assert row.usage_metric in openai_metrics(), row
             continue
         assert (row.service, row.usage_metric) in known, row
 

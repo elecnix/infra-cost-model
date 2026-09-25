@@ -911,8 +911,10 @@ class AzureOpenAIDeployment(AzureOpenAI):
                  deployment_type: Any) -> ResourceExtract:
         accounts = resource.get(COGNITIVE_ACCOUNTS_KEY, [])
         account = find_service_plan(accounts, account_ref)
-        if account is None and len(accounts) == 1:
-            # A Terraform plan doesn't know the account ID before apply.
+        if account is None and account_ref is None and len(accounts) == 1:
+            # A Terraform plan doesn't know the account ID before apply. A
+            # reference that matches no account is another account, so it
+            # gets the warning below.
             account = accounts[0]
         if account is None:
             warnings.warn(
