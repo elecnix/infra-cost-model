@@ -137,6 +137,19 @@ RETAIL = (
                   (0.0, 0.0), (100.0, 0.12), (10335.0, 0.085), (51295.0, 0.082),
                   (153695.0, 0.08), (512095.0, 0.08)],
               effective="2022-05-01T00:00:00Z")
+    # polandcentral has no "Rtn Preference: MGN" meter (#392). The sync reads
+    # the meter of germanywestcentral, another Zone 1 region.
+    + _retail("germanywestcentral", "Bandwidth", "Networking", "Rtn Preference: MGN",
+              "Standard", "Standard Data Transfer Out", "1 GB", [
+                  (0.0, 0.0), (100.0, 0.087), (10335.0, 0.083), (51295.0, 0.07),
+                  (153695.0, 0.05), (512095.0, 0.05)],
+              effective="2022-05-01T00:00:00Z")
+    + _retail("polandcentral", "Bandwidth", "Networking",
+              "Bandwidth - Routing Preference: Internet", "Standard",
+              "Standard Data Transfer Out", "1 GB", [
+                  (0.0, 0.0), (100.0, 0.08), (10100.0, 0.065), (50100.0, 0.06),
+                  (150100.0, 0.04)],
+              effective="2023-02-21T00:00:00Z")
 )
 
 GCP = [
@@ -231,6 +244,8 @@ GCP = [
                              ("0.02", "gibibyte month", "5", None)]),
     _gcp("Cloud Storage", "us-central1", "Storage", "Standard Storage Iowa Dual-region",
          "MultiRegionalStorage", [("0.022", "gibibyte month", "0", None)]),
+    _gcp("Cloud Storage", "europe-west1", "Storage", "Standard Storage Belgium",
+         "RegionalStorage", [("0.02", "gibibyte month", "0", None)]),
     _gcp("Cloud Storage", "us-central1", "Storage", "Nearline Storage Iowa",
          "NearlineStorage", [("0.01", "gibibyte month", "0", None)]),
     _gcp("Cloud Storage", "global", "Storage", "Regional Standard Class A Operations",
@@ -390,6 +405,10 @@ EXPECTED = [
     ("Bandwidth-Internet-Out-GB", "eastus", "azure", "Bandwidth", "GB",
      [(0, 100, 0), (100, 10_335, 0.087), (10_335, 51_295, 0.083),
       (51_295, 153_695, 0.07), (153_695, 512_095, 0.05), (512_095, None, 0.05)]),
+    # No global-network meter in polandcentral: the Zone 1 meter (#392).
+    ("Bandwidth-Internet-Out-GB", "polandcentral", "azure", "Bandwidth", "GB",
+     [(0, 100, 0), (100, 10_335, 0.087), (10_335, 51_295, 0.083),
+      (51_295, 153_695, 0.07), (153_695, 512_095, 0.05), (512_095, None, 0.05)]),
     ("CloudFunctions-Invocation", "us-central1", "gcp", "CloudFunctions", "count",
      [(0, 2_000_000, 0), (2_000_000, None, 0.0000004)]),
     ("CloudFunctions-GHz-Second", "us-central1", "gcp", "CloudFunctions", "second",
@@ -424,11 +443,21 @@ EXPECTED = [
      [(0, 5_000, 0), (5_000, None, 0.000005)]),
     ("GCS-Class-B-Operation", "us-central1", "gcp", "CloudStorage", "count",
      [(0, 50_000, 0), (50_000, None, 0.0000004)]),
+    # The Always Free quotas of Cloud Storage apply in three US regions only
+    # (#390), so the global operation products lose their $0 tier elsewhere.
+    ("GCS-Standard-GiB-Month", "europe-west1", "gcp", "CloudStorage", "gibibyte month",
+     [(0, None, 0.02)]),
+    ("GCS-Class-A-Operation", "europe-west1", "gcp", "CloudStorage", "count",
+     [(0, None, 0.000005)]),
+    ("GCS-Class-B-Operation", "europe-west1", "gcp", "CloudStorage", "count",
+     [(0, None, 0.0000004)]),
+    # Infracost gives the tier bounds 1 TiB and 10 TiB. The Cloud Storage
+    # pricing page gives 10 TiB and 150 TiB, which the sync stores (#391).
     ("GCS-Internet-Egress-GiB", "us-central1", "gcp", "CloudStorage", "gibibyte",
-     [(0, 100, 0), (100, 1_024, 0.12), (1_024, 10_240, 0.11), (10_240, None, 0.08)]),
+     [(0, 100, 0), (100, 10_240, 0.12), (10_240, 153_600, 0.11), (153_600, None, 0.08)]),
     # The 100 GiB of Always Free egress applies in three US regions only.
     ("GCS-Internet-Egress-GiB", "europe-west1", "gcp", "CloudStorage", "gibibyte",
-     [(0, 1_024, 0.12), (1_024, 10_240, 0.11), (10_240, None, 0.08)]),
+     [(0, 10_240, 0.12), (10_240, 153_600, 0.11), (153_600, None, 0.08)]),
     ("Firestore-Read", "us-central1", "gcp", "Firestore", "count",
      [(0, FIRESTORE_FREE_READS, 0), (FIRESTORE_FREE_READS, None, 0.0000003)]),
     ("Firestore-Read", "europe-west1", "gcp", "Firestore", "count",
@@ -685,7 +714,7 @@ def _seed_rows(service, metric):
             if (r.vendor, r.region, r.usage_metric) == ("azure", "eastus", metric)]
 
 
-AZURE_SEEDED = [(e[0], e[3]) for e in EXPECTED if e[2] == "azure"]
+AZURE_SEEDED = sorted({(e[0], e[3]) for e in EXPECTED if e[2] == "azure"})
 
 
 @pytest.mark.parametrize("metric,service", AZURE_SEEDED, ids=[m for m, _ in AZURE_SEEDED])
@@ -833,3 +862,62 @@ def test_replacing_needs_a_source(tmp_path):
     with pytest.raises(ValueError):
         with cache.replacing("azure", "BlobStorage", "eastus", "m", ()):
             pass
+
+
+# --- Cloud Storage free quotas and egress tiers (#390, #391) ---------------------
+
+
+@pytest.mark.parametrize("metric", [
+    "GCS-Standard-GiB-Month", "GCS-Class-A-Operation", "GCS-Class-B-Operation",
+    "GCS-Internet-Egress-GiB"])
+def test_cloud_storage_free_quotas_apply_in_three_us_regions(metric):
+    from infra_cost_model.pricing.free_tiers import FREE_ALLOWANCE_REGIONS
+
+    assert FREE_ALLOWANCE_REGIONS[("gcp", "CloudStorage", metric)] == (
+        "us-central1", "us-east1", "us-west1")
+
+
+def test_cloud_storage_regional_free_tier_is_dropped_outside_the_three_regions(creds):
+    """A regional product that states the free tier keeps it in us-east1 only."""
+    catalogue = [
+        _gcp("Cloud Storage", region, "Storage", "Standard Storage US Regional",
+             "RegionalStorage", [("0", "gibibyte month", "0", "5"),
+                                 ("0.023", "gibibyte month", "5", None)])
+        for region in ("us-east1", "us-east4")]
+    assert _tiers(_sync("GCS-Standard-GiB-Month", "us-east1", catalogue)) == [
+        (0, 5, 0), (5, None, 0.023)]
+    assert _tiers(_sync("GCS-Standard-GiB-Month", "us-east4", catalogue)) == [
+        (0, None, 0.023)]
+
+
+def test_egress_tier_override_leaves_corrected_infracost_tiers_alone(creds):
+    """If Infracost adopts the published bounds, the sync stores them as they are."""
+    catalogue = [_gcp("Cloud Storage", "global", "Network",
+                      "Download Worldwide Destinations (excluding Asia & Australia)",
+                      "PremiumInternetEgress", [
+                          ("0", "gibibyte", "0", "100"), ("0.12", "gibibyte", "100", "10240"),
+                          ("0.11", "gibibyte", "10240", "153600"),
+                          ("0.08", "gibibyte", "153600", None)])]
+    assert _tiers(_sync("GCS-Internet-Egress-GiB", "us-central1", catalogue)) == [
+        (0, 100, 0), (100, 10_240, 0.12), (10_240, 153_600, 0.11), (153_600, None, 0.08)]
+
+
+# --- Azure egress in a region without the meter (#392) ---------------------------
+
+
+def test_polandcentral_egress_reads_the_zone_1_meter(creds):
+    captured = []
+    with patch.object(ic.requests, "post", side_effect=_fake_post()), \
+            patch.object(ic.requests, "get", side_effect=_fake_get(captured=captured)):
+        rows = ic.InfracostClient().sync_to_cache(
+            MagicMock(), "Bandwidth-Internet-Out-GB", "polandcentral")
+    regions = [re.search(r"armRegionName eq '(\w+)'", params["$filter"]).group(1)
+               for _, params in captured if params]
+    assert regions == ["polandcentral", "germanywestcentral"]
+    assert rows == 6
+
+
+def test_every_egress_fallback_region_has_its_own_meter():
+    """The fallback reads a region that has the meter, in the same zone."""
+    assert ic.AZURE_EGRESS_METER_FALLBACK == {"polandcentral": "germanywestcentral"}
+    assert set(ic.AZURE_EGRESS_METER_FALLBACK.values()) <= set(ic.sync_regions("azure"))

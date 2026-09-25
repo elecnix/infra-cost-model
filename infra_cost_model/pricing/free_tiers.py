@@ -189,8 +189,14 @@ SPEND_BASED_FREE_TIERS: dict[tuple[str, str, str], float] = {
 # Free tiers that a product states in every region but the provider gives in
 # a few regions only. A live sync drops the $0 tier in the other regions.
 # https://cloud.google.com/storage/pricing: "Cloud Storage Always Free quotas
-# apply to usage in US-WEST1, US-CENTRAL1, and US-EAST1 regions" (#372).
+# apply to usage in US-WEST1, US-CENTRAL1, and US-EAST1 regions" (#372). The
+# quotas are 5 GB-months of Standard storage, 5,000 Class A operations,
+# 50,000 Class B operations and 100 GB of egress a month (#390). Infracost
+# states the operation quotas in the global catalogue, which the sync stores
+# under every region.
+_GCS_ALWAYS_FREE_REGIONS = ("us-central1", "us-east1", "us-west1")
 FREE_ALLOWANCE_REGIONS: dict[tuple[str, str, str], tuple[str, ...]] = {
-    ("gcp", "CloudStorage", "GCS-Internet-Egress-GiB"): (
-        "us-central1", "us-east1", "us-west1"),
+    ("gcp", "CloudStorage", metric): _GCS_ALWAYS_FREE_REGIONS
+    for metric in ("GCS-Standard-GiB-Month", "GCS-Class-A-Operation",
+                   "GCS-Class-B-Operation", "GCS-Internet-Egress-GiB")
 }

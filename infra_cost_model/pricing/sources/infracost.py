@@ -163,6 +163,63 @@ _CLOUD_RUN_TIER_2_REGIONS = frozenset({
     "southamerica-east1", "southamerica-west1", "us-west2", "us-west3", "us-west4",
 })
 
+# Azure regions that lack the internet egress meter of the Microsoft global
+# network, mapped to a region of the same zone that has it (#392). Azure
+# bills egress by zone (https://azure.microsoft.com/pricing/details/bandwidth/),
+# and the Zone 1 regions share one meter ID with the same tiers. The Azure
+# Retail Prices API (checked 2026-09-24) has no "Rtn Preference: MGN" meter
+# in polandcentral, which the bandwidth page puts in Zone 1. It lists only
+# the "Routing Preference: Internet" meter there, a different routing option
+# with other prices. germanywestcentral is the nearest Zone 1 region.
+AZURE_EGRESS_METER_FALLBACK = {"polandcentral": "germanywestcentral"}
+
+
+@dataclasses.dataclass(frozen=True)
+class TierBoundOverride:
+    """Tier bounds that Infracost states differently from the provider.
+
+    A sync replaces each bound in ``infracost`` with the bound at the same
+    position in ``published``. It does so only when the rows have all the
+    ``infracost`` bounds and none of the other ``published`` ones, so it
+    leaves the rows alone once Infracost states the published bounds.
+    """
+    infracost: tuple[float, ...]
+    published: tuple[float, ...]
+    source: str
+    checked: str
+
+
+# https://cloud.google.com/storage/pricing, "General network usage" (checked
+# 2026-09-24): $0.12 a GiB from 0 to 10 TiB, $0.11 from 10 TiB to 150 TiB
+# and $0.08 above (#391). Infracost gives the same prices with the bounds
+# 1 TiB and 10 TiB, the bounds of Premium Tier egress on the VPC network
+# pricing page. The Cloud Billing Catalog API, which would show the SKU's
+# tiers, needs a billing account and wasn't checked.
+TIER_BOUND_OVERRIDES: dict[tuple[str, str, str], TierBoundOverride] = {
+    ("gcp", "CloudStorage", "GCS-Internet-Egress-GiB"): TierBoundOverride(
+        infracost=(1024.0, 10_240.0), published=(10_240.0, 153_600.0),
+        source="https://cloud.google.com/storage/pricing", checked="2026-09-24"),
+}
+
+
+def _with_published_bounds(rows: list, override: Optional[TierBoundOverride]) -> list:
+    """Replace the Infracost tier bounds of *rows* with the published ones."""
+    if override is None:
+        return rows
+    bounds = {b for r in rows for b in (r.start_usage_amount, r.end_usage_amount)
+              if b is not None}
+    # A bound in both lists, such as 10 TiB, can't tell the two apart. Only
+    # the published bounds that Infracost lacks (150 TiB) show that the rows
+    # already have the published bounds.
+    published_only = set(override.published) - set(override.infracost)
+    if not set(override.infracost) <= bounds or published_only & bounds:
+        return rows
+    mapping = dict(zip(override.infracost, override.published))
+    return [dataclasses.replace(
+        r, start_usage_amount=mapping.get(r.start_usage_amount, r.start_usage_amount),
+        end_usage_amount=mapping.get(r.end_usage_amount, r.end_usage_amount))
+        for r in rows]
+
 
 def sync_regions(vendor: str) -> list[str]:
     """The regions that ``sync-pricing`` syncs for *vendor* by default.
@@ -417,6 +474,11 @@ class InfracostClient:
             # public Azure Retail Prices API, which Infracost copies, has them.
             prices = azure_retail.query_azure_retail_prices(
                 descriptor["service"], region, attribute_filters)
+            fallback = AZURE_EGRESS_METER_FALLBACK.get(region)
+            if (not _with_unit(prices, unit_match) and fallback
+                    and descriptor["service"] == "Bandwidth"):
+                prices = azure_retail.query_azure_retail_prices(
+                    descriptor["service"], fallback, attribute_filters)
         if descriptor.get("attribute_patterns"):
             descriptor = {**descriptor, "attribute_patterns": _resolve_cloud_run_tier(
                 descriptor["attribute_patterns"], region)}
@@ -444,6 +506,7 @@ class InfracostClient:
             changes["unit"] = descriptor["store_unit"]
         rows = [dataclasses.replace(r, **changes) for r in rows]
         key = (vendor, store_service, usage_metric)
+        rows = _with_published_bounds(rows, TIER_BOUND_OVERRIDES.get(key))
         free_regions = FREE_ALLOWANCE_REGIONS.get(key)
         if free_regions is not None and region not in free_regions:
             # The product states a free tier that GCP gives in a few regions.
@@ -1044,7 +1107,9 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     # network ("Rtn Preference: MGN"). The first 100 GB a month are free.
     # Infracost gives this meter with the tier starts of an older price list
     # (5, 10240 GB ...) beside the current ones (100, 10335 GB ...), so the
-    # sync reads the Azure Retail Prices API (`azure_retail`).
+    # sync reads the Azure Retail Prices API (`azure_retail`). A region
+    # without the meter reads it from a region of the same zone
+    # (`AZURE_EGRESS_METER_FALLBACK`, #392).
     "Bandwidth-Internet-Out-GB": {
         "vendor": "azure", "service": "Bandwidth", "store_service": "Bandwidth",
         "azure_retail": True,
@@ -1115,7 +1180,8 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     },
     # Cloud Storage, Standard class in a single region. Storage is in the
     # regional catalogue. Class A (writes, lists) and Class B (reads) operations
-    # are global, with 5,000 and 50,000 free a month.
+    # are global, with 5,000 and 50,000 free a month in three US regions only
+    # (`FREE_ALLOWANCE_REGIONS`, #390).
     "GCS-Standard-GiB-Month": {
         "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
         "attribute_filters": [{"key": "resourceGroup", "value": "RegionalStorage"}],
@@ -1138,7 +1204,8 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     # Internet egress (#372) to worldwide destinations other than Asia and
     # Australia, in the global catalogue. The product starts with the 100 GiB
     # a month of Always Free egress, which applies in us-central1, us-east1
-    # and us-west1 only (`FREE_ALLOWANCE_REGIONS`).
+    # and us-west1 only (`FREE_ALLOWANCE_REGIONS`). The sync moves the tier
+    # bounds to those of the Cloud Storage pricing page (`TIER_BOUND_OVERRIDES`).
     "GCS-Internet-Egress-GiB": {
         "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
         "query_region": "global",

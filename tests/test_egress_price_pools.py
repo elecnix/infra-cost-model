@@ -90,6 +90,9 @@ def test_azure_regions_map_to_their_meter_zone():
     assert price_pool(*key, "eastus") != price_pool(*key, "brazilsouth")
     # A region with a meter of its own, or not in the table, has no pool.
     assert price_pool(*key, "austriaeast") is None
+    # polandcentral has no meter of its own. The sync reads the zone 1
+    # meter for it (#392).
+    assert price_pool(*key, "polandcentral") == price_pool(*key, "eastus")
     assert price_pool(*key, "nowhere") is None
 
 
@@ -211,3 +214,77 @@ def test_region_without_rows_stays_out_of_the_pool(tmp_path):
     costs = compute(catalog, {"east": node(AZURE, "eastus", 150),
                               "west": node(AZURE, "westus2", 150)})
     assert costs["east"] == pytest.approx(50 * 0.087)
+
+
+# --- Cloud Storage egress: one SKU for every region (#404) -----------------------
+
+GCS = ("gcp", "CloudStorage", "GCS-Internet-Egress-GiB", "GiB")
+# The rows a sync stores (#390, #391): 100 GiB free in us-central1, us-east1
+# and us-west1 only, then $0.12 to 10 TiB, $0.11 to 150 TiB and $0.08.
+GCS_FREE = ((0.0, 0, 100), (0.12, 100, 10240), (0.11, 10240, 153600),
+            (0.08, 153600, None))
+GCS_PAID = ((0.12, 0, 10240), (0.11, 10240, 153600), (0.08, 153600, None))
+
+
+def _gcs_catalog(tmp_path):
+    return _catalog(tmp_path, GCS, {"us-central1": GCS_FREE, "us-east1": GCS_FREE,
+                                    "europe-west1": GCS_PAID,
+                                    "asia-east1": GCS_PAID})
+
+
+def test_gcs_egress_is_one_pool_for_every_region():
+    key = GCS[:3]
+    assert price_pool(*key, "us-central1") is not None
+    assert price_pool(*key, "us-central1") == price_pool(*key, "europe-west1")
+    assert price_pool(*key, "asia-east1") == price_pool(*key, "us-east1")
+
+
+def test_gcs_free_egress_applies_once_to_the_free_regions(tmp_path):
+    costs = compute(_gcs_catalog(tmp_path), {
+        "iowa": node(GCS, "us-central1", 60), "carolina": node(GCS, "us-east1", 60)})
+    # 120 GiB from the two free regions: 100 free, 20 at $0.12.
+    assert costs["iowa"] == pytest.approx(10 * 0.12)
+    assert costs["carolina"] == pytest.approx(10 * 0.12)
+
+
+def test_gcs_free_egress_does_not_cover_other_regions(tmp_path):
+    costs = compute(_gcs_catalog(tmp_path), {
+        "iowa": node(GCS, "us-central1", 60), "belgium": node(GCS, "europe-west1", 60)})
+    # The free 100 GiB covers the 60 GiB from us-central1 only.
+    assert costs["iowa"] == pytest.approx(0.0)
+    assert costs["belgium"] == pytest.approx(60 * 0.12)
+
+
+def test_gcs_paid_egress_is_split_by_paid_quantity(tmp_path):
+    costs = compute(_gcs_catalog(tmp_path), {
+        "iowa": node(GCS, "us-central1", 150), "belgium": node(GCS, "europe-west1", 50)})
+    # 100 GiB of us-central1 are free: 50 paid there and 50 in europe-west1.
+    assert costs["iowa"] == pytest.approx(50 * 0.12)
+    assert costs["belgium"] == pytest.approx(50 * 0.12)
+
+
+def test_gcs_tier_bounds_count_every_region(tmp_path):
+    costs = compute(_gcs_catalog(tmp_path), {
+        "belgium": node(GCS, "europe-west1", 6000), "taiwan": node(GCS, "asia-east1", 6000)})
+    assert sum(costs.values()) == pytest.approx(10240 * 0.12 + 1760 * 0.11)
+
+
+def test_gcs_pool_prices_like_one_free_region(tmp_path):
+    # The tier bounds count the free GiB too, as the rows of a free region
+    # state. With the free 100 GiB used up, the pool costs what one free
+    # region with the same total would cost, whatever the node order.
+    catalog = _gcs_catalog(tmp_path)
+    alone = compute(catalog, {"iowa": node(GCS, "us-central1", 12000)})["iowa"]
+    for nodes in ({"iowa": node(GCS, "us-central1", 6000),
+                   "belgium": node(GCS, "europe-west1", 6000)},
+                  {"belgium": node(GCS, "europe-west1", 6000),
+                   "iowa": node(GCS, "us-central1", 6000)}):
+        assert sum(compute(catalog, nodes).values()) == pytest.approx(alone)
+
+
+def test_gcs_free_region_with_no_egress_stays_out_of_the_pool(tmp_path):
+    costs = compute(_gcs_catalog(tmp_path), {
+        "iowa": node(GCS, "us-central1", 0), "belgium": node(GCS, "europe-west1", 60),
+        "taiwan": node(GCS, "asia-east1", 60)})
+    assert costs["iowa"] == pytest.approx(0.0)
+    assert costs["belgium"] + costs["taiwan"] == pytest.approx(120 * 0.12)
