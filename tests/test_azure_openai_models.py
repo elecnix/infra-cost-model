@@ -322,7 +322,7 @@ def test_extracted_deployment_is_priced(seed_catalog):
     assert engine.unpriced_metrics == []
 
 
-def test_sync_stores_the_one_meter_per_token(monkeypatch):
+def test_sync_stores_the_one_meter_per_token():
     """The descriptor keeps its meter only, and stores the price of one token."""
     from unittest.mock import MagicMock, patch
 
@@ -348,13 +348,13 @@ def test_sync_stores_the_one_meter_per_token(monkeypatch):
         response.json.return_value = {"data": {"products": matched}}
         return response
 
-    monkeypatch.setenv("INFRACOST_API_KEY", "test-token")
     stored = []
     cache = MagicMock()
     cache.upsert.side_effect = stored.append
     metric = "AzureOpenAI-gpt-4.1-nano-Global-Input-Token"
     with patch.object(ic.requests, "post", side_effect=post):
-        assert ic.InfracostClient().sync_to_cache(cache, metric, REGION) == 1
+        assert ic.InfracostClient(api_key="test-token", org_id="org-123").sync_to_cache(
+            cache, metric, REGION) == 1
     row = stored[0]
     assert (row.vendor, row.service, row.usage_metric, row.unit) == (
         "azure", "AzureOpenAI", metric, "tokens")
