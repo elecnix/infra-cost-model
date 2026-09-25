@@ -15,7 +15,8 @@ from typing import Optional
 
 from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
 from infra_cost_model.pricing.free_tiers import (
-    ACCOUNT, SharedFreeAllowance, free_tier_scope, shared_free_allowance,
+    ACCOUNT, FREE_ALLOWANCE_REGIONS, SharedFreeAllowance, free_tier_scope,
+    shared_free_allowance,
 )
 from infra_cost_model.pricing.global_services import (
     GLOBAL_PRICE_REGIONS, is_global_metric,
@@ -721,6 +722,10 @@ def _price_region_group_pools(catalog: PricingCatalog,
     for (provider, service, metric, _, _), keys in groups.items():
         if len(keys) < 2:
             continue
+        free_regions = FREE_ALLOWANCE_REGIONS.get((provider, service, metric))
+        if free_regions is not None:
+            costs.update(_price_partly_free_group(catalog, pools, keys, free_regions))
+            continue
         quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
         total = sum(quantities.values())
         result = None
@@ -735,6 +740,54 @@ def _price_region_group_pools(catalog: PricingCatalog,
         for k in keys:
             costs[k] = result.total_cost * quantities[k] / total
     return costs
+
+
+def _price_partly_free_group(catalog: PricingCatalog,
+                             pools: dict[tuple, list[_CatalogCharge]],
+                             keys: list[tuple], free_regions: tuple[str, ...]
+                             ) -> dict[tuple, float]:
+    """Price a group whose free allowance covers some regions only (#404).
+
+    Cloud Storage bills egress from every region on one SKU, but gives its
+    free 100 GiB to the use in three US regions only. The rows of those
+    regions state the free tier, and their tier bounds count the free use
+    too. This prices the group's total on the rows of the first of those
+    regions in alphabetical order, or of the first region when the group
+    has none of them. Where the free regions use less than the allowance,
+    the rest of the allowance is paid at the first paid price. The cost is
+    split by each pool's paid quantity, and a free region's pool gets a
+    part of the free use in proportion to its quantity. Returns the monthly
+    cost of each regional pool, or nothing when no region has rows.
+    """
+    provider, service, _, metric, _ = keys[0]
+    quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
+    total = sum(quantities.values())
+    free_keys = [k for k in keys if k[2] in free_regions]
+    result = None
+    for region in (sorted(k[2] for k in free_keys)
+                   + sorted(k[2] for k in keys if k not in free_keys)):
+        result = catalog.query(provider, service, region, metric, total,
+                               parameters=pools[keys[0]][0].parameters,
+                               period_seconds=SECONDS_PER_MONTH)
+        if result is not None:
+            break
+    if result is None:
+        return {}
+    free_quantity = sum(quantities[k] for k in free_keys)
+    allowance = result.free_allowance
+    free_used = min(allowance, free_quantity)
+    cost = result.total_cost
+    unused = min(allowance, total) - free_used
+    if unused > 0:
+        first_paid = next((t.price_usd for t in sorted(
+            result.tiers, key=lambda t: t.start_usage_amount or 0)
+            if t.price_usd > 0), 0.0)
+        cost += unused * first_paid
+    paid = {k: quantities[k] * (1 - free_used / free_quantity) if k in free_keys
+            else quantities[k] for k in keys}
+    paid_total = sum(paid.values())
+    return {k: cost * paid[k] / paid_total if paid_total > 0 else 0.0
+            for k in keys}
 
 
 def _price_shared_allowance_pools(catalog: PricingCatalog,

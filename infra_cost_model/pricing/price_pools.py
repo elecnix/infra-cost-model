@@ -11,7 +11,9 @@ names a region's group, or returns ``None`` for a region that the provider
 bills on its own. Every region of a group has the same rows, since they
 come from one meter or SKU. The pool uses the rows of its region that
 comes first in alphabetical order and has some, so the choice doesn't
-depend on node order.
+depend on node order. A metric in ``FREE_ALLOWANCE_REGIONS`` is the
+exception: its free tier covers some regions only, so the engine applies
+it once, to the use in those regions (#404).
 
 The groups are a property of the provider's billing policy, so this table
 in the pricing layer states them, like ``GLOBAL_METRICS`` (#378). Live rows
@@ -28,7 +30,9 @@ from typing import Callable, Optional
 # API puts israelcentral on the zone 1 meter, while the page lists
 # Israel Central in zone 3. The engine prices the API rows, so it follows
 # the API. The API gives newer regions, such as austriaeast, belgiumcentral
-# and chilecentral, a meter of their own, so they are in no group.
+# and chilecentral, a meter of their own, so they are in no group. The API
+# has no meter for polandcentral, which the page lists in zone 1, so the sync
+# stores the zone 1 meter for it (`AZURE_EGRESS_METER_FALLBACK`, #392).
 _AZURE_EGRESS_ZONES: dict[str, str] = {
     # Zone 1, North America and Europe:
     # meter 9995d93a-7d35-4d3f-9c69-7a7fea447ef4.
@@ -36,7 +40,8 @@ _AZURE_EGRESS_ZONES: dict[str, str] = {
         "canadacentral", "canadaeast", "centralus", "eastus", "eastus2",
         "francecentral", "francesouth", "germanynorth", "germanywestcentral",
         "israelcentral", "italynorth", "mexicocentral", "northcentralus",
-        "northeurope", "norwayeast", "norwaywest", "southcentralus",
+        "northeurope", "norwayeast", "norwaywest", "polandcentral",
+        "southcentralus",
         "spaincentral", "swedencentral", "swedensouth", "switzerlandnorth",
         "switzerlandwest", "uksouth", "ukwest", "westcentralus", "westeurope",
         "westus", "westus2", "westus3",
@@ -95,16 +100,25 @@ def gcp_continent(region: str) -> Optional[str]:
     return None
 
 
+def every_region(region: str) -> str:
+    """The one group of a SKU that bills every region."""
+    return "all"
+
+
 # (vendor, service, usage metric) -> the region's group.
 PRICE_POOLS: dict[tuple[str, str, str], Callable[[str], Optional[str]]] = {
     ("azure", "Bandwidth", "Bandwidth-Internet-Out-GB"): azure_egress_zone,
     ("gcp", "CloudRun", "CloudRun-Internet-Egress-GiB"): gcp_continent,
+    # Cloud Storage bills internet egress from every region on one SKU,
+    # "Download Worldwide Destinations (excluding Asia & Australia)", and
+    # states its tiers "per 1 month / account"
+    # (https://cloud.google.com/storage/pricing, checked 2026-09-24). The
+    # 100 GiB of Always Free egress covers the use in three US regions only
+    # (`FREE_ALLOWANCE_REGIONS`), so the rows of those regions start with a
+    # $0 tier and the others don't. The engine applies the free GiB once,
+    # to the use in those regions only (#404).
+    ("gcp", "CloudStorage", "GCS-Internet-Egress-GiB"): every_region,
 }
-
-# GCS-Internet-Egress-GiB is not in the table. Its SKU, "Download Worldwide
-# Destinations (excluding Asia & Australia)", covers every region, but the
-# 100 GiB of Always Free egress applies to 3 US regions only
-# (`FREE_ALLOWANCE_REGIONS`), so their rows differ from the others (#404).
 
 
 def price_pool(vendor: Optional[str], service: Optional[str],
