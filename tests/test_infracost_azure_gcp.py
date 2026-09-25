@@ -468,7 +468,9 @@ def test_every_scaled_descriptor_names_its_stored_unit():
 
 def test_every_azure_and_gcp_descriptor_is_covered():
     covered = {e[0] for e in EXPECTED}
-    new = {m for m, d in ic.METRIC_DESCRIPTORS.items() if d.get("vendor") in ("azure", "gcp")}
+    # test_azure_openai_models.py covers the Azure OpenAI descriptors (#371).
+    new = {m for m, d in ic.METRIC_DESCRIPTORS.items() if d.get("vendor") in ("azure", "gcp")
+           and d.get("store_service") != "AzureOpenAI"}
     assert new == covered
 
 

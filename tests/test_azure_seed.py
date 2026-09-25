@@ -25,7 +25,11 @@ HANDLER_METRICS = [
      {"AzureFunctions-Execution", "AzureFunctions-GB-Second"}),
     (CosmosDB, "CosmosDB", {"CosmosDB-Serverless-RU", "CosmosDB-Storage-GB-Month"}),
     (APIManagement, "APIManagement", {"APIM-Consumption-Call", "Bandwidth-Internet-Out-GB"}),
-    (AzureOpenAI, "AzureOpenAI", {"AzureOpenAI-Input-Token", "AzureOpenAI-Output-Token"}),
+    # A node that names no model: GPT-4o, Global Standard. The rows of the
+    # other models are tested in test_azure_openai_models.py (#371).
+    (AzureOpenAI, "AzureOpenAI", {"AzureOpenAI-gpt-4o-Global-Input-Token",
+                                  "AzureOpenAI-gpt-4o-Global-Cached-Input-Token",
+                                  "AzureOpenAI-gpt-4o-Global-Output-Token"}),
     (AzureBlobStorage, "BlobStorage", {
         "Blob-Hot-LRS-GB-Month", "Blob-Hot-Read-Operation",
         "Blob-Hot-LRS-Write-Operation", "Bandwidth-Internet-Out-GB"}),
@@ -58,6 +62,10 @@ def test_every_azure_row_belongs_to_a_handler_metric():
     known = {(handler().catalog_services.get(m, service), m)
              for handler, service, metrics in HANDLER_METRICS for m in metrics}
     for row in azure_rows():
+        if row.service == "AzureOpenAI":
+            # Each model has rows of its own (#371).
+            assert row.usage_metric.startswith("AzureOpenAI-"), row
+            continue
         assert (row.service, row.usage_metric) in known, row
 
 
@@ -86,8 +94,8 @@ def test_azure_rows_cite_the_retail_prices_api():
     ("BlobStorage", "Blob-Hot-LRS-GB-Month", 100, 2.08),
     ("BlobStorage", "Blob-Hot-Read-Operation", 1_000_000, 0.40),
     ("BlobStorage", "Blob-Hot-LRS-Write-Operation", 1_000_000, 5.0),
-    ("AzureOpenAI", "AzureOpenAI-Input-Token", 1_000_000, 2.50),
-    ("AzureOpenAI", "AzureOpenAI-Output-Token", 1_000_000, 10.0),
+    ("AzureOpenAI", "AzureOpenAI-gpt-4o-Global-Input-Token", 1_000_000, 2.50),
+    ("AzureOpenAI", "AzureOpenAI-gpt-4o-Global-Output-Token", 1_000_000, 10.0),
     # 100 GB free a month, then $0.087 per GB for the next 10 TB (#372).
     ("Bandwidth", "Bandwidth-Internet-Out-GB", 100, 0.0),
     ("Bandwidth", "Bandwidth-Internet-Out-GB", 1_100, 87.0),

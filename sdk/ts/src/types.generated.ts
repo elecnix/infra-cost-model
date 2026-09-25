@@ -83,6 +83,12 @@ export interface Node {
    * Cloud region (e.g., us-east-1)
    */
   region?: string;
+  /**
+   * Resource settings from the infrastructure-as-code extraction, such as the model of an Azure OpenAI deployment. The resource handler reads them to pick the catalog rows that price the node.
+   */
+  config?: {
+    [k: string]: unknown;
+  };
   usageMetrics?: {
     [k: string]: UsageMetric;
   };

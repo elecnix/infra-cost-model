@@ -111,6 +111,10 @@
           "type": "string",
           "description": "Cloud region (e.g., us-east-1)"
         },
+        "config": {
+          "type": "object",
+          "description": "Resource settings from the infrastructure-as-code extraction, such as the model of an Azure OpenAI deployment. The resource handler reads them to pick the catalog rows that price the node."
+        },
         "usageMetrics": {
           "type": "object",
           "additionalProperties": {
