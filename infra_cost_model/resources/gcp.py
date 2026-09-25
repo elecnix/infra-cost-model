@@ -123,9 +123,13 @@ _MEMORY_MB = {"": 1 / (1024 * 1024), "k": 1 / 1024, "ki": 1 / 1024, "m": 1, "mi"
 
 def parse_memory_mb(value: Any) -> Optional[int]:
     """Megabytes from a memory size such as ``256M`` or ``1Gi``."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
         return int(value)
-    match = _MEMORY.match(value) if isinstance(value, str) else None
+    if not isinstance(value, str):
+        return None
+    match = _MEMORY.match(value)
     if not match:
         return None
     return round(float(match.group(1)) * _MEMORY_MB[(match.group(2) or "").lower()])
