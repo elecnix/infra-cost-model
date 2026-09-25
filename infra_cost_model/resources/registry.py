@@ -24,7 +24,7 @@ from .rds import RDSInstance
 from .cloudwatch import CloudWatchLogGroup, CloudWatchMetricAlarm
 from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
-from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
+from .gcp import CloudFunction, CloudFunctionGen2, CloudStorage, CloudRun, Firestore
 from .azure import (
     AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureOpenAIDeployment,
     AzureBlobStorage, ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, COGNITIVE_ACCOUNTS_KEY,
@@ -159,7 +159,8 @@ class ResourceRegistry:
 
     @classmethod
     def derive_catalog_usage(cls, resource_address: str,
-                             usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+                             usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
         """Ask the handler that owns ``resource_address`` for derived catalog
         quantities. Returns ``None`` when no handler matches or the handler
         derives nothing from ``usage``.
@@ -167,7 +168,7 @@ class ResourceRegistry:
         handler = cls.from_address(resource_address)
         if handler is None:
             return None
-        return handler().derive_catalog_usage(usage)
+        return handler().derive_catalog_usage(usage, config or {})
 
     @classmethod
     def known_prefixes(cls) -> set[str]:
@@ -256,6 +257,7 @@ ResourceRegistry.register(ExternalNode)
 # GCP handlers (DP#6: multi-cloud support)
 ResourceRegistry.register(CloudRun)
 ResourceRegistry.register(CloudFunction)
+ResourceRegistry.register(CloudFunctionGen2)
 ResourceRegistry.register(CloudStorage)
 ResourceRegistry.register(Firestore)
 

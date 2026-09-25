@@ -69,9 +69,31 @@ def openai_metrics() -> set[str]:
     }
 
 
+def settings_metrics() -> set[tuple[str, str]]:
+    """The metrics that the settings of a resource select (#375)."""
+    configs = {
+        "BlobStorage": (AzureBlobStorage, [
+            {"accessTier": tier, "replicationType": replication}
+            for tier in ("Hot", "Cool", "Cold", "Archive")
+            for replication in ("LRS", "ZRS", "GRS", "RAGRS", "GZRS", "RAGZRS")]),
+        "APIManagement": (APIManagement, [
+            {"skuName": f"{tier}_1"} for tier in (
+                "Consumption", "Developer", "Basic", "Standard", "Premium", "Isolated",
+                "BasicV2", "StandardV2", "PremiumV2")]),
+        "CosmosDB": (CosmosDB, [
+            {"capacityMode": "provisioned", "multiRegionWrites": multi}
+            for multi in (False, True)]),
+    }
+    return {(service, metric)
+            for service, (handler, variants) in configs.items()
+            for config in variants
+            for metric in handler().catalog_metrics_for(config).values()}
+
+
 def test_every_azure_row_belongs_to_a_handler_metric():
     known = {(handler().catalog_services.get(m, service), m)
              for handler, service, metrics in HANDLER_METRICS for m in metrics}
+    known |= settings_metrics()
     for row in azure_rows():
         if row.service == "AzureOpenAI":
             # Each model and deployment type has rows of its own (#371).

@@ -90,11 +90,14 @@ class ResourceType(ABC):
         """
         return {}
 
-    def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+    def derive_catalog_usage(self, usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
         """Derive catalog quantities that depend on more than one usage metric.
 
         ``usage`` maps the node's logical usageMetrics keys to their values per
-        invocation. ``None`` by default, and when an input is missing. A handler
+        invocation. ``config`` is the node's ``config``, the resource settings
+        that can change what the provider bills (#374). ``None`` by default,
+        and when an input is missing. A handler
         overrides this when the provider bills a quantity that combines
         several metrics, such as Lambda GB-seconds from duration and memory.
         """
