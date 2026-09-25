@@ -39,7 +39,8 @@ def query_azure_retail_prices(service: str, region: str,
     *attribute_filters* are the descriptor's Infracost filters, such as
     ``{"key": "meterName", "value": "Hot LRS Write Operations"}``. Each one
     must equal the item field of the same name. When a meter has prices
-    with more than one effective date, only the latest ones are kept.
+    with more than one effective date, only the latest ones are kept. Items
+    without a price or a meter ID are skipped.
     """
     clauses = [f"serviceName eq {_quoted(service)}",
                f"armRegionName eq {_quoted(region)}",
@@ -57,6 +58,9 @@ def query_azure_retail_prices(service: str, region: str,
             break
         response = requests.get(link, timeout=30)
 
+    # An item without a price or a meter can't give a row.
+    items = [item for item in items
+             if item.get("retailPrice") is not None and item.get("meterId")]
     latest: dict[str, str] = {}
     for item in items:
         meter = item.get("meterId")

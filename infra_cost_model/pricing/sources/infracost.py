@@ -444,7 +444,8 @@ class InfracostClient:
             changes["unit"] = descriptor["store_unit"]
         rows = [dataclasses.replace(r, **changes) for r in rows]
         key = (vendor, store_service, usage_metric)
-        if region not in FREE_ALLOWANCE_REGIONS.get(key, (region,)):
+        free_regions = FREE_ALLOWANCE_REGIONS.get(key)
+        if free_regions is not None and region not in free_regions:
             # The product states a free tier that GCP gives in a few regions.
             rows = _without_free_tier(rows)
         rows = _with_free_tier(rows, FREE_ALLOWANCES.get(key),

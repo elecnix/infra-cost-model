@@ -317,7 +317,8 @@ def _fake_get(items=RETAIL, captured=None):
                 clauses["type"] = clauses.pop("priceType")
             matched = [i for i in items
                        if all(str(i.get(k)) == v for k, v in clauses.items())]
-            page, rest = matched[:1], matched[1:]
+            half = (len(matched) + 1) // 2
+            page, rest = matched[:half], matched[half:]
             link = None
             if rest:
                 link = f"https://prices.azure.com/api/retail/prices?page={len(items_by_link)}"
@@ -766,6 +767,16 @@ def test_retail_fallback_filters_by_the_descriptor_attributes(creds):
         "serviceName eq 'Storage' and armRegionName eq 'eastus2'"
         " and priceType eq 'Consumption' and productName eq 'General Block Blob v2'"
         " and skuName eq 'Hot LRS' and meterName eq 'Hot LRS Write Operations'")
+
+
+def test_retail_items_without_a_price_or_meter_are_skipped(creds):
+    items = _retail("eastus2", "Storage", "Storage", "General Block Blob v2", "Hot LRS",
+                    "Hot LRS Write Operations", "10K", [(0.0, 0.05)])
+    no_price = {k: v for k, v in items[0].items() if k != "retailPrice"}
+    no_meter = {k: v for k, v in items[0].items() if k != "meterId"}
+    rows = _sync("Blob-Hot-LRS-Write-Operation", "eastus2",
+                 retail=[no_price, no_meter] + items)
+    assert [r.price_usd for r in rows] == [pytest.approx(0.000005)]
 
 
 def test_no_retail_fallback_when_infracost_has_the_meter(creds):
