@@ -322,7 +322,7 @@ class CloudStorage(StorageResource):
                 f"{address}: a {location_type} bucket ({config.get('location')}) has no "
                 f"catalog rows yet, so the engine reports its usage as unpriced."
             )
-        elif storage_class not in _GCS_CLASSES.values():
+        if storage_class not in _GCS_CLASSES.values():
             warnings.warn(
                 f"{address}: storage class {config.get('storageClass')!r} has no catalog "
                 f"rows, so the engine reports its usage as unpriced."

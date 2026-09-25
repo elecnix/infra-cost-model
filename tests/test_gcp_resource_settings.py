@@ -208,3 +208,13 @@ def test_nearline_sync_keeps_the_regional_product():
 def test_parse_memory_mb(value, mb):
     from infra_cost_model.resources.gcp import parse_memory_mb
     assert parse_memory_mb(value) == mb
+
+
+def test_unknown_class_warns_for_a_multi_region_bucket_too():
+    resource = {"address": "google_storage_bucket.b", "type": "google_storage_bucket",
+                "values": {"location": "EU", "storage_class": "GLACIAL"}}
+    with pytest.warns(UserWarning) as record:
+        extract_resources_from_tf({"resource": [resource]})
+    messages = [str(w.message) for w in record]
+    assert any("multi-region" in m for m in messages)
+    assert any("GLACIAL" in m for m in messages)
