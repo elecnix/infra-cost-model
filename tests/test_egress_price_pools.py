@@ -280,3 +280,11 @@ def test_gcs_pool_prices_like_one_free_region(tmp_path):
                   {"belgium": node(GCS, "europe-west1", 6000),
                    "iowa": node(GCS, "us-central1", 6000)}):
         assert sum(compute(catalog, nodes).values()) == pytest.approx(alone)
+
+
+def test_gcs_free_region_with_no_egress_stays_out_of_the_pool(tmp_path):
+    costs = compute(_gcs_catalog(tmp_path), {
+        "iowa": node(GCS, "us-central1", 0), "belgium": node(GCS, "europe-west1", 60),
+        "taiwan": node(GCS, "asia-east1", 60)})
+    assert costs["iowa"] == pytest.approx(0.0)
+    assert costs["belgium"] + costs["taiwan"] == pytest.approx(120 * 0.12)
