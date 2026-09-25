@@ -1331,7 +1331,11 @@ METRIC_DESCRIPTORS.update({
 # Products that the settings of a resource select (#375): the access tier and
 # redundancy of a storage account, the API Management tier, and Cosmos DB
 # provisioned throughput. Each entry gives the SKU, the meter and the unit
-# that Infracost prices, for the product of `_SETTINGS_PRODUCTS`.
+# that Infracost prices, for the product of `_SETTINGS_PRODUCTS`. Azure
+# shares some meters between the SKUs of a tier: the SKU `Hot GRS` bills
+# reads on the meter `Hot Read Operations`, as `Hot LRS` does, `Hot RA-GRS`
+# bills writes on `Hot GRS Write Operations`, and `Hot GZRS` bills reads on
+# `Hot ZRS Read Operations`. The SKU filter still selects one product.
 _SETTINGS_PRODUCTS = {
     "Blob": ("Storage", "BlobStorage", "General Block Blob v2"),
     "APIM": ("API Management", "APIManagement", "API Management"),

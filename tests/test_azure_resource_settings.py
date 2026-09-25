@@ -313,3 +313,18 @@ def test_standard_account_from_an_sku_doesnt_warn():
                               "accessTier": "Cool"}
     assert AzureBlobStorage().catalog_metrics_for(node["config"])["storageGb"] == (
         "Blob-Cool-RAGRS-GB-Month")
+
+
+def test_premium_account_is_unpriced_not_priced_as_standard():
+    metrics = AzureBlobStorage().catalog_metrics_for(
+        {"accountTier": "Premium", "replicationType": "LRS"})
+    assert metrics["storageGb"] == "Blob-Premium-Hot-LRS-GB-Month"
+    assert metrics["storageGb"] not in seeded("BlobStorage")
+
+
+def test_shared_meters_select_their_own_sku():
+    """Azure bills Hot GRS reads on the meter that Hot LRS reads use."""
+    descriptor = ic.METRIC_DESCRIPTORS["Blob-Hot-GRS-Read-Operation"]
+    filters = {f["key"]: f["value"] for f in descriptor["attribute_filters"]}
+    assert filters == {"productName": "General Block Blob v2", "skuName": "Hot GRS",
+                       "meterName": "Hot Read Operations"}

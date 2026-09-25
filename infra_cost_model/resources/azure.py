@@ -1203,10 +1203,17 @@ class AzureBlobStorage(StorageResource):
         return {_EGRESS_METRIC: _EGRESS_SERVICE}
 
     def catalog_metrics_for(self, config: dict) -> dict[str, str]:
-        tier, replication = blob_product(config or {})
-        if (tier, replication) == ("Hot", "LRS"):
+        config = config or {}
+        tier, replication = blob_product(config)
+        account_tier = _text(config.get("accountTier")) or "Standard"
+        standard = account_tier.lower() == "standard"
+        if standard and (tier, replication) == ("Hot", "LRS"):
             return self.catalog_metrics
         prefix = f"Blob-{tier}-{replication.replace('-', '')}"
+        if not standard:
+            # A Premium account has no rows, so its usage is unpriced
+            # instead of priced at Standard rates.
+            prefix = f"Blob-{account_tier}-{tier}-{replication.replace('-', '')}"
         return {**self.catalog_metrics,
                 "storageGb": f"{prefix}-GB-Month",
                 "readRequests": f"{prefix}-Read-Operation",
