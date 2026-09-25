@@ -159,6 +159,10 @@ FREE_ALLOWANCES: dict[tuple[str, str, str], float] = {
     ("azure", "AzureFunctions", "AzureFunctions-Execution"): 1_000_000,
     ("azure", "AzureFunctions", "AzureFunctions-GB-Second"): 400_000,
     ("azure", "APIManagement", "APIM-Consumption-Call"): 1_000_000,
+    # The v2 tiers include calls each month (#375). Azure counts them for
+    # each instance, and the catalog for the region.
+    ("azure", "APIManagement", "APIM-BasicV2-Call"): 10_000_000,
+    ("azure", "APIManagement", "APIM-StandardV2-Call"): 50_000_000,
     # https://azure.microsoft.com/pricing/details/bandwidth/: the first
     # 100 GB a month of internet egress are free (#372).
     ("azure", "Bandwidth", "Bandwidth-Internet-Out-GB"): 100,

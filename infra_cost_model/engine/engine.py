@@ -1226,7 +1226,8 @@ class CostAggregator:
                     continue
                 metric_def = metric_def.get("value", 0)
             usage[name] = self._resolve_param(metric_def) * share
-        derived = ResourceRegistry.derive_catalog_usage(resource_address, usage)
+        derived = ResourceRegistry.derive_catalog_usage(
+            resource_address, usage, node.get("config"))
         if derived is None:
             return 0.0, frozenset()
 
