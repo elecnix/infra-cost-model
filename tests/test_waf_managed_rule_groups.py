@@ -158,6 +158,14 @@ def test_tf_bot_control_without_a_config_is_common():
     assert WAFv2WebACL.extract_tf(resource).config["botControlInspectionLevel"] == "COMMON"
 
 
+def test_tf_targeted_bot_control_stays_targeted_after_a_common_group():
+    resource = {"address": "aws_wafv2_web_acl.api", "values": {
+        "region": "us-east-1",
+        "rule": [_tf_rule("AWSManagedRulesBotControlRuleSet", "TARGETED"),
+                 _tf_rule("AWSManagedRulesBotControlRuleSet")]}}
+    assert WAFv2WebACL.extract_tf(resource).config["botControlInspectionLevel"] == "TARGETED"
+
+
 def test_tf_ignores_a_rule_group_of_another_vendor():
     rule = _tf_rule("AWSManagedRulesBotControlRuleSet")
     rule["statement"][0]["managed_rule_group_statement"][0]["vendor_name"] = "F5"

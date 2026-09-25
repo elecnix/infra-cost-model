@@ -77,11 +77,13 @@ def _managed_rule_groups(rules, keys) -> dict:
             continue
         name = managed.get(keys["name"])
         if name == _BOT_CONTROL:
-            level = "COMMON"
+            # A Targeted group sets the level, whatever the other groups state.
+            group_level = "COMMON"
             for config in managed.get(keys["configs"]) or []:
                 bot = _block(_block(config).get(keys["bot"]))
-                if bot.get(keys["level"]):
-                    level = bot[keys["level"]]
+                group_level = bot.get(keys["level"]) or group_level
+            if level != "TARGETED":
+                level = group_level
         elif name in _FRAUD_CONTROL:
             fraud.append(name)
     return {"botControlInspectionLevel": level, "fraudControlRuleGroups": fraud}
