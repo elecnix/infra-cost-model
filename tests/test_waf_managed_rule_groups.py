@@ -356,3 +356,15 @@ def test_live_rows_match_the_seed_rows(creds, metric, region):
     got, want = _tiers(live), _tiers(seed)
     assert [t[1:] for t in got] == [t[1:] for t in want]
     assert [t[0] for t in got] == pytest.approx([t[0] for t in want])
+
+
+@pytest.mark.parametrize("rules", [
+    {"Fn::If": ["UseBots", [], []]},
+    ["not-a-rule"],
+    [{"Name": "odd", "Statement": {"ManagedRuleGroupStatement": "x"}}],
+])
+def test_cdk_skips_rules_it_cannot_read(rules):
+    config = WAFv2WebACL.extract_cdk({"LogicalId": "Acl",
+                                      "Properties": {"Rules": rules}}).config
+    assert config["botControlInspectionLevel"] is None
+    assert config["fraudControlRuleGroups"] == []

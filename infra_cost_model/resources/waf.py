@@ -54,11 +54,15 @@ _KEYS = {
 }
 
 
-def _block(value):
-    """Return the one block of *value*: Terraform plans state blocks as lists."""
+def _block(value) -> dict:
+    """Return the one block of *value*: Terraform plans state blocks as lists.
+
+    A value that isn't a block, such as a CloudFormation intrinsic function
+    in place of a list, gives an empty block.
+    """
     if isinstance(value, list):
-        return value[0] if value else {}
-    return value or {}
+        value = value[0] if value else {}
+    return value if isinstance(value, dict) else {}
 
 
 def _managed_rule_groups(rules, keys) -> dict:
@@ -70,7 +74,7 @@ def _managed_rule_groups(rules, keys) -> dict:
     """
     levels = set()
     fraud = []
-    for rule in rules or []:
+    for rule in rules if isinstance(rules, list) else []:
         statement = _block(_block(rule).get(keys["statement"]))
         managed = _block(statement.get(keys["managed"]))
         if managed.get(keys["vendor"]) != "AWS":
@@ -78,7 +82,8 @@ def _managed_rule_groups(rules, keys) -> dict:
         name = managed.get(keys["name"])
         if name == _BOT_CONTROL:
             group_level = "COMMON"
-            for config in managed.get(keys["configs"]) or []:
+            configs = managed.get(keys["configs"])
+            for config in configs if isinstance(configs, list) else []:
                 bot = _block(_block(config).get(keys["bot"]))
                 group_level = bot.get(keys["level"]) or group_level
             levels.add(group_level)
