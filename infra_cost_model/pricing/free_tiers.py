@@ -147,6 +147,14 @@ FREE_ALLOWANCES: dict[tuple[str, str, str], float] = {
     ("aws", "AmazonSNS", "SNS-Delivery-HTTP"): 100_000,
     ("aws", "AmazonSQS", "SQS-Standard-Request"): 1_000_000,
     ("aws", "AmazonSQS", "SQS-FIFO-Request"): 1_000_000,
+    # https://aws.amazon.com/waf/pricing/: Bot Control includes 10 million
+    # requests a month at the inspection level Common and 1 million at
+    # Targeted, and Fraud Control 10,000 (#395). The AWS price list starts
+    # each region's product, and each "Global-" product, with its own $0
+    # tier, so the allowance applies to each region on its own.
+    ("aws", "AWSWAF", "WAF-BotControl-Request"): 10_000_000,
+    ("aws", "AWSWAF", "WAF-BotControl-Targeted-Request"): 1_000_000,
+    ("aws", "AWSWAF", "WAF-FraudControl-Request"): 10_000,
     # Azure Retail Prices API (#363): the first tier of each meter is $0.
     ("azure", "AzureFunctions", "AzureFunctions-Execution"): 1_000_000,
     ("azure", "AzureFunctions", "AzureFunctions-GB-Second"): 400_000,

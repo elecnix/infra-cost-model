@@ -3,12 +3,17 @@
 Native handler for AWS WAFv2 web ACLs (``aws_wafv2_web_acl``).
 - Recurring cost: $/web-ACL-month + $/rule-month (per rule in the ACL)
 - Usage cost: $/request inspected
+- Bot Control and Fraud Control managed rule groups (#395): $/rule-group-month
+  and tiered $/request inspected, on top of the web ACL.
 
-The optional add-on SKUs (Bot Control, Fraud Control / Account Takeover
-Prevention, CAPTCHA, intelligent threat mitigation) are separate products and
-out of scope here — the same way the ALB handler defers NLB and the KMS handler
-defers asymmetric-key requests. Classic WAF (``aws_waf_web_acl``) is a distinct,
-retired product and is intentionally not matched.
+The extract states which of these rule groups a web ACL uses. Bot Control
+bills its requests at the price of its inspection level: Common
+(``botControlRequests``) or Targeted (``botControlTargetedRequests``). Fraud
+Control has two rule groups, Account Takeover Prevention (ATP) and Account
+Creation Fraud Prevention (ACFP). Their requests share one tiered product.
+CAPTCHA, challenge and Anti-DDoS charges are out of scope. Classic WAF
+(``aws_waf_web_acl``) is a distinct, retired product and is intentionally not
+matched.
 """
 
 from typing import Optional
@@ -26,12 +31,71 @@ def _region_for_scope(scope, region):
     return _GLOBAL_REGION if scope == _CLOUDFRONT_SCOPE else region
 
 
+_BOT_CONTROL = "AWSManagedRulesBotControlRuleSet"
+_FRAUD_CONTROL = ("AWSManagedRulesATPRuleSet", "AWSManagedRulesACFPRuleSet")
+
+# The key names of each source: Terraform, Pulumi and CloudFormation (CDK).
+_KEYS = {
+    "tf": {"statement": "statement", "managed": "managed_rule_group_statement",
+           "name": "name", "vendor": "vendor_name",
+           "configs": "managed_rule_group_configs",
+           "bot": "aws_managed_rules_bot_control_rule_set",
+           "level": "inspection_level"},
+    "pulumi": {"statement": "statement", "managed": "managedRuleGroupStatement",
+               "name": "name", "vendor": "vendorName",
+               "configs": "managedRuleGroupConfigs",
+               "bot": "awsManagedRulesBotControlRuleSet",
+               "level": "inspectionLevel"},
+    "cdk": {"statement": "Statement", "managed": "ManagedRuleGroupStatement",
+            "name": "Name", "vendor": "VendorName",
+            "configs": "ManagedRuleGroupConfigs",
+            "bot": "AWSManagedRulesBotControlRuleSet",
+            "level": "InspectionLevel"},
+}
+
+
+def _block(value):
+    """Return the one block of *value*: Terraform plans state blocks as lists."""
+    if isinstance(value, list):
+        return value[0] if value else {}
+    return value or {}
+
+
+def _managed_rule_groups(rules, keys) -> dict:
+    """Find the Bot Control and Fraud Control rule groups in *rules*.
+
+    Returns the config keys ``botControlInspectionLevel`` (``COMMON``,
+    ``TARGETED``, or ``None`` without Bot Control) and
+    ``fraudControlRuleGroups`` (the names of the Fraud Control rule groups).
+    """
+    level = None
+    fraud = []
+    for rule in rules or []:
+        statement = _block(_block(rule).get(keys["statement"]))
+        managed = _block(statement.get(keys["managed"]))
+        if managed.get(keys["vendor"]) != "AWS":
+            continue
+        name = managed.get(keys["name"])
+        if name == _BOT_CONTROL:
+            level = "COMMON"
+            for config in managed.get(keys["configs"]) or []:
+                bot = _block(_block(config).get(keys["bot"]))
+                if bot.get(keys["level"]):
+                    level = bot[keys["level"]]
+        elif name in _FRAUD_CONTROL:
+            fraud.append(name)
+    return {"botControlInspectionLevel": level, "fraudControlRuleGroups": fraud}
+
+
 class WAFv2WebACL(RoutingResource):
     """AWS WAFv2 web ACL - routing node with per-ACL + per-rule + per-request pricing."""
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["webAcls", "rules", "requests"]
+        return ["webAcls", "rules", "requests",
+                "botControlRuleGroups", "botControlRequests",
+                "botControlTargetedRequests",
+                "fraudControlRuleGroups", "fraudControlRequests"]
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
@@ -39,6 +103,11 @@ class WAFv2WebACL(RoutingResource):
             "webAcls": "WAF-WebACL-Month",
             "rules": "WAF-Rule-Month",
             "requests": "WAF-Request",
+            "botControlRuleGroups": "WAF-BotControl-Month",
+            "botControlRequests": "WAF-BotControl-Request",
+            "botControlTargetedRequests": "WAF-BotControl-Targeted-Request",
+            "fraudControlRuleGroups": "WAF-FraudControl-Month",
+            "fraudControlRequests": "WAF-FraudControl-Request",
         }
 
     @classmethod
@@ -61,6 +130,7 @@ class WAFv2WebACL(RoutingResource):
                 "name": values.get("name"),
                 "scope": values.get("scope", "REGIONAL"),
                 "ruleCount": len(values.get("rule") or []),
+                **_managed_rule_groups(values.get("rule"), _KEYS["tf"]),
             },
         )
 
@@ -75,6 +145,7 @@ class WAFv2WebACL(RoutingResource):
                 "name": inputs.get("name"),
                 "scope": inputs.get("scope", "REGIONAL"),
                 "ruleCount": len(inputs.get("rules") or []),
+                **_managed_rule_groups(inputs.get("rules"), _KEYS["pulumi"]),
             },
         )
 
@@ -89,6 +160,7 @@ class WAFv2WebACL(RoutingResource):
                 "name": properties.get("Name"),
                 "scope": properties.get("Scope", "REGIONAL"),
                 "ruleCount": len(properties.get("Rules") or []),
+                **_managed_rule_groups(properties.get("Rules"), _KEYS["cdk"]),
             },
         )
 
