@@ -1456,6 +1456,77 @@ for _class in ("Nearline", "Coldline", "Archive"):
         }
 
 
+# App Service plans and the Functions plans other than consumption (#383):
+# the Infracost service, the stored service, and the product, SKU, meter and
+# unit of each metric. A dedicated plan bills each instance-hour of its SKU,
+# with one product for Linux and one for Windows. Elastic Premium bills
+# vCPU-hours and GiB-hours, and Flex Consumption executions and GB-seconds.
+_PLAN_METERS = {
+    "AppService-Linux-B1-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Basic Plan - Linux", "B1", "B1", "1 Hour"),
+    "AppService-Linux-B2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Basic Plan - Linux", "B2", "B2", "1 Hour"),
+    "AppService-Linux-B3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Basic Plan - Linux", "B3", "B3", "1 Hour"),
+    "AppService-Linux-S1-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Standard Plan - Linux", "S1", "S1 App", "1 Hour"),
+    "AppService-Linux-S2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Standard Plan - Linux", "S2", "S2 App", "1 Hour"),
+    "AppService-Linux-S3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Standard Plan - Linux", "S3", "S3 App", "1 Hour"),
+    "AppService-Linux-P1v2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v2 Plan - Linux", "P1 v2", "P1 v2 App", "1 Hour"),
+    "AppService-Linux-P2v2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v2 Plan - Linux", "P2 v2", "P2 v2 App", "1 Hour"),
+    "AppService-Linux-P3v2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v2 Plan - Linux", "P3 v2", "P3 v2 App", "1 Hour"),
+    "AppService-Linux-P0v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P0v3", "P0v3 App", "1 Hour"),
+    "AppService-Linux-P1v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P1 v3", "P1 v3 App", "1 Hour"),
+    "AppService-Linux-P2v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P2 v3", "P2 v3 App", "1 Hour"),
+    "AppService-Linux-P3v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P3 v3", "P3 v3 App", "1 Hour"),
+    "AppService-Linux-P1mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P1mv3", "P1mv3 App", "1 Hour"),
+    "AppService-Linux-P2mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P2mv3", "P2mv3 App", "1 Hour"),
+    "AppService-Linux-P3mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P3mv3", "P3mv3 App", "1 Hour"),
+    "AppService-Linux-P4mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P4mv3", "P4mv3 App", "1 Hour"),
+    "AppService-Linux-P5mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan - Linux", "P5mv3", "P5mv3 App", "1 Hour"),
+    "AppService-Windows-B1-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Basic Plan", "B1", "B1 App", "1 Hour"),
+    "AppService-Windows-B2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Basic Plan", "B2", "B2 App", "1 Hour"),
+    "AppService-Windows-B3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Basic Plan", "B3", "B3 App", "1 Hour"),
+    "AppService-Windows-S1-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Standard Plan", "S1", "S1 App", "1 Hour"),
+    "AppService-Windows-S2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Standard Plan", "S2", "S2 App", "1 Hour"),
+    "AppService-Windows-S3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Standard Plan", "S3", "S3 App", "1 Hour"),
+    "AppService-Windows-P1v2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v2 Plan", "P1 v2", "P1 v2 App", "1 Hour"),
+    "AppService-Windows-P2v2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v2 Plan", "P2 v2", "P2 v2 App", "1 Hour"),
+    "AppService-Windows-P3v2-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v2 Plan", "P3 v2", "P3 v2 App", "1 Hour"),
+    "AppService-Windows-P0v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P0v3", "P0v3 App", "1 Hour"),
+    "AppService-Windows-P1v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P1 v3", "P1 v3 App", "1 Hour"),
+    "AppService-Windows-P2v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P2 v3", "P2 v3 App", "1 Hour"),
+    "AppService-Windows-P3v3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P3 v3", "P3 v3 App", "1 Hour"),
+    "AppService-Windows-P1mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P1mv3", "P1mv3 App", "1 Hour"),
+    "AppService-Windows-P2mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P2mv3", "P2mv3 App", "1 Hour"),
+    "AppService-Windows-P3mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P3mv3", "P3mv3 App", "1 Hour"),
+    "AppService-Windows-P4mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P4mv3", "P4mv3 App", "1 Hour"),
+    "AppService-Windows-P5mv3-Instance-Hour": ("Azure App Service", "AppService", "Azure App Service Premium v3 Plan", "P5mv3", "P5mv3 App", "1 Hour"),
+    "AzureFunctionsPremium-vCPU-Hour": ("Functions", "AzureFunctionsPremium", "Premium Functions", "Premium", "Premium vCPU Duration", "1 Hour"),
+    "AzureFunctionsPremium-GiB-Hour": ("Functions", "AzureFunctionsPremium", "Premium Functions", "Premium", "Premium Memory Duration", "1 GiB Hour"),
+    "AzureFunctionsFlex-Execution": ("Functions", "AzureFunctionsFlexConsumption", "Flex Consumption", "On Demand", "On Demand Total Executions", "10"),
+    "AzureFunctionsFlex-GB-Second": ("Functions", "AzureFunctionsFlexConsumption", "Flex Consumption", "On Demand", "On Demand Execution Time", "1 GB Second"),
+}
+_PLAN_UNITS = {"1 Hour": ("hours", 1), "1 GiB Hour": ("GiB-hours", 1),
+               "10": ("executions", 10), "1 GB Second": ("GB-s", 1)}
+
+
+def _plan_descriptor(service: str, store_service: str, product: str, sku: str, meter: str,
+                     unit: str) -> dict:
+    store_unit, scale = _PLAN_UNITS[unit]
+    descriptor = {
+        "vendor": "azure", "service": service, "store_service": store_service,
+        "attribute_filters": [{"key": "productName", "value": product},
+                              {"key": "skuName", "value": sku},
+                              {"key": "meterName", "value": meter}],
+        "unit": unit, "store_unit": store_unit,
+    }
+    if scale != 1:
+        descriptor["unit_scale"] = scale
+    return descriptor
+
+
+METRIC_DESCRIPTORS.update({
+    metric: _plan_descriptor(*product) for metric, product in _PLAN_METERS.items()
+})
+
+
 def _live_auth_intended(client: "InfracostClient") -> bool:
     """Whether the caller intended a live sync (a credential is present)."""
     return client.is_authenticated()

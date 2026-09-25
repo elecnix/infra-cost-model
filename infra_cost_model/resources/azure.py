@@ -25,9 +25,6 @@ ARM_PARAMETERS_KEY = "_templateParameters"
 # App Service plans of the input, from `service_plans_from_*` (#382).
 SERVICE_PLANS_KEY = "_servicePlans"
 
-# The issue that tracks pricing the plans other than consumption.
-_PLAN_PRICING_ISSUE = "#383"
-
 # Azure bills every service's internet egress on one Bandwidth meter, so the
 # handlers price `dataOutGb` from the same rows and share its tiers (#372).
 _EGRESS_SERVICE = "Bandwidth"
@@ -144,6 +141,10 @@ _HOSTING_PLANS = {
     "flexConsumption": ("AzureFunctionsFlexConsumption", "Flex Consumption"),
     "dedicated": ("AppService", "dedicated App Service"),
 }
+
+
+# Flex Consumption instance memory sizes, in MB (#383).
+_FLEX_INSTANCE_MB = (512, 2048, 4096)
 
 
 def hosting_plan(sku: Any, tier: Any) -> Optional[str]:
@@ -301,17 +302,36 @@ class AzureFunction(ComputeResource):
 
     def derive_catalog_usage(self, usage: dict[str, float],
                              config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
-        """Derive executions and GB-seconds, the quantities the consumption plan bills.
+        """Derive the executions and GB-seconds that the app's plan bills (#383).
 
-        Azure rounds memory up to the next 128 MB and bills at least 100 ms
-        for each execution.
+        On the consumption plan, Azure rounds memory up to the next 128 MB
+        and bills at least 100 ms for each execution. On Flex Consumption it
+        bills the memory of the instance size (512 MB, 2 GB or 4 GB) at its
+        own rates. The handler counts each execution's duration, at least
+        100 ms, and leaves out concurrency: executions that share an
+        instance bill its time once, so this is an upper bound. On an
+        Elastic Premium or dedicated plan, the plan's instances pay for
+        every execution, so the app derives no quantity.
         """
         inputs = ("invocations", "avgDurationMs", "memoryMb")
         if not all(name in usage for name in inputs):
             return None
+        plan = (config or {}).get("hostingPlan") or "consumption"
+        if plan in ("premium", "dedicated"):
+            return DerivedCatalogUsage(consumed=frozenset(inputs), quantities={})
         invocations = usage["invocations"]
-        memory_gb = math.ceil(usage["memoryMb"] / 128) * 128 / 1024
         seconds = max(usage["avgDurationMs"], 100.0) / 1000
+        if plan == "flexConsumption":
+            memory_mb = next((mb for mb in _FLEX_INSTANCE_MB if usage["memoryMb"] <= mb),
+                             _FLEX_INSTANCE_MB[-1])
+            return DerivedCatalogUsage(
+                consumed=frozenset(inputs),
+                quantities={
+                    "AzureFunctionsFlex-Execution": invocations,
+                    "AzureFunctionsFlex-GB-Second": invocations * memory_mb / 1024 * seconds,
+                },
+            )
+        memory_gb = math.ceil(usage["memoryMb"] / 128) * 128 / 1024
         return DerivedCatalogUsage(
             consumed=frozenset(inputs),
             quantities={
@@ -338,10 +358,10 @@ class AzureFunction(ComputeResource):
     def hosting(address: str, plan_ref: Any, plans: list) -> tuple[str, dict]:
         """The node's service, and its hostingPlan, planSku and planTier config (#382).
 
-        Only the consumption plan has catalog rows. An app on another plan
-        gets that plan's service, so the engine reports its usage as
-        unpriced, and a UserWarning. An app whose plan isn't in the input
-        is priced as a consumption plan app, with a UserWarning.
+        Each plan gets its own service. `derive_catalog_usage` prices the
+        app by its plan, and the plan's own node prices its instances
+        (#383). An app whose plan isn't in the input is priced as a
+        consumption plan app, with a UserWarning.
         """
         plan = find_service_plan(plans, plan_ref)
         kind = hosting_plan(plan.sku, plan.tier) if plan else None
@@ -353,14 +373,7 @@ class AzureFunction(ComputeResource):
                 f"on its own plan."
             )
             return "AzureFunctions", {"hostingPlan": None, "planSku": None, "planTier": None}
-        service, label = _HOSTING_PLANS[kind]
-        if kind != "consumption":
-            warnings.warn(
-                f"{address}: runs on the {label} plan {plan.sku or plan.tier}, which the engine "
-                f"doesn't price yet ({_PLAN_PRICING_ISSUE}). Its node has service "
-                f"{service}, so the engine reports its usage as unpriced instead "
-                f"of pricing it at consumption plan rates."
-            )
+        service, _ = _HOSTING_PLANS[kind]
         return service, {"hostingPlan": kind, "planSku": plan.sku, "planTier": plan.tier}
 
     @classmethod
@@ -1292,3 +1305,137 @@ class AzureBlobStorage(StorageResource):
             "replicationType": replication or None,
             "accessTier": access_tier,
         })
+
+
+# Dedicated App Service plan SKUs with instance-hour rows (#383), by the
+# name that the metric uses.
+_DEDICATED_SKUS = {sku.lower(): sku for sku in (
+    "B1", "B2", "B3", "S1", "S2", "S3", "P1v2", "P2v2", "P3v2", "P0v3", "P1v3", "P2v3",
+    "P3v3", "P1mv3", "P2mv3", "P3mv3", "P4mv3", "P5mv3")}
+# Elastic Premium SKUs: the vCPUs and GiB of memory of each instance, which
+# Azure bills per hour.
+_ELASTIC_PREMIUM = {"ep1": (1, 3.5), "ep2": (2, 7), "ep3": (4, 14)}
+
+
+def _plan_sku(sku: Any) -> Optional[str]:
+    """A plan SKU as the metrics name it: `P1 v3` and `p1v3` are `P1v3`."""
+    text = _text(sku)
+    if text is None:
+        return None
+    compact = text.replace(" ", "")
+    return _DEDICATED_SKUS.get(compact.lower(), compact)
+
+
+def _plan_os(value: Any, reserved: Any = None) -> str:
+    """``Linux``, ``Windows`` or ``WindowsContainer`` from an OS type or a kind."""
+    text = (_text(value) or "").lower()
+    if text == "windowscontainer" or "xenon" in text:
+        return "WindowsContainer"
+    if "linux" in text or reserved is True:
+        return "Linux"
+    return "Windows"
+
+
+class AppServicePlan(ComputeResource):
+    """An App Service plan, which bills its instances (#383).
+
+    A dedicated plan bills each instance-hour of its SKU. An Elastic
+    Premium plan bills the vCPU-hours and GiB-hours of its instances,
+    always-ready ones included. The ``instanceHours`` metric counts the
+    instance-hours of a month, and is usually fixed. The Function Apps on
+    these plans cost nothing per execution. A consumption or Flex
+    Consumption plan has no cost of its own: its apps pay per execution.
+    """
+
+    @property
+    def valid_metrics(self) -> list[str]:
+        return ["instanceHours"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {}
+
+    def catalog_metrics_for(self, config: dict) -> dict:
+        config = config or {}
+        plan = config.get("hostingPlan")
+        sku = _plan_sku(config.get("sku"))
+        if plan == "premium":
+            vcpus, memory = _ELASTIC_PREMIUM.get((sku or "").lower(), (None, None))
+            if vcpus is None:
+                return {"instanceHours": f"AzureFunctionsPremium-{sku}-Instance-Hour"}
+            return {"instanceHours": {"AzureFunctionsPremium-vCPU-Hour": vcpus,
+                                      "AzureFunctionsPremium-GiB-Hour": memory}}
+        if plan == "dedicated" and sku:
+            os_name = _plan_os(config.get("os"))
+            return {"instanceHours": f"AppService-{os_name}-{sku}-Instance-Hour"}
+        return {}
+
+    @classmethod
+    def from_address(cls, resource_address: str) -> Optional["AppServicePlan"]:
+        if (resource_address.startswith(("azurerm_service_plan.", "azurerm_app_service_plan.")) or
+                matches_arm_type(resource_address, "Microsoft.Web/serverfarms")):
+            return cls()
+        return None
+
+    @staticmethod
+    def _extract(address: str, region: Any, sku: Any, tier: Any, os_name: str,
+                 instances: Any) -> ResourceExtract:
+        plan = hosting_plan(sku, tier)
+        service = _HOSTING_PLANS[plan][0] if plan else "AppService"
+        config = {"sku": _text(sku), "tier": _text(tier), "hostingPlan": plan,
+                  "os": os_name, "instances": instances}
+        name = _plan_sku(sku)
+        known = ((plan == "dedicated" and (name or "").lower() in _DEDICATED_SKUS
+                  and os_name != "WindowsContainer")
+                 or (plan == "premium" and (name or "").lower() in _ELASTIC_PREMIUM)
+                 or plan in ("consumption", "flexConsumption"))
+        if not known:
+            warnings.warn(
+                f"{address}: App Service plan SKU {sku or tier!r} on {os_name} has no "
+                f"catalog rows, so the engine reports its instance-hours as unpriced."
+            )
+        return ResourceExtract(resource_address=address, node_type="compute",
+                               provider="azure", service=service, region=region,
+                               config=config)
+
+    @classmethod
+    def extract_tf(cls, resource: dict) -> ResourceExtract:
+        values = resource.get("values") or {}
+        if resource.get("type") == "azurerm_app_service_plan":
+            block = _first_block(values.get("sku"))
+            return cls._extract(resource.get("address", ""), values.get("location"),
+                                block.get("size"), block.get("tier"),
+                                _plan_os(values.get("kind"), values.get("reserved")),
+                                block.get("capacity"))
+        return cls._extract(resource.get("address", ""), values.get("location"),
+                            values.get("sku_name"), None, _plan_os(values.get("os_type")),
+                            values.get("worker_count"))
+
+    @classmethod
+    def extract_pulumi(cls, resource: dict) -> ResourceExtract:
+        inputs = resource.get("inputs") or {}
+        resource_type = resource.get("type", "")
+        if resource_type == "azure:appservice/servicePlan:ServicePlan":
+            return cls._extract(resource.get("id", ""), inputs.get("location"),
+                                inputs.get("skuName"), None, _plan_os(inputs.get("osType")),
+                                inputs.get("workerCount"))
+        sku = inputs.get("sku") or {}
+        return cls._extract(resource.get("id", ""), inputs.get("location"),
+                            sku.get("name", sku.get("size")), sku.get("tier"),
+                            _plan_os(inputs.get("kind"), inputs.get("reserved")),
+                            sku.get("capacity"))
+
+    @classmethod
+    def extract_cdk(cls, resource: dict) -> ResourceExtract:
+        raise NotImplementedError("CloudFormation has no App Service plans")
+
+    @classmethod
+    def extract_arm(cls, resource: dict) -> ResourceExtract:
+        parameters = resource.get(ARM_PARAMETERS_KEY, {})
+        sku = resource.get("sku") or {}
+        name, _ = resolve_arm_value(sku.get("name"), parameters)
+        tier, _ = resolve_arm_value(sku.get("tier"), parameters)
+        capacity, _ = resolve_arm_value(sku.get("capacity"), parameters)
+        kind, _ = resolve_arm_value(resource.get("kind"), parameters)
+        return cls._extract(resource.get(ARM_ADDRESS_KEY, ""), arm_region(resource), name, tier,
+                            _plan_os(kind, _arm_properties(resource).get("reserved")), capacity)
