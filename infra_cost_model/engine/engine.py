@@ -20,6 +20,7 @@ from infra_cost_model.pricing.free_tiers import (
 from infra_cost_model.pricing.global_services import (
     GLOBAL_PRICE_REGIONS, is_global_metric,
 )
+from infra_cost_model.pricing.price_pools import price_pool
 from infra_cost_model.version_requirement import require_engine
 
 
@@ -565,7 +566,8 @@ def _price_pooled_charges(catalog: PricingCatalog,
     keeps its cost, unless it shares an account-wide free allowance with a
     pool in another region (#336), or its metric shares a free allowance
     with other metrics (#338), or its metric belongs to a global service
-    used in another region (#378).
+    used in another region (#378), or its region shares a meter or SKU with
+    another pool's region (#389).
     """
     pools: dict[tuple, list[_CatalogCharge]] = defaultdict(list)
     for charge in charges:
@@ -574,6 +576,7 @@ def _price_pooled_charges(catalog: PricingCatalog,
     pool_costs = _price_account_wide_pools(catalog, pools)
     pool_costs.update(_price_shared_allowance_pools(catalog, pools))
     pool_costs.update(_price_global_pools(catalog, pools))
+    pool_costs.update(_price_region_group_pools(catalog, pools))
 
     deltas: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
     for key, members in pools.items():
@@ -680,6 +683,48 @@ def _price_global_pools(catalog: PricingCatalog,
         regions = list(GLOBAL_PRICE_REGIONS) + sorted(k[2] for k in keys)
         result = None
         for region in regions:
+            result = catalog.query(provider, service, region, metric, total,
+                                   parameters=pools[keys[0]][0].parameters,
+                                   period_seconds=SECONDS_PER_MONTH)
+            if result is not None:
+                break
+        if result is None:
+            continue
+        for k in keys:
+            costs[k] = result.total_cost * quantities[k] / total
+    return costs
+
+
+def _price_region_group_pools(catalog: PricingCatalog,
+                              pools: dict[tuple, list[_CatalogCharge]]
+                              ) -> dict[tuple, float]:
+    """Price each group of regions that share a meter or SKU once (#389).
+
+    Azure bills internet egress on one meter for each zone, and GCP bills
+    Cloud Run egress on one SKU for each continent. Each counts its tiers
+    on the group's total. For each group with pools in more than one
+    region, this prices the total quantity once and gives each regional
+    pool a part of the cost in proportion to its quantity. The rows of the
+    group's region that comes first in alphabetical order and has some
+    price the total, so the choice doesn't depend on node order. Returns
+    the monthly cost of each regional pool it priced. The pricing layer
+    says which regions share a group.
+    """
+    groups: dict[tuple, list[tuple]] = defaultdict(list)
+    for key, members in pools.items():
+        provider, service, region, metric, scaling = key
+        group = price_pool(provider, service, metric, region)
+        if group is not None and sum(c.quantity for c in members) > 0:
+            groups[(provider, service, metric, scaling, group)].append(key)
+
+    costs: dict[tuple, float] = {}
+    for (provider, service, metric, _, _), keys in groups.items():
+        if len(keys) < 2:
+            continue
+        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
+        total = sum(quantities.values())
+        result = None
+        for region in sorted(k[2] for k in keys):
             result = catalog.query(provider, service, region, metric, total,
                                    parameters=pools[keys[0]][0].parameters,
                                    period_seconds=SECONDS_PER_MONTH)
