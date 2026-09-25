@@ -91,7 +91,8 @@ class TestExtract:
         assert "Microsoft.ApiManagement/service/apis:apim-orders/orders" in message
         assert "Microsoft.DocumentDB/databaseAccounts/sqlDatabases:cosmos-orders/orders" in message
         # The plan has a handler of its own since #383.
-        assert PLAN not in message
+        nodes, _ = extract_fixture()
+        assert nodes[PLAN]["config"]["hostingPlan"] == "consumption"
 
 
 class TestRegionExpressions:
