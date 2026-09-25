@@ -4,9 +4,9 @@ A Function App runs on the App Service plan its `serverFarmId` (ARM, Pulumi)
 or `service_plan_id` (Terraform) points to. The plan SKU tells the hosting
 plan apart: `Y1` or `Dynamic` is the consumption plan, `EP1` to `EP3` or
 `ElasticPremium` is Elastic Premium, `FC1` is Flex Consumption, and any other
-SKU is a dedicated plan. The engine prices only the consumption plan. The
-other plans get their own service, so their usage is reported as unpriced
-until #383 prices them.
+SKU is a dedicated plan. Each plan gives the app its own service. Since
+#383 the app is priced by its plan, and the plan node prices its instances
+(see test_azure_plan_pricing.py).
 """
 import warnings
 
@@ -65,9 +65,9 @@ def test_arm_hosting_plan_from_serverfarm_sku(sku, tier, plan, service):
 
 
 @pytest.mark.parametrize("sku,tier,plan,service", NOT_CONSUMPTION)
-def test_arm_other_plans_warn_they_are_unpriced(sku, tier, plan, service):
+def test_arm_apps_on_other_plans_dont_warn(sku, tier, plan, service):
     _, messages = extract_quietly(extract_resources_from_arm, arm_template(sku, tier))
-    assert any(ARM_FUNC in m and sku in m and "#383" in m for m in messages)
+    assert not any(ARM_FUNC in m for m in messages)
 
 
 def test_arm_consumption_plan_does_not_warn_about_the_plan():
@@ -89,7 +89,9 @@ def test_arm_tier_alone_tells_the_plan():
     # planSku stays the SKU. The tier has its own field.
     assert config["planSku"] is None
     assert config["planTier"] == "ElasticPremium"
-    assert any(ARM_FUNC in m and "ElasticPremium" in m for m in messages)
+    # The plan node can't tell the instance size without the SKU.
+    assert any("Microsoft.Web/serverfarms:plan-orders" in m and "ElasticPremium" in m
+               for m in messages)
 
 
 def test_arm_plan_tier_is_kept():
@@ -150,8 +152,7 @@ def test_terraform_hosting_plan_from_service_plan_sku(sku, tier, plan, service):
     assert node["service"] == service
     assert node["config"]["hostingPlan"] == plan
     assert node["config"]["planSku"] == sku
-    warned = any(TF_FUNC in m and "#383" in m for m in messages)
-    assert warned == (plan != "consumption")
+    assert not any(TF_FUNC in m for m in messages)
 
 
 def test_terraform_plan_matched_by_name_when_its_id_is_unknown():
@@ -287,7 +288,7 @@ def price(node, seed_catalog):
 
 def extracted_node(sku, tier):
     nodes, _ = extract_quietly(extract_resources_from_arm, arm_template(sku, tier))
-    return {key: value for key, value in nodes[ARM_FUNC].items() if key != "config"}
+    return nodes[ARM_FUNC]
 
 
 def test_consumption_app_is_priced_at_consumption_rates(seed_catalog):
@@ -299,6 +300,7 @@ def test_consumption_app_is_priced_at_consumption_rates(seed_catalog):
 
 @pytest.mark.parametrize("sku,tier", [("EP1", "ElasticPremium"), ("P1v3", "PremiumV3")])
 def test_premium_and_dedicated_apps_are_not_priced_at_consumption_rates(sku, tier, seed_catalog):
+    # Their plan's instances pay for the executions (#383).
     cost, engine = price(extracted_node(sku, tier), seed_catalog)
     assert cost == 0
-    assert engine.unpriced_metrics != []
+    assert engine.unpriced_metrics == []

@@ -17,6 +17,8 @@ FUNC = "Microsoft.Web/sites:func-orders"
 COSMOS = "Microsoft.DocumentDB/databaseAccounts:cosmos-orders"
 BLOB = "Microsoft.Storage/storageAccounts:storders"
 OPENAI = "Microsoft.CognitiveServices/accounts:oai-orders"
+# The consumption plan of the Function App, a node with no cost of its own (#383).
+PLAN = "Microsoft.Web/serverfarms:plan-orders"
 
 
 def load_fixture() -> dict:
@@ -34,7 +36,7 @@ def extract_fixture() -> tuple[dict, list[str]]:
 class TestExtract:
     def test_priced_resources_are_extracted(self):
         nodes, _ = extract_fixture()
-        assert set(nodes) == {APIM, FUNC, COSMOS, BLOB, OPENAI}
+        assert set(nodes) == {APIM, FUNC, COSMOS, BLOB, OPENAI, PLAN}
 
     def test_every_node_is_azure_with_its_service(self):
         nodes, _ = extract_fixture()
@@ -45,6 +47,7 @@ class TestExtract:
             COSMOS: "CosmosDB",
             BLOB: "BlobStorage",
             OPENAI: "AzureOpenAI",
+            PLAN: "AzureFunctions",
         }
         assert {n["provider"] for n in nodes.values()} == {"azure"}
         assert all(n["resourceAddress"] == addr for addr, n in nodes.items())
@@ -87,7 +90,8 @@ class TestExtract:
         # Nested children get the parent's type and name as a prefix.
         assert "Microsoft.ApiManagement/service/apis:apim-orders/orders" in message
         assert "Microsoft.DocumentDB/databaseAccounts/sqlDatabases:cosmos-orders/orders" in message
-        assert "Microsoft.Web/serverfarms:plan-orders" in message
+        # The plan has a handler of its own since #383.
+        assert PLAN not in message
 
 
 class TestRegionExpressions:
@@ -165,7 +169,7 @@ class TestCli:
         from infra_cost_model.cli import main
         assert main(["extract", str(FIXTURE), "--from", "arm", "--json"]) == 0
         out = json.loads(capsys.readouterr().out)
-        assert set(out) == {APIM, FUNC, COSMOS, BLOB, OPENAI}
+        assert set(out) == {APIM, FUNC, COSMOS, BLOB, OPENAI, PLAN}
 
 
 def build_model(nodes: dict) -> dict:
@@ -182,6 +186,9 @@ def build_model(nodes: dict) -> dict:
     }
     model_nodes = {}
     for addr, node in nodes.items():
+        if addr == PLAN:
+            # A consumption plan has no cost of its own.
+            continue
         model_nodes[addr] = {
             "nodeType": node["nodeType"],
             "resourceAddress": addr,
