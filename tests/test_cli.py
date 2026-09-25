@@ -1686,7 +1686,7 @@ def test_cli_sync_pricing_defaults_to_all_regions(monkeypatch):
     rc = main(["sync-pricing"])
     assert rc == 0
     assert captured["services"] is None
-    assert set(captured["regions"]) == set(ic._REGION_PREFIX)
+    assert set(captured["regions"]) == set(ic._REGION_PREFIX) | {ic.GLOBAL_REGION}
 
 
 @pytest.mark.parametrize("vendor,region", [("azure", "eastus"), ("gcp", "us-central1")])

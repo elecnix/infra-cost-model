@@ -1145,11 +1145,20 @@ class CostAggregator:
         that pay for the same metric (#332).
         """
         node = self._node_for_metric(node, metric)
-        result = self.catalog.query(
-            node.get("provider"), node.get("service", ""), node.get("region"),
-            metric, quantity, parameters=self.parameters,
-            period_seconds=SECONDS_PER_MONTH if fixed else 1.0,
-        )
+        regions = [node.get("region")]
+        if is_global_metric(node.get("provider"), node.get("service", ""), metric):
+            # A global service has one price everywhere, so a region with no
+            # rows of its own uses the global or us-east-1 rows (#384).
+            regions += [r for r in GLOBAL_PRICE_REGIONS if r != node.get("region")]
+        result = None
+        for region in regions:
+            result = self.catalog.query(
+                node.get("provider"), node.get("service", ""), region,
+                metric, quantity, parameters=self.parameters,
+                period_seconds=SECONDS_PER_MONTH if fixed else 1.0,
+            )
+            if result is not None:
+                break
         if result is not None and self._pricing_address is not None:
             months = 1.0 if fixed else SECONDS_PER_MONTH
             self.catalog_charges.append(_CatalogCharge(

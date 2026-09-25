@@ -330,7 +330,7 @@ def test_unknown_gcp_region_stores_nothing(creds):
 
 
 @pytest.mark.parametrize("vendor,expected", [
-    ("aws", sorted(ic._REGION_PREFIX)),
+    ("aws", sorted(ic._REGION_PREFIX) + [ic.GLOBAL_REGION]),
     ("azure", sorted(ic._AZURE_REGIONS)),
     ("gcp", sorted(ic._GCP_LOCATION)),
 ])

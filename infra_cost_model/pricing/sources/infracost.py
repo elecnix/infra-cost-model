@@ -139,9 +139,22 @@ _GCP_LOCATION = {
 }
 
 
+# The catalog region of AWS prices that have no region, such as those of a
+# CloudFront distribution or of a web ACL with the scope CLOUDFRONT (#385).
+# The Cloud Pricing API keeps them in its global catalogue (region ""), with
+# the usagetype prefix "Global-". Only descriptors with `global_scope` sync it.
+GLOBAL_REGION = "global"
+_GLOBAL_USAGETYPE_PREFIX = "Global"
+
+
 def sync_regions(vendor: str) -> list[str]:
-    """The regions that ``sync-pricing`` syncs for *vendor* by default."""
-    regions = {"azure": _AZURE_REGIONS, "gcp": _GCP_LOCATION}.get(vendor, _REGION_PREFIX)
+    """The regions that ``sync-pricing`` syncs for *vendor* by default.
+
+    The AWS list ends with ``GLOBAL_REGION``.
+    """
+    regions = {"azure": _AZURE_REGIONS, "gcp": _GCP_LOCATION}.get(vendor)
+    if regions is None:
+        return sorted(_REGION_PREFIX) + [GLOBAL_REGION]
     return sorted(regions)
 
 
@@ -342,6 +355,18 @@ class InfracostClient:
         # `region` (see `region_pair_source` below).
         query_region = descriptor.get("query_region", region)
         attribute_filters = descriptor.get("attribute_filters")
+        if region == GLOBAL_REGION:
+            # The global products, such as those of a web ACL with the scope
+            # CLOUDFRONT, are in the global catalogue with the usagetype
+            # prefix "Global-" (#385).
+            if not descriptor.get("global_scope"):
+                raise KeyError(f"The descriptor for '{usage_metric}' has no global product")
+            query_region = ""
+            attribute_filters = [
+                {"key": f["key"],
+                 "value": f["value"].replace("REGION_PREFIX", _GLOBAL_USAGETYPE_PREFIX)}
+                for f in attribute_filters or []
+            ]
         if (attribute_filters and descriptor.get("unprefixed_in_us_east_1")
                 and query_region == "us-east-1"):
             # Some services name the us-east-1 product without a region prefix
@@ -416,7 +441,8 @@ class InfracostClient:
         kept = _close_open_tiers(kept)
         # Azure prices some meters per block of units, such as $0.035 per 10K
         # API calls. `unit_scale` is the block size: the stored row prices one
-        # unit, and its tier bounds count units.
+        # unit, and its tier bounds count units. A scale below 1 does the
+        # opposite: 1e-6 turns a price per query into a price per million.
         scale = descriptor.get("unit_scale", 1)
         return [
             _price_row({**p, "price_usd": p["price_usd"] / scale,
@@ -713,6 +739,17 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "usagetype", "value": "HostedZone"}],
         "unit": "HostedZone", "store_unit": "Zones",
     },
+    # Route 53 (#384): standard queries to public hosted zones, $0.40 per
+    # million for the first billion a month and $0.20 after. The product is
+    # in the global catalogue. Each region's "USE1-DNS-Queries" product is
+    # Route 53 Resolver queries. The seed file prices a million queries, so
+    # `unit_scale` turns the price per query into a price per million.
+    "Route53-Query": {
+        "service": "AmazonRoute53", "product_family": "DNS Query",
+        "query_region": "",
+        "attribute_filters": [{"key": "usagetype", "value": "DNS-Queries"}],
+        "unit": "Queries", "unit_scale": 1e-6, "store_unit": "1M-Queries",
+    },
     # S3 (#354): AWS bills PUT, COPY, POST and LIST requests as Tier 1 requests.
     "S3-PutRequest": {
         "service": "AmazonS3", "product_family": "API Request",
@@ -742,6 +779,10 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
     # resolved at query time; the "V2" suffix distinguishes WAFv2 from classic
     # WAF, and the exact-match value naturally excludes the "ShieldProtected-"
     # siblings (Infracost matches these with a `(?!ShieldProtected-)` regex).
+    # A web ACL with the scope CLOUDFRONT bills from the "Global-" products
+    # (#385): `global_scope` syncs them under the region "global", where the
+    # WAF handler puts such a web ACL. `store_unit` gives the rows the units
+    # of the seed rows.
     # RequestV2-Tier1 is the standard per-request inspection tier. No `unit`
     # filter: each usagetype resolves to a single price row, so filtering by it
     # would only risk a spurious miss on the (region-independent) unit string.
@@ -749,16 +790,19 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "service": "awswaf", "store_service": "AWSWAF",
         "product_family": "Web Application Firewall",
         "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-WebACLV2"}],
+        "global_scope": True, "store_unit": "Months",
     },
     "WAF-Rule-Month": {
         "service": "awswaf", "store_service": "AWSWAF",
         "product_family": "Web Application Firewall",
         "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-RuleV2"}],
+        "global_scope": True, "store_unit": "Rules",
     },
     "WAF-Request": {
         "service": "awswaf", "store_service": "AWSWAF",
         "product_family": "Web Application Firewall",
         "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-RequestV2-Tier1"}],
+        "global_scope": True, "store_unit": "requests",
     },
     # Public IPv4 address (#210): $0.005/hr in-use or idle. The usagetype encodes
     # the region as a short prefix (USE1- / …); REGION_PREFIX is resolved at query
@@ -1039,6 +1083,8 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
             if metric not in METRIC_DESCRIPTORS:
                 continue
             if METRIC_DESCRIPTORS[metric].get("vendor", "aws") != vendor:
+                continue
+            if region == GLOBAL_REGION and not METRIC_DESCRIPTORS[metric].get("global_scope"):
                 continue
             try:
                 total += client.sync_to_cache(cache, metric, region, vendor)
