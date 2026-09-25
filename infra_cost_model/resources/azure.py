@@ -46,8 +46,11 @@ def matches_arm_type(resource_address: str, arm_type: str) -> bool:
       ``Microsoft.Web/sites/slots:app/staging`` doesn't match
       ``Microsoft.Web/sites``.
     - An Azure resource ID, ``.../providers/{namespace}/{type}/{name}``, as
-      found in a Pulumi stack export's ``id``. The parent type must be
-      followed by exactly one name segment, so child IDs don't match.
+      found in a Pulumi stack export's ``id``. Each type must be followed by
+      exactly one name segment, so child IDs don't match their parent's
+      type. A child type, such as
+      ``Microsoft.CognitiveServices/accounts/deployments``, matches
+      ``.../accounts/{name}/deployments/{name}``.
 
     ARM resource types are case-insensitive.
     """
@@ -60,8 +63,12 @@ def matches_arm_type(resource_address: str, arm_type: str) -> bool:
     if index == -1:
         return False
     segments = address[index + len(marker):].split("/")
-    # namespace, type, name: a top-level resource has exactly three segments.
-    return len(segments) == 3 and segments[2] != "" and "/".join(segments[:2]) == wanted
+    namespace, *types = wanted.split("/")
+    # The namespace, then a type and a name for each level.
+    if len(segments) != 1 + 2 * len(types) or segments[0] != namespace:
+        return False
+    return all(segments[1 + 2 * i] == t and segments[2 + 2 * i] != ""
+               for i, t in enumerate(types))
 
 
 def resolve_arm_value(value: Any, parameters: dict) -> tuple[Any, bool]:
@@ -636,18 +643,115 @@ def require_openai_kind(kind: Any) -> None:
         raise NotImplementedError(f"a Cognitive Services account of kind {kind!r} is not Azure OpenAI")
 
 
+# Deployment types with token prices, and the part of the catalog metric name
+# that names each one (#371). Azure prices tokens per model and per
+# deployment type. Other types, such as the provisioned ones (billed per
+# unit-hour) and the batch ones, have no rows.
+_OPENAI_DEPLOYMENT_TIERS = {
+    "globalstandard": "Global",
+    "datazonestandard": "DataZone",
+    "standard": "Regional",
+}
+_ALL_TIERS = ("GlobalStandard", "DataZoneStandard", "Standard")
+
+
+@dataclass(frozen=True)
+class OpenAIModel:
+    """A model whose token prices are in the seed catalog.
+
+    ``versions`` are the model versions those prices cover. ``tiers`` are
+    the deployment types with rows. ``output`` is false for an embedding
+    model, which bills input tokens only.
+    """
+    versions: tuple
+    tiers: tuple = _ALL_TIERS
+    output: bool = True
+
+
+# Models with seed rows for eastus, from the Azure Retail Prices API (#371).
+OPENAI_MODELS = {
+    # 2024-11-20 has the same prices as 2024-08-06. 2024-05-13 costs more.
+    "gpt-4o": OpenAIModel(versions=("2024-08-06", "2024-11-20")),
+    "gpt-4o-mini": OpenAIModel(versions=("2024-07-18",)),
+    "gpt-4.1": OpenAIModel(versions=("2025-04-14",)),
+    "gpt-4.1-mini": OpenAIModel(versions=("2025-04-14",)),
+    "gpt-4.1-nano": OpenAIModel(versions=("2025-04-14",)),
+    "o3": OpenAIModel(versions=("2025-04-16",)),
+    "o3-mini": OpenAIModel(versions=("2025-01-31",)),
+    "text-embedding-3-small": OpenAIModel(
+        versions=("1",), tiers=("GlobalStandard", "Standard"), output=False),
+    "text-embedding-3-large": OpenAIModel(
+        versions=("1",), tiers=("GlobalStandard", "Standard"), output=False),
+}
+
+# A node that names no model is priced as GPT-4o in a Global Standard
+# deployment, the rows the seed had before #371.
+_DEFAULT_OPENAI_MODEL = "gpt-4o"
+_DEFAULT_DEPLOYMENT_TYPE = "GlobalStandard"
+
+
+def _text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def openai_catalog_product(config: dict) -> tuple[str, str]:
+    """The catalog model and tier of a node's ``config`` (#371).
+
+    ``config`` may name ``model``, ``modelVersion`` and ``deploymentType``
+    (the deployment SKU, such as ``GlobalStandard``). A version whose
+    prices differ from the seeded ones gets a model name of its own, such
+    as ``gpt-4o-2024-05-13``, which has no rows, so the engine reports its
+    tokens as unpriced instead of pricing them at another version's rates.
+    """
+    model = (_text(config.get("model")) or _DEFAULT_OPENAI_MODEL).lower()
+    version = _text(config.get("modelVersion"))
+    known = OPENAI_MODELS.get(model)
+    if known is not None and version is not None and version not in known.versions:
+        model = f"{model}-{version}"
+    deployment_type = _text(config.get("deploymentType")) or _DEFAULT_DEPLOYMENT_TYPE
+    tier = _OPENAI_DEPLOYMENT_TIERS.get(deployment_type.lower(), deployment_type)
+    return model, tier
+
+
+def openai_pricing_warning(address: str, config: dict) -> Optional[str]:
+    """Why the catalog has no token prices for ``config``, or ``None``."""
+    model = _text(config.get("model")) or _DEFAULT_OPENAI_MODEL
+    version = _text(config.get("modelVersion"))
+    deployment_type = _text(config.get("deploymentType")) or _DEFAULT_DEPLOYMENT_TYPE
+    known = OPENAI_MODELS.get(model.lower())
+    if known is None or (version is not None and version not in known.versions):
+        label = f"{model} {version}" if version else model
+        return (f"{address}: model {label!r} has no catalog rows, so the engine "
+                f"reports its tokens as unpriced. The catalog prices "
+                f"{', '.join(sorted(OPENAI_MODELS))}.")
+    if deployment_type.lower() not in (t.lower() for t in known.tiers):
+        return (f"{address}: deployment type {deployment_type!r} of {model} has no "
+                f"token prices in the catalog, so the engine reports its tokens as "
+                f"unpriced. The catalog prices {', '.join(known.tiers)}.")
+    return None
+
+
 class AzureOpenAI(ComputeResource):
     """Azure OpenAI Service - compute node (equivalent to Bedrock)."""
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["invocations", "inputTokens", "outputTokens"]
+        return ["invocations", "inputTokens", "outputTokens", "cachedReadTokens"]
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
-        # The seed prices GPT-4o (2024-08-06) in a Global Standard deployment.
-        return {"inputTokens": "AzureOpenAI-Input-Token",
-                "outputTokens": "AzureOpenAI-Output-Token"}
+        return self.catalog_metrics_for({})
+
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        """The token rows of the node's model and deployment type (#371)."""
+        model, tier = openai_catalog_product(config or {})
+        prefix = f"AzureOpenAI-{model}-{tier}"
+        return {"inputTokens": f"{prefix}-Input-Token",
+                "cachedReadTokens": f"{prefix}-Cached-Input-Token",
+                "outputTokens": f"{prefix}-Output-Token"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureOpenAI"]:
@@ -724,6 +828,159 @@ class AzureOpenAI(ComputeResource):
                 "skuName": _arm_sku_name(resource),
             },
         )
+
+
+@dataclass(frozen=True)
+class CognitiveAccount:
+    """A Cognitive Services account in the input: its resource ID, name and region."""
+    id: Optional[str]
+    name: Optional[str]
+    region: Optional[str]
+
+
+def cognitive_accounts_from_arm(resources) -> list:
+    """The ``Microsoft.CognitiveServices/accounts`` of ``(address, resource)`` pairs."""
+    accounts = []
+    for address, resource in resources:
+        arm_type, _, name = address.partition(":")
+        if arm_type.lower() != "microsoft.cognitiveservices/accounts":
+            continue
+        region, _ = resolve_arm_value(resource.get("location"),
+                                      resource.get(ARM_PARAMETERS_KEY, {}))
+        accounts.append(CognitiveAccount(id=None, name=name, region=region))
+    return accounts
+
+
+def cognitive_accounts_from_tf(resources: list) -> list:
+    """The ``azurerm_cognitive_account`` resources."""
+    return [
+        CognitiveAccount(id=values.get("id"), name=values.get("name"),
+                         region=values.get("location"))
+        for resource in resources
+        if isinstance(resource, dict) and resource.get("type") == "azurerm_cognitive_account"
+        for values in [resource.get("values") or {}]
+    ]
+
+
+def cognitive_accounts_from_pulumi(resources: list) -> list:
+    """The Cognitive Services accounts of a Pulumi stack export."""
+    accounts = []
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        inputs = resource.get("inputs") or {}
+        resource_type = resource.get("type", "")
+        if resource_type == "azure-native:cognitiveservices:Account":
+            name = inputs.get("accountName")
+        elif resource_type == "azure:cognitive/account:Account":
+            name = inputs.get("name")
+        else:
+            continue
+        accounts.append(CognitiveAccount(
+            id=resource.get("id"), name=name or _last_segment(resource.get("id")),
+            region=inputs.get("location")))
+    return accounts
+
+
+# Key that the `extract_resources_from_*` functions add to each resource: the
+# Cognitive Services accounts of the input, whose region a deployment has (#371).
+COGNITIVE_ACCOUNTS_KEY = "_cognitiveAccounts"
+
+_DEPLOYMENT_ID = re.compile(r"/accounts/([^/]+)/deployments/[^/]+$", re.IGNORECASE)
+
+
+class AzureOpenAIDeployment(AzureOpenAI):
+    """A model deployment of an Azure OpenAI account (#371).
+
+    Azure bills tokens per deployment, at the prices of its model and
+    deployment type. The node's ``config`` names them, so the handler picks
+    their catalog rows. A deployment has no location: it runs in its
+    account's region.
+    """
+
+    @classmethod
+    def from_address(cls, resource_address: str) -> Optional["AzureOpenAIDeployment"]:
+        if (resource_address.startswith("azurerm_cognitive_deployment.") or
+                matches_arm_type(resource_address,
+                                 "Microsoft.CognitiveServices/accounts/deployments")):
+            return cls()
+        return None
+
+    @staticmethod
+    def _extract(address: str, resource: dict, account_ref: Any, model: dict,
+                 deployment_type: Any) -> ResourceExtract:
+        accounts = resource.get(COGNITIVE_ACCOUNTS_KEY, [])
+        account = find_service_plan(accounts, account_ref)
+        if account is None and account_ref is None and len(accounts) == 1:
+            # A Terraform plan doesn't know the account ID before apply. A
+            # reference that matches no account is another account, so it
+            # gets the warning below.
+            account = accounts[0]
+        if account is None:
+            warnings.warn(
+                f"{address}: can't find the account {account_ref!r} of this "
+                f"deployment in the input, so its region is unset. Include the "
+                f"account in the input, or set the node's region."
+            )
+        config = {
+            "model": _text(model.get("name")),
+            "modelVersion": _text(model.get("version")),
+            "deploymentType": _text(deployment_type),
+            "account": account_ref if account_ref is not None else (account and account.id),
+        }
+        warning = openai_pricing_warning(address, config)
+        if warning:
+            warnings.warn(warning)
+        return ResourceExtract(
+            resource_address=address,
+            node_type="compute",
+            provider="azure",
+            service="AzureOpenAI",
+            region=account.region if account else None,
+            config=config,
+        )
+
+    @classmethod
+    def extract_tf(cls, resource: dict) -> ResourceExtract:
+        values = resource.get("values", {})
+        # azurerm 4.x names the SKU in `sku`, 3.x in `scale`.
+        sku = _first_block(values.get("sku")).get("name") or \
+            _first_block(values.get("scale")).get("type")
+        return cls._extract(resource.get("address", ""), resource,
+                            values.get("cognitive_account_id"),
+                            _first_block(values.get("model")), sku)
+
+    @classmethod
+    def extract_pulumi(cls, resource: dict) -> ResourceExtract:
+        inputs = resource.get("inputs", {})
+        address = resource.get("id", "")
+        if resource.get("type", "").startswith("azure-native:"):
+            account_ref = inputs.get("accountName")
+            model = (inputs.get("properties") or {}).get("model") or {}
+        else:
+            account_ref = inputs.get("cognitiveAccountId")
+            model = inputs.get("model") or {}
+        if not account_ref:
+            match = _DEPLOYMENT_ID.search(address)
+            account_ref = match.group(1) if match else None
+        return cls._extract(address, resource, account_ref, model,
+                            (inputs.get("sku") or {}).get("name"))
+
+    @classmethod
+    def extract_cdk(cls, resource: dict) -> ResourceExtract:
+        raise NotImplementedError("CloudFormation has no Azure OpenAI deployments")
+
+    @classmethod
+    def extract_arm(cls, resource: dict) -> ResourceExtract:
+        address = resource.get(ARM_ADDRESS_KEY, "")
+        parameters = resource.get(ARM_PARAMETERS_KEY, {})
+        # The name is `{account}/{deployment}`.
+        account_ref = address.partition(":")[2].split("/")[0] or None
+        model = {key: resolve_arm_value(value, parameters)[0]
+                 for key, value in (_arm_properties(resource).get("model") or {}).items()}
+        sku, _ = resolve_arm_value(_arm_sku_name(resource), parameters)
+        return cls._extract(address, resource, account_ref, model, sku)
+
 
 class AzureBlobStorage(StorageResource):
     """Azure Blob Storage - storage node (equivalent to S3)."""

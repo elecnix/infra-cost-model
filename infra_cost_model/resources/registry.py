@@ -26,9 +26,11 @@ from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudStorage, CloudRun, Firestore
 from .azure import (
-    AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage,
-    ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, SERVICE_PLANS_KEY, resolve_arm_value,
-    service_plans_from_arm, service_plans_from_pulumi, service_plans_from_tf,
+    AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureOpenAIDeployment,
+    AzureBlobStorage, ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, COGNITIVE_ACCOUNTS_KEY,
+    SERVICE_PLANS_KEY, cognitive_accounts_from_arm, cognitive_accounts_from_pulumi,
+    cognitive_accounts_from_tf, resolve_arm_value, service_plans_from_arm,
+    service_plans_from_pulumi, service_plans_from_tf,
 )
 from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 from .kms import KMSKey
@@ -121,11 +123,13 @@ class ResourceRegistry:
 
     @classmethod
     def resolve_catalog_metric(cls, resource_address: str,
-                               logical_metric: str) -> Optional[str]:
+                               logical_metric: str,
+                               config: Optional[dict] = None) -> Optional[str]:
         """Map a node's logical usageMetrics key to a catalog usage_metric name.
 
         Finds the handler that owns ``resource_address`` and looks up
-        ``logical_metric`` in its ``catalog_metrics`` map. Resolution is
+        ``logical_metric`` in its ``catalog_metrics_for(config)`` map, where
+        ``config`` is the node's ``config`` (#371). Resolution is
         per-handler (not per-service) so resources sharing a service can reuse a
         logical name for different catalog metrics (e.g. ``dataProcessedGb`` maps
         to ``NAT-Gateway-DataProcessed`` for NAT Gateway but
@@ -137,7 +141,7 @@ class ResourceRegistry:
         handler = cls.from_address(resource_address)
         if handler is None:
             return None
-        return handler().catalog_metrics.get(logical_metric)
+        return handler().catalog_metrics_for(config or {}).get(logical_metric)
 
     @classmethod
     def resolve_catalog_service(cls, resource_address: str,
@@ -260,6 +264,7 @@ ResourceRegistry.register(APIManagement)
 ResourceRegistry.register(AzureFunction)
 ResourceRegistry.register(CosmosDB)
 ResourceRegistry.register(AzureOpenAI)
+ResourceRegistry.register(AzureOpenAIDeployment)
 ResourceRegistry.register(AzureBlobStorage)
 
 # AWS miscellaneous services (Secrets Manager, ECR, Route53)
@@ -295,13 +300,16 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
     resources = tf_json.get("resource", []) or tf_json.get("values", {}).get("root_module", {}).get("resources", [])
     # Function Apps need the SKU of their App Service plan (#382).
     plans = service_plans_from_tf(resources)
+    # OpenAI deployments run in their account's region (#371).
+    accounts = cognitive_accounts_from_tf(resources)
 
     for resource in resources:
         if isinstance(resource, dict):
             addr = resource.get("address", "")
             if addr:
                 extracted = ResourceRegistry.extract(
-                    addr, {**resource, SERVICE_PLANS_KEY: plans}, "terraform")
+                    addr, {**resource, SERVICE_PLANS_KEY: plans,
+                           COGNITIVE_ACCOUNTS_KEY: accounts}, "terraform")
                 if extracted:
                     results[addr] = extracted
                 else:
@@ -336,13 +344,16 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
     resources = pulumi_json.get("deployment", {}).get("resources", [])
     # Function Apps need the SKU of their App Service plan (#382).
     plans = service_plans_from_pulumi(resources)
+    # OpenAI deployments run in their account's region (#371).
+    accounts = cognitive_accounts_from_pulumi(resources)
 
     for resource in resources:
         if isinstance(resource, dict):
             addr = resource.get("id", "") or resource.get("name", "")
             if addr:
                 extracted = ResourceRegistry.extract(
-                    addr, {**resource, SERVICE_PLANS_KEY: plans}, "pulumi")
+                    addr, {**resource, SERVICE_PLANS_KEY: plans,
+                           COGNITIVE_ACCOUNTS_KEY: accounts}, "pulumi")
                 if extracted:
                     results[addr] = extracted
                 else:
@@ -472,9 +483,12 @@ def extract_resources_from_arm(arm_json: dict) -> dict[str, dict]:
     ]
     # Function Apps need the SKU of their App Service plan (#382).
     plans = service_plans_from_arm(resources)
+    # OpenAI deployments run in their account's region (#371).
+    accounts = cognitive_accounts_from_arm(resources)
 
     for addr, resource in resources:
-        resource_data = {**resource, SERVICE_PLANS_KEY: plans}
+        resource_data = {**resource, SERVICE_PLANS_KEY: plans,
+                         COGNITIVE_ACCOUNTS_KEY: accounts}
         extracted = ResourceRegistry.extract(addr, resource_data, "arm")
         if extracted:
             results[addr] = extracted

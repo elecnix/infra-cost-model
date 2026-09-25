@@ -67,6 +67,16 @@ class ResourceType(ABC):
         """
         return {}
 
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        """``catalog_metrics`` for a node with the resource settings ``config``.
+
+        ``config`` is the node's ``config``, as the ``extract_*`` methods give
+        it, or ``{}``. By default it is ``catalog_metrics``. A handler
+        overrides this when a setting selects another product, such as the
+        model of an Azure OpenAI deployment (#371).
+        """
+        return self.catalog_metrics
+
     @property
     def catalog_services(self) -> dict[str, str]:
         """Map catalog usage_metric names to the service whose rows price them.

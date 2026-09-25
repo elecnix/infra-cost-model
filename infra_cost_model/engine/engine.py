@@ -1342,7 +1342,9 @@ class CostAggregator:
         resource_address = node.get("resourceAddress") or address
         if not resource_address:
             return None
-        return ResourceRegistry.resolve_catalog_metric(resource_address, logical_metric)
+        # The node's resource settings can select another product (#371).
+        return ResourceRegistry.resolve_catalog_metric(
+            resource_address, logical_metric, node.get("config"))
 
     def _resolve_param(self, value) -> float:
         """Resolve a value that may be a parameter name or a numeric literal.

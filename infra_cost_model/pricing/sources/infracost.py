@@ -1242,6 +1242,92 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
 }
 
 
+# Azure OpenAI token prices (#371), one product for each model, deployment
+# type and token class. Infracost lists them under "Foundry Models", priced
+# per 1K tokens. The key is the catalog metric without its "AzureOpenAI-"
+# prefix, and the value is the Azure meter, less its " Tokens" suffix. Not
+# every region offers every deployment type; a sync then stores no rows.
+_AZURE_OPENAI_METERS = {
+    "gpt-4o-Global-Input-Token": "gpt-4o-0806-Inp-glbl",
+    "gpt-4o-Global-Cached-Input-Token": "gpt 4o 0806 cached Inp glbl",
+    "gpt-4o-Global-Output-Token": "gpt-4o-0806-Outp-glbl",
+    "gpt-4o-DataZone-Input-Token": "gpt 4o 0806 Inp Data Zone",
+    "gpt-4o-DataZone-Cached-Input-Token": "gpt 4o 0806 cached Inp Data Zone",
+    "gpt-4o-DataZone-Output-Token": "gpt 4o 0806 Outp Data Zone",
+    "gpt-4o-Regional-Input-Token": "gpt-4o-0806-Inp-regnl",
+    "gpt-4o-Regional-Cached-Input-Token": "gpt 4o 0806 cached Inp regnl",
+    "gpt-4o-Regional-Output-Token": "gpt-4o-0806-Outp-regnl",
+    "gpt-4o-mini-Global-Input-Token": "gpt-4o-mini-0718-Inp-glbl",
+    "gpt-4o-mini-Global-Cached-Input-Token": "gpt 4o mini 0718 cached Inp glbl",
+    "gpt-4o-mini-Global-Output-Token": "gpt-4o-mini-0718-Outp-glbl",
+    "gpt-4o-mini-DataZone-Input-Token": "gpt 4o mini 0718 Inp Data Zone",
+    "gpt-4o-mini-DataZone-Cached-Input-Token": "gpt 4o mini 0718 cached Inp Data Zone",
+    "gpt-4o-mini-DataZone-Output-Token": "gpt 4o mini 0718 Outp Data Zone",
+    "gpt-4o-mini-Regional-Input-Token": "gpt-4o-mini-0718-Inp-regnl",
+    "gpt-4o-mini-Regional-Cached-Input-Token": "gpt 4o mini 0718 cached Inp regnl",
+    "gpt-4o-mini-Regional-Output-Token": "gpt-4o-mini-0718-Outp-regnl",
+    "gpt-4.1-Global-Input-Token": "gpt 4.1 Inp glbl",
+    "gpt-4.1-Global-Cached-Input-Token": "gpt 4.1 cached Inp glbl",
+    "gpt-4.1-Global-Output-Token": "gpt 4.1 Outp glbl",
+    "gpt-4.1-DataZone-Input-Token": "gpt 4.1 Inp Data Zone",
+    "gpt-4.1-DataZone-Cached-Input-Token": "gpt 4.1 cached Inp Data Zone",
+    "gpt-4.1-DataZone-Output-Token": "gpt 4.1 Outp Data Zone",
+    "gpt-4.1-Regional-Input-Token": "gpt 4.1 Inp regnl",
+    "gpt-4.1-Regional-Cached-Input-Token": "gpt 4.1 cached Inp regnl",
+    "gpt-4.1-Regional-Output-Token": "gpt 4.1 Outp regnl",
+    "gpt-4.1-mini-Global-Input-Token": "gpt 4.1 mini Inp glbl",
+    "gpt-4.1-mini-Global-Cached-Input-Token": "gpt 4.1 mini cached Inp glbl",
+    "gpt-4.1-mini-Global-Output-Token": "gpt 4.1 mini Outp glbl",
+    "gpt-4.1-mini-DataZone-Input-Token": "gpt 4.1 mini Inp Data Zone",
+    "gpt-4.1-mini-DataZone-Cached-Input-Token": "gpt 4.1 mini cached Inp DZone",
+    "gpt-4.1-mini-DataZone-Output-Token": "gpt 4.1 mini Outp Data Zone",
+    "gpt-4.1-mini-Regional-Input-Token": "gpt 4.1 mini Inp regnl",
+    "gpt-4.1-mini-Regional-Cached-Input-Token": "gpt 4.1 mini cached Inp regnl",
+    "gpt-4.1-mini-Regional-Output-Token": "gpt 4.1 mini Outp regnl",
+    "gpt-4.1-nano-Global-Input-Token": "gpt 4.1 nano Inp glbl",
+    "gpt-4.1-nano-Global-Cached-Input-Token": "gpt 4.1 nano cached Inp glbl",
+    "gpt-4.1-nano-Global-Output-Token": "gpt 4.1 nano Outp glbl",
+    "gpt-4.1-nano-DataZone-Input-Token": "gpt 4.1 nano Inp Data Zone",
+    "gpt-4.1-nano-DataZone-Cached-Input-Token": "gpt 4.1 nano cached Inp DZone",
+    "gpt-4.1-nano-DataZone-Output-Token": "gpt 4.1 nano Outp Data Zone",
+    "gpt-4.1-nano-Regional-Input-Token": "gpt 4.1 nano Inp regnl",
+    "gpt-4.1-nano-Regional-Cached-Input-Token": "gpt 4.1 nano cached Inp regnl",
+    "gpt-4.1-nano-Regional-Output-Token": "gpt 4.1 nano Outp regnl",
+    "o3-Global-Input-Token": "o3 0416 Inp glbl",
+    "o3-Global-Cached-Input-Token": "o3 0416 cached Inp glbl",
+    "o3-Global-Output-Token": "o3 0416 Outp glbl",
+    "o3-DataZone-Input-Token": "o3 0416 Inp Data Zone",
+    "o3-DataZone-Cached-Input-Token": "o3 0416 cached Inp Data Zone",
+    "o3-DataZone-Output-Token": "o3 0416 Outp Data Zone",
+    "o3-Regional-Input-Token": "o3 0416 Inp regnl",
+    "o3-Regional-Cached-Input-Token": "o3 0416 cached Inp regnl",
+    "o3-Regional-Output-Token": "o3 0416 Outp regnl",
+    "o3-mini-Global-Input-Token": "o3 mini 0131 input glbl",
+    "o3-mini-Global-Cached-Input-Token": "o3 mini 0131 cached input glbl",
+    "o3-mini-Global-Output-Token": "o3 mini 0131 output glbl",
+    "o3-mini-DataZone-Input-Token": "o3 mini 0131 input Data Zone",
+    "o3-mini-DataZone-Cached-Input-Token": "o3 mini 0131 cached input Data Zone",
+    "o3-mini-DataZone-Output-Token": "o3 mini 0131 output Data Zone",
+    "o3-mini-Regional-Input-Token": "o3 mini 0131 input regnl",
+    "o3-mini-Regional-Cached-Input-Token": "o3 mini 0131 cached input regnl",
+    "o3-mini-Regional-Output-Token": "o3 mini 0131 output regnl",
+    "text-embedding-3-small-Global-Input-Token": "text-embedding-3-small-glbl",
+    "text-embedding-3-small-Regional-Input-Token": "text-embedding-3-small-regional",
+    "text-embedding-3-large-Global-Input-Token": "text-embedding-3-large-glbl",
+    "text-embedding-3-large-Regional-Input-Token": "text-embedding-3-large-regional",
+}
+
+METRIC_DESCRIPTORS.update({
+    f"AzureOpenAI-{metric}": {
+        "vendor": "azure", "service": "Foundry Models", "store_service": "AzureOpenAI",
+        "attribute_filters": [{"key": "productName", "value": "Azure OpenAI"},
+                              {"key": "meterName", "value": f"{meter} Tokens"}],
+        "unit": "1K", "unit_scale": 1000, "store_unit": "tokens",
+    }
+    for metric, meter in _AZURE_OPENAI_METERS.items()
+})
+
+
 def _live_auth_intended(client: "InfracostClient") -> bool:
     """Whether the caller intended a live sync (a credential is present)."""
     return client.is_authenticated()
