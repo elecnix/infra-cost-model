@@ -299,6 +299,8 @@ class PricingCache:
         if self._replace_conn is not None:
             raise RuntimeError("PricingCache.replacing blocks can't be nested")
         sources = (source,) if isinstance(source, str) else tuple(source)
+        if not sources:
+            raise ValueError("PricingCache.replacing needs at least one source")
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute(

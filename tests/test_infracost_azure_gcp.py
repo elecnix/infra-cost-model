@@ -816,3 +816,20 @@ def test_cloud_run_free_tier_covers_the_billing_account():
 
     for metric in ("CloudRun-Request", "CloudRun-vCPU-Second", "CloudRun-GiB-Second"):
         assert free_tier_scope("gcp", "CloudRun", metric) == ACCOUNT
+
+
+def test_retail_query_rejects_a_filter_key_that_is_not_a_field_name():
+    from infra_cost_model.pricing.sources.azure_retail import query_azure_retail_prices
+
+    with patch.object(ic.requests, "get", side_effect=_fake_get([])) as get, \
+            pytest.raises(ValueError):
+        query_azure_retail_prices("Storage", "eastus", [
+            {"key": "meterName eq 'x' or serviceName", "value": "Storage"}])
+    get.assert_not_called()
+
+
+def test_replacing_needs_a_source(tmp_path):
+    cache = PricingCache(db_path=tmp_path / "pricing.db")
+    with pytest.raises(ValueError):
+        with cache.replacing("azure", "BlobStorage", "eastus", "m", ()):
+            pass

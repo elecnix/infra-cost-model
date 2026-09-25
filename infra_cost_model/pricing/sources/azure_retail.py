@@ -12,6 +12,7 @@ so the Infracost descriptors select and store them the same way.
 """
 
 import os
+import re
 
 import requests
 
@@ -27,6 +28,9 @@ _ATTRIBUTES = ("productName", "skuName", "meterName", "meterId", "productId",
                "serviceId", "armSkuName", "serviceFamily", "effectiveStartDate")
 
 
+_FIELD_NAME = re.compile(r"[A-Za-z]+")
+
+
 def _quoted(value: str) -> str:
     # OData writes a quote in a string as two quotes.
     return "'" + value.replace("'", "''") + "'"
@@ -40,8 +44,12 @@ def query_azure_retail_prices(service: str, region: str,
     ``{"key": "meterName", "value": "Hot LRS Write Operations"}``. Each one
     must equal the item field of the same name. When a meter has prices
     with more than one effective date, only the latest ones are kept. Items
-    without a price or a meter ID are skipped.
+    without a price or a meter ID are skipped. A filter key that isn't a
+    field name raises ``ValueError``, since it would change the query.
     """
+    for f in attribute_filters or []:
+        if not _FIELD_NAME.fullmatch(f["key"]):
+            raise ValueError(f"Not an Azure Retail Prices field name: {f['key']!r}")
     clauses = [f"serviceName eq {_quoted(service)}",
                f"armRegionName eq {_quoted(region)}",
                "priceType eq 'Consumption'"]
