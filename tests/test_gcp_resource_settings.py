@@ -200,3 +200,10 @@ def test_nearline_sync_keeps_the_regional_product():
     with patch.object(ic.requests, "post", side_effect=post):
         client.sync_to_cache(cache, "GCS-Nearline-GiB-Month", "us-central1")
     assert [(r.price_usd, r.service) for r in stored] == [(0.01, "CloudStorage")]
+
+
+@pytest.mark.parametrize("value,mb", [("256M", 256), ("1Gi", 1024), (512, 512), (True, None),
+                                      ("lots", None), (None, None)])
+def test_parse_memory_mb(value, mb):
+    from infra_cost_model.resources.gcp import parse_memory_mb
+    assert parse_memory_mb(value) == mb

@@ -298,3 +298,18 @@ def test_every_settings_descriptor_names_a_seeded_metric():
     for metric, descriptor in ic.METRIC_DESCRIPTORS.items():
         if metric in ic._SETTINGS_METERS:
             assert metric in seeded(descriptor["store_service"]), metric
+
+
+def test_standard_account_from_an_sku_doesnt_warn():
+    """ARM and azure-native give `Standard_GRS`: the account tier, then the redundancy."""
+    template = {"resources": [{
+        "type": "Microsoft.Storage/storageAccounts", "name": "s", "location": REGION,
+        "kind": "StorageV2", "sku": {"name": "Standard_RAGRS"},
+        "properties": {"accessTier": "Cool"}}]}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        node = extract_resources_from_arm(template)["Microsoft.Storage/storageAccounts:s"]
+    assert node["config"] == {"accountTier": "Standard", "replicationType": "RAGRS",
+                              "accessTier": "Cool"}
+    assert AzureBlobStorage().catalog_metrics_for(node["config"])["storageGb"] == (
+        "Blob-Cool-RAGRS-GB-Month")
