@@ -10,6 +10,11 @@ import json
 
 DB_PATH = Path.home() / ".infra-cost-model" / "pricing.db"
 DEFAULT_TTL_DAYS = 7
+
+# The sources of the rows that a live sync writes. They supersede the offline
+# fallback sources (#309, #376).
+LIVE_SOURCES = frozenset({"infracost", "azure-retail"})
+
 # Package data, next to this module, so an installed wheel carries it (#265).
 SEED_PRICES_PATH = Path(__file__).parent / "seed" / "seed_prices.json"
 
@@ -280,24 +285,29 @@ class PricingCache:
 
     @contextmanager
     def replacing(self, vendor: str, service: str, region: str,
-                  usage_metric: str, source: str):
+                  usage_metric: str, source: str | tuple[str, ...]):
         """Replace the rows of one metric from one source, in one transaction.
 
         On entry, deletes the rows with this vendor, service, region, usage
-        metric and source. The block then writes the new rows with
-        ``upsert``. The deletion and the new rows are committed together
+        metric and source. *source* can be a tuple of sources, when one sync
+        writes rows from any of them (#376). The block then writes the new
+        rows with ``upsert``. The deletion and the new rows are committed together
         when the block ends, and rolled back if it raises, so a failed sync
         keeps the old rows. Rows from other sources, such as the seed file
         and the vendor files, stay as they are (#355).
         """
         if self._replace_conn is not None:
             raise RuntimeError("PricingCache.replacing blocks can't be nested")
+        sources = (source,) if isinstance(source, str) else tuple(source)
+        if not sources:
+            raise ValueError("PricingCache.replacing needs at least one source")
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute(
                 "DELETE FROM prices WHERE vendor = ? AND service = ? AND region = ?"
-                " AND usage_metric = ? AND source = ?",
-                (vendor, service, region, usage_metric, source))
+                " AND usage_metric = ? AND source IN"
+                f" ({', '.join('?' for _ in sources)})",
+                (vendor, service, region, usage_metric, *sources))
             self._replace_conn = conn
             yield
             conn.commit()
@@ -390,8 +400,10 @@ class PricingCache:
         # double-counting the cost. When any live (Infracost) row is present for
         # this key, keep only the live rows so the two schedules never mix. This
         # preserves a genuine multi-tier live schedule (all rows are 'infracost').
-        if any(p.source == "infracost" for p in prices):
-            prices = [p for p in prices if p.source == "infracost"]
+        # Rows that a live sync read from the Azure Retail Prices API count as
+        # live too (#376).
+        if any(p.source in LIVE_SOURCES for p in prices):
+            prices = [p for p in prices if p.source in LIVE_SOURCES]
 
         # Collapse exact-duplicate rows. SQLite treats NULL as distinct in the
         # UNIQUE constraint, so rows with purchase_option=NULL (every seed row)

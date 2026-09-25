@@ -28,6 +28,11 @@ SERVICE_PLANS_KEY = "_servicePlans"
 # The issue that tracks pricing the plans other than consumption.
 _PLAN_PRICING_ISSUE = "#383"
 
+# Azure bills every service's internet egress on one Bandwidth meter, so the
+# handlers price `dataOutGb` from the same rows and share its tiers (#372).
+_EGRESS_SERVICE = "Bandwidth"
+_EGRESS_METRIC = "Bandwidth-Internet-Out-GB"
+
 _PARAMETER_EXPRESSION = re.compile(r"^\[\s*parameters\(\s*'([^']+)'\s*\)\s*\]$")
 
 
@@ -541,7 +546,11 @@ class APIManagement(RoutingResource):
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
-        return {"requests": "APIM-Consumption-Call"}
+        return {"requests": "APIM-Consumption-Call", "dataOutGb": _EGRESS_METRIC}
+
+    @property
+    def catalog_services(self) -> dict[str, str]:
+        return {_EGRESS_METRIC: _EGRESS_SERVICE}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["APIManagement"]:
@@ -728,7 +737,12 @@ class AzureBlobStorage(StorageResource):
         # Hot tier with LRS, the defaults of azurerm_storage_account.
         return {"storageGb": "Blob-Hot-LRS-GB-Month",
                 "readRequests": "Blob-Hot-Read-Operation",
-                "writeRequests": "Blob-Hot-LRS-Write-Operation"}
+                "writeRequests": "Blob-Hot-LRS-Write-Operation",
+                "dataOutGb": _EGRESS_METRIC}
+
+    @property
+    def catalog_services(self) -> dict[str, str]:
+        return {_EGRESS_METRIC: _EGRESS_SERVICE}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureBlobStorage"]:
