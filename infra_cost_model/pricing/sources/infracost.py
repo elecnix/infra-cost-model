@@ -208,8 +208,11 @@ def _with_published_bounds(rows: list, override: Optional[TierBoundOverride]) ->
         return rows
     bounds = {b for r in rows for b in (r.start_usage_amount, r.end_usage_amount)
               if b is not None}
-    if not set(override.infracost) <= bounds or \
-            (set(override.published) - set(override.infracost)) & bounds:
+    # A bound in both lists, such as 10 TiB, can't tell the two apart. Only
+    # the published bounds that Infracost lacks (150 TiB) show that the rows
+    # already have the published bounds.
+    published_only = set(override.published) - set(override.infracost)
+    if not set(override.infracost) <= bounds or published_only & bounds:
         return rows
     mapping = dict(zip(override.infracost, override.published))
     return [dataclasses.replace(
