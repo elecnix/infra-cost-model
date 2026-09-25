@@ -540,6 +540,12 @@ class _CatalogCharge:
     parameters: dict
 
 
+@dataclass(frozen=True)
+class _MappedCost:
+    """The cost of a logical metric that bills several catalog metrics."""
+    total_cost: float
+
+
 def _pool_key(node: dict, metric: str, result) -> tuple:
     """The account-level pool that a catalog charge belongs to (#294).
 
@@ -1093,8 +1099,8 @@ class CostAggregator:
                     # reached instead of falling back to embedded pricingRates.
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
-                        result = self._query_catalog(node, mapped,
-                                                     total_quantity, metric_fixed)
+                        result = self._query_mapped(node, mapped,
+                                                    total_quantity, metric_fixed)
                 if result is not None:
                     metric_cost = result.total_cost
             if metric_cost is None and metric_name in pricing_rates:
@@ -1170,8 +1176,8 @@ class CostAggregator:
                     # reached instead of falling back to embedded pricingRates.
                     mapped = self._resolve_catalog_metric(address, node, metric_name)
                     if mapped is not None:
-                        result = self._query_catalog(node, mapped,
-                                                     total_quantity, metric_fixed)
+                        result = self._query_mapped(node, mapped,
+                                                    total_quantity, metric_fixed)
                 if result is not None:
                     metric_cost = result.total_cost
             # Fallback: flat pricingRates
@@ -1316,6 +1322,26 @@ class CostAggregator:
                 parameters=self.parameters,
             ))
         return result
+
+    def _query_mapped(self, node: dict, mapped, quantity: float, fixed: bool):
+        """Query the catalog for a logical metric that the handler maps.
+
+        ``mapped`` is a catalog metric, or a dict of catalog metrics and the
+        units of each for one unit of the logical metric. An Elastic Premium
+        instance-hour, for example, bills 1 vCPU-hour and 3.5 GiB-hours
+        (#383). Returns ``None`` when a catalog metric has no rows.
+        """
+        if not isinstance(mapped, dict):
+            return self._query_catalog(node, mapped, quantity, fixed)
+        charges_before = len(self.catalog_charges)
+        total = 0.0
+        for metric, units in mapped.items():
+            result = self._query_catalog(node, metric, quantity * units, fixed)
+            if result is None:
+                del self.catalog_charges[charges_before:]
+                return None
+            total += result.total_cost
+        return _MappedCost(total)
 
     def _node_for_metric(self, node: dict, metric: str) -> dict:
         """The node as the catalog sees it when it prices ``metric``: with

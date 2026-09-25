@@ -74,6 +74,11 @@ class ResourceType(ABC):
         it, or ``{}``. By default it is ``catalog_metrics``. A handler
         overrides this when a setting selects another product, such as the
         model of an Azure OpenAI deployment (#371).
+
+        A value can also be a dict of catalog metrics and the units of each
+        for one unit of the logical metric, when one logical unit bills
+        several rows: an Elastic Premium instance-hour bills vCPU-hours and
+        GiB-hours (#383).
         """
         return self.catalog_metrics
 
