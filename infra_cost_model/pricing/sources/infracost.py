@@ -862,6 +862,40 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-RequestV2-Tier1"}],
         "global_scope": True, "store_unit": "requests",
     },
+    # Bot Control and Fraud Control managed rule groups (#395). Each region's
+    # request product, and each "Global-" product, starts with its own $0
+    # tier. Fraud Control's ATP and ACFP rule groups share the request
+    # product, and the price list states the monthly fee as "AMR-ATP" only.
+    "WAF-BotControl-Month": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-AMR-BotControl"}],
+        "global_scope": True, "store_unit": "RuleGroups",
+    },
+    "WAF-BotControl-Request": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-AMR-BotControl-Request"}],
+        "global_scope": True, "store_unit": "requests",
+    },
+    "WAF-BotControl-Targeted-Request": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-AMR-BotControl-Targeted-Request"}],
+        "global_scope": True, "store_unit": "requests",
+    },
+    "WAF-FraudControl-Month": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-AMR-ATP"}],
+        "global_scope": True, "store_unit": "RuleGroups",
+    },
+    "WAF-FraudControl-Request": {
+        "service": "awswaf", "store_service": "AWSWAF",
+        "product_family": "Web Application Firewall",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-AMR-FraudControl-Request"}],
+        "global_scope": True, "store_unit": "requests",
+    },
     # Public IPv4 address (#210): $0.005/hr in-use or idle. The usagetype encodes
     # the region as a short prefix (USE1- / …); REGION_PREFIX is resolved at query
     # time. Product family is unset on these rows, so the usagetype filter alone

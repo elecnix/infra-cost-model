@@ -241,7 +241,10 @@ def test_global_sync_region_only_runs_the_global_descriptors(creds, monkeypatch)
                         lambda *a, **k: MagicMock())
     ic.sync_pricing_catalog(vendor="aws", regions=["global", "us-east-1"])
     synced_global = {m for m, r in calls if r == "global"}
-    assert synced_global == {"WAF-WebACL-Month", "WAF-Rule-Month", "WAF-Request"}
+    assert synced_global == {"WAF-WebACL-Month", "WAF-Rule-Month", "WAF-Request",
+                             "WAF-BotControl-Month", "WAF-BotControl-Request",
+                             "WAF-BotControl-Targeted-Request",
+                             "WAF-FraudControl-Month", "WAF-FraudControl-Request"}
     assert "Lambda-Request" in {m for m, r in calls if r == "us-east-1"}
 
 
