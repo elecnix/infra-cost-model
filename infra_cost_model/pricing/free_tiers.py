@@ -193,7 +193,8 @@ SPEND_BASED_FREE_TIERS: dict[tuple[str, str, str], float] = {
 # quotas are 5 GB-months of Standard storage, 5,000 Class A operations,
 # 50,000 Class B operations and 100 GB of egress a month (#390). Infracost
 # states the operation quotas in the global catalogue, which the sync stores
-# under every region.
+# under every region. "Usage is aggregated across these 3 regions", so the
+# engine applies each quota once to the use in all three (#402).
 _GCS_ALWAYS_FREE_REGIONS = ("us-central1", "us-east1", "us-west1")
 FREE_ALLOWANCE_REGIONS: dict[tuple[str, str, str], tuple[str, ...]] = {
     ("gcp", "CloudStorage", metric): _GCS_ALWAYS_FREE_REGIONS
