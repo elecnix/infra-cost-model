@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Optional
 import json
+import math
 
 DB_PATH = Path.home() / ".infra-cost-model" / "pricing.db"
 DEFAULT_TTL_DAYS = 7
@@ -37,6 +38,34 @@ class Price:
     source: str = ""
     fetched_at: str = ""
     per: str | None = None
+    # When set, ``price_usd`` is the price of one block of this many ``unit``s,
+    # and the quantity in this row's band is rounded up to whole blocks (#369).
+    block_size: float | None = None
+
+
+def billed_blocks(quantity: float, block_size: float) -> int:
+    """Round ``quantity`` up to whole blocks of ``block_size``.
+
+    A partly used block is billed whole: 1,200,000 units in blocks of
+    1,000,000 is 2 blocks, and 1,000,000 is 1. A quantity of zero or less
+    is no blocks. The tolerance keeps float noise, such as a quantity
+    derived per second and scaled back to a month, from tipping an exact
+    multiple into one more block. It is relative (a few float steps), so a
+    quantity that is over a boundary by more than float noise, such as
+    1,000,000.0000001 units in blocks of 1,000,000, starts the next block.
+    """
+    if block_size <= 0:
+        raise ValueError(f"block_size must be positive, got {block_size}")
+    if quantity <= 0:
+        return 0
+    return math.ceil(quantity / block_size - 1e-14)
+
+
+def band_cost(tier: "Price", charged: float) -> float:
+    """The cost of ``charged`` units that fall in ``tier``'s band."""
+    if tier.block_size is not None:
+        return billed_blocks(charged, tier.block_size) * tier.price_usd
+    return max(0.0, charged) * tier.price_usd
 
 
 @dataclass
@@ -56,6 +85,9 @@ class TieredPrice:
         a seat row priced at $19 with ``per: seats`` charges $19 per seat, so
         25 seats costs $475.
 
+        A row with ``block_size`` prices each started block of that many units
+        at ``price_usd``: the units in its band round up to whole blocks.
+
         A row with no boundary has nothing for the multiplier to move, and its
         price is charged once per unit of ``quantity``.
         """
@@ -70,7 +102,9 @@ class TieredPrice:
         if not sorted_tiers:
             tier = self.tiers[0] if self.tiers else None
             if tier:
-                return tier.price_usd * quantity
+                if tier.block_size is None:
+                    return tier.price_usd * quantity
+                return band_cost(tier, quantity)
             return 0.0
 
         for tier in sorted_tiers:
@@ -78,14 +112,13 @@ class TieredPrice:
             multiplier = per_multiplier if tier.per else 1.0
             tier_start = (tier.start_usage_amount or 0) * multiplier
             tier_end = (tier.end_usage_amount * multiplier) if tier.end_usage_amount is not None else None
-            price = tier.price_usd
 
             if tier_end is None:
                 if quantity > tier_start:
-                    total += (quantity - tier_start) * price
+                    total += band_cost(tier, quantity - tier_start)
             elif quantity > tier_start:
                 charged = min(quantity, tier_end) - tier_start
-                total += charged * price
+                total += band_cost(tier, charged)
 
         return total
 
@@ -139,6 +172,7 @@ def load_seed_rows(services: list[str] | None = None) -> list[Price]:
             source="seed",
             fetched_at=now,
             per=item.get("per"),
+            block_size=item.get("block_size"),
         )
         for item in seed_data
         if services is None or item.get("service") in services
@@ -182,15 +216,15 @@ def seed_prices(cache: Optional["PricingCache"] = None) -> int:
                     vendor, service, region, product_family, attributes,
                     attributes_hash, usage_metric, unit, price_usd,
                     start_usage_amount, end_usage_amount, purchase_option,
-                    effective_date, source, fetched_at, per
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    effective_date, source, fetched_at, per, block_size
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 price.vendor, price.service, price.region, price.product_family,
                 json.dumps(price.attributes), _hash_attributes(price.attributes),
                 price.usage_metric, price.unit, price.price_usd,
                 price.start_usage_amount, price.end_usage_amount,
                 price.purchase_option, price.effective_date, price.source,
-                price.fetched_at, price.per,
+                price.fetched_at, price.per, price.block_size,
             ))
         conn.commit()
     finally:
@@ -221,7 +255,7 @@ class PricingCache:
         """Create the database and tables (migrating in any missing columns).
 
         Existing on-disk databases -- e.g. ``~/.infra-cost-model/pricing.db`` -- may
-        predate the ``per`` column. Fresh databases declare it inline below; for
+        predate the ``per`` or ``block_size`` column. Fresh databases declare it inline below; for
         legacy files we backfill with a guarded ``ALTER TABLE`` so cached pricing
         rows are never dropped across upgrades.
         """
@@ -236,6 +270,7 @@ class PricingCache:
                 usage_metric TEXT NOT NULL, unit TEXT NOT NULL, price_usd REAL NOT NULL,
                 start_usage_amount REAL, end_usage_amount REAL, purchase_option TEXT,
                 effective_date TEXT, source TEXT NOT NULL, fetched_at TEXT NOT NULL, per TEXT,
+                block_size REAL,
                 UNIQUE(vendor, service, region, product_family, attributes_hash, usage_metric, start_usage_amount, purchase_option)
             );
 
@@ -245,11 +280,12 @@ class PricingCache:
         # Backfill `per` on any pre-existing table that lacks it. The schema above is a no-op once the
         # column exists; this line is harmless ("duplicate column name" -> caught) for fresh tables and
         # necessary for legacy files so cached Infracost rows survive an upgrade unchanged.
-        try:
-            conn.execute("ALTER TABLE prices ADD COLUMN per TEXT")
-        except sqlite3.OperationalError as exc:  # duplicate column name -> already present
-            if "duplicate column name" not in str(exc):
-                raise
+        for column in ("per TEXT", "block_size REAL"):
+            try:
+                conn.execute(f"ALTER TABLE prices ADD COLUMN {column}")
+            except sqlite3.OperationalError as exc:  # duplicate column name -> already present
+                if "duplicate column name" not in str(exc):
+                    raise
         conn.commit()
         conn.close()
 
@@ -343,14 +379,14 @@ class PricingCache:
                 vendor, service, region, product_family, attributes,
                 attributes_hash, usage_metric, unit, price_usd,
                 start_usage_amount, end_usage_amount, purchase_option,
-                effective_date, source, fetched_at, per
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                effective_date, source, fetched_at, per, block_size
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             price.vendor, price.service, price.region, price.product_family,
             json.dumps(price.attributes), attrs_hash, price.usage_metric, price.unit,
             price.price_usd, price.start_usage_amount, price.end_usage_amount,
             price.purchase_option, price.effective_date, price.source,
-            price.fetched_at, price.per
+            price.fetched_at, price.per, price.block_size
         ))
 
     def query(self, vendor: str, service: str, region: str,
@@ -365,7 +401,7 @@ class PricingCache:
             SELECT vendor, service, region, product_family, attributes,
                    usage_metric, unit, price_usd, start_usage_amount,
                    end_usage_amount, purchase_option, effective_date,
-                   source, fetched_at, per
+                   source, fetched_at, per, block_size
             FROM prices
             WHERE vendor = ? AND service = ? AND region = ? AND usage_metric = ?
             ORDER BY start_usage_amount
@@ -385,7 +421,8 @@ class PricingCache:
                 start_usage_amount=row[8], end_usage_amount=row[9],
                 purchase_option=row[10], effective_date=row[11],
                 source=row[12], fetched_at=row[13],
-                per=row[14]   # column 15 added with the `per` schema/migration
+                per=row[14],   # column 15 added with the `per` schema/migration
+                block_size=row[15],
             )
             for row in rows
         ]
@@ -416,7 +453,7 @@ class PricingCache:
             key = (
                 p.product_family, p.unit, p.price_usd,
                 p.start_usage_amount, p.end_usage_amount, p.purchase_option,
-                json.dumps(p.attributes, sort_keys=True),
+                p.block_size, json.dumps(p.attributes, sort_keys=True),
             )
             if key in seen:
                 continue

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Optional, Union
 
-from infra_cost_model.pricing.cache import PricingCache, TieredPrice, Price
+from infra_cost_model.pricing.cache import PricingCache, TieredPrice, Price, band_cost
 
 # Seconds in an average month (365.25 days / 12).
 SECONDS_PER_MONTH = 86400 * 365.25 / 12  # = 2629800.0
@@ -118,6 +118,11 @@ class _CostResult:
 
         The tiers apply to the quantity for one boundary period, and the
         result is divided back down to the cost of ``self.quantity``.
+
+        A tier with ``block_size`` rounds the units in its band up to whole
+        blocks of that size, once for the period, and charges ``price_usd``
+        for each block (#369). A pooled total goes through here once, so the
+        blocks round up on the total before the cost is split.
         """
         total = 0.0
         quantity = self.quantity * self.periods
@@ -126,8 +131,11 @@ class _CostResult:
             # priced as if the allowance were already used up.
             quantity += self._free_tier_end()
 
-        # Check if all tiers have None start_usage_amount (flat price)
-        all_null_start = all(t.start_usage_amount is None for t in self.tiers)
+        # Check if all tiers have None start_usage_amount (flat price). A row
+        # with a block size goes through the tier loop below, which rounds
+        # its band up to whole blocks (#369).
+        all_null_start = (all(t.start_usage_amount is None for t in self.tiers)
+                          and not any(t.block_size is not None for t in self.tiers))
 
         if all_null_start:
             # Simple flat price - average of all prices * quantity
@@ -140,7 +148,6 @@ class _CostResult:
 
             tier_start = (tier.start_usage_amount or 0) * multiplier
             tier_end = (tier.end_usage_amount * multiplier) if tier.end_usage_amount is not None else None
-            price = tier.price_usd
 
             # Determine if this tier applies
             if quantity <= tier_start:
@@ -148,10 +155,10 @@ class _CostResult:
 
             if tier_end is None:
                 # Last tier: charge for all quantity above start
-                total += max(0, quantity - tier_start) * price
+                total += band_cost(tier, quantity - tier_start)
             else:
                 # Tier with upper bound
                 charged = min(quantity, tier_end) - tier_start
-                total += max(0, charged) * price
+                total += band_cost(tier, charged)
 
         return max(0, total) / self.periods
