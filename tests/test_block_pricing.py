@@ -217,3 +217,11 @@ class TestCacheMigration:
         price = cache.query("aws", "S", "r", "m")
         assert price.price_usd == 2.0
         assert price.block_size is None
+
+
+def test_flat_row_without_a_block_keeps_its_sign_for_a_negative_quantity():
+    flat = TieredPrice([Price(vendor="v", service="s", region="global",
+                              product_family=None, attributes={}, usage_metric="m",
+                              unit="u", price_usd=2.0)])
+    assert flat.total_cost(-3) == -6.0
+    assert flat.total_cost(3) == 6.0

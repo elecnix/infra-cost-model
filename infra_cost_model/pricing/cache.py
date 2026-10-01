@@ -102,6 +102,8 @@ class TieredPrice:
         if not sorted_tiers:
             tier = self.tiers[0] if self.tiers else None
             if tier:
+                if tier.block_size is None:
+                    return tier.price_usd * quantity
                 return band_cost(tier, quantity)
             return 0.0
 
