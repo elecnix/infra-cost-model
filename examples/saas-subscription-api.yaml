@@ -64,10 +64,8 @@ nodes:
     service: WorkOS
     region: global
     usageMetrics:
-      # The first 1,000,000 monthly active users are free, then $2,500 a
-      # month for each started block of 1,000,000. 200,000 above the free
-      # million start one block.
-      AuthKit-MAU:    { unit: users,       value: 1200000, fixed: true }
+      # The first 1,000,000 monthly active users are free.
+      AuthKit-MAU:    { unit: users,       value: 900000, fixed: true }
       # $125 a month for each of the first 15 SSO connections.
       SSO-Connection: { unit: connections, value: 2,      fixed: true }
       # $99 a month for a custom domain.

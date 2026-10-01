@@ -1,16 +1,19 @@
 """Block pricing: a price row can state a price per block of N units (#369).
 
-WorkOS bills $2,500 for each 1,000,000 monthly active users above the free
-million, and a partly used block costs the whole block.
+The tests use their own rows, shaped like a vendor that bills $2,500 for each
+1,000,000 monthly active users above the free million, $99 for each
+1,000,000 retained events and $100 for each 50,000 checks after 1,000 free.
+A partly used block costs the whole block.
 """
-
 import sqlite3
 
 import pytest
 
 from infra_cost_model.engine.engine import CostEngine
 from infra_cost_model.pricing import vendors
-from infra_cost_model.pricing.cache import Price, PricingCache, TieredPrice, billed_blocks
+from infra_cost_model.pricing.cache import (
+    Price, PricingCache, TieredPrice, _hash_attributes, billed_blocks)
+from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.pricing.vendors import _parse_row
 
 
@@ -24,13 +27,33 @@ def tiers(block_size=1_000_000, price=2500.0, free=1_000_000):
     ])
 
 
+def _row(metric, unit, price, start, end=None, block=None):
+    return Price(vendor="testco", service="Svc", region="global", product_family=None,
+                 attributes={}, usage_metric=metric, unit=unit, price_usd=price,
+                 start_usage_amount=start, end_usage_amount=end, block_size=block,
+                 source="test", fetched_at="now")
+
+
 @pytest.fixture
-def workos(seed_catalog):
-    return seed_catalog
+def workos(tmp_path):
+    catalog = PricingCatalog(db_path=tmp_path / "pricing.db")
+    rows = [
+        _row("MAU", "users", 0.0, 0, 1_000_000),
+        _row("MAU", "users", 2500.0, 1_000_000, block=1_000_000),
+        _row("Retention", "events", 99.0, 0, block=1_000_000),
+        _row("Radar", "checks", 0.0, 0, 1_000),
+        _row("Radar", "checks", 100.0, 1_000, block=50_000),
+    ]
+    conn = sqlite3.connect(catalog._cache.db_path)
+    with conn:
+        for row in rows:
+            PricingCache._write(conn, row, _hash_attributes(row.attributes))
+    conn.close()
+    return catalog
 
 
 def mau_cost(catalog, quantity, **kw):
-    return catalog.query("workos", "WorkOS", "global", "AuthKit-MAU", quantity, **kw).total_cost
+    return catalog.query("testco", "Svc", "global", "MAU", quantity, **kw).total_cost
 
 
 class TestBoundary:
@@ -85,17 +108,17 @@ def test_billed_blocks():
     assert billed_blocks(10.5, 10) == 2
 
 
-class TestWorkosRows:
+class TestRowShapes:
     def test_audit_log_retention_is_99_per_million_events(self, workos):
-        cost = lambda q: workos.query("workos", "WorkOS", "global",
-                                      "AuditLog-Retention", q).total_cost
+        cost = lambda q: workos.query("testco", "Svc", "global",
+                                      "Retention", q).total_cost
         assert cost(1) == 99.0
         assert cost(1_000_000) == 99.0
         assert cost(1_000_001) == 198.0
 
     def test_radar_has_a_free_thousand_then_100_per_50k_checks(self, workos):
-        cost = lambda q: workos.query("workos", "WorkOS", "global",
-                                      "Radar-Check", q).total_cost
+        cost = lambda q: workos.query("testco", "Svc", "global",
+                                      "Radar", q).total_cost
         assert cost(1_000) == 0.0
         assert cost(1_001) == 100.0
         assert cost(51_000) == 100.0
@@ -108,8 +131,8 @@ class TestTimeBases:
             "version": "1.0",
             "workflow": {"name": "t", "entry": "n", "frequency": {"unit": "perMonth", "value": 1}},
             "nodes": {"n": {"nodeType": "external", "resourceAddress": "n",
-                            "provider": "workos", "service": "WorkOS", "region": "global",
-                            "usageMetrics": {"AuthKit-MAU": {"unit": "users", "value": value,
+                            "provider": "testco", "service": "Svc", "region": "global",
+                            "usageMetrics": {"MAU": {"unit": "users", "value": value,
                                                              "fixed": True}}}},
         }
 
@@ -119,12 +142,12 @@ class TestTimeBases:
         assert costs["n"] == pytest.approx(2500.0 * factor)
 
     def test_per_second_agrees(self, workos):
-        per_second = workos.query("workos", "WorkOS", "global", "AuthKit-MAU",
+        per_second = workos.query("testco", "Svc", "global", "MAU",
                                   1_200_000 / 2629800.0, period_seconds=1.0).total_cost
         assert per_second * 2629800.0 == pytest.approx(2500.0)
 
     def test_per_second_exact_multiple_does_not_gain_a_block(self, workos):
-        per_second = workos.query("workos", "WorkOS", "global", "AuthKit-MAU",
+        per_second = workos.query("testco", "Svc", "global", "MAU",
                                   2_000_000 / 2629800.0, period_seconds=1.0).total_cost
         assert per_second * 2629800.0 == pytest.approx(2500.0)
 
@@ -132,9 +155,9 @@ class TestTimeBases:
 class TestPooling:
     def model(self, a, b):
         def node(v):
-            return {"nodeType": "external", "resourceAddress": "x", "provider": "workos",
-                    "service": "WorkOS", "region": "global",
-                    "usageMetrics": {"AuthKit-MAU": {"unit": "users", "value": v, "fixed": True}}}
+            return {"nodeType": "external", "resourceAddress": "x", "provider": "testco",
+                    "service": "Svc", "region": "global",
+                    "usageMetrics": {"MAU": {"unit": "users", "value": v, "fixed": True}}}
         return {
             "version": "1.0",
             "workflow": {"name": "t", "entry": "a", "frequency": {"unit": "perMonth", "value": 1}},

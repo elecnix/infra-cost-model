@@ -143,10 +143,9 @@ class TestSaasExampleOnVendorRows:
     def test_vendor_nodes_price_from_rows(self, seed_catalog):
         model = yaml.safe_load(self.EXAMPLE.read_text())
         costs = CostEngine(model, catalog=seed_catalog, time_basis="monthly").compute()
-        # WorkOS: 1,200,000 MAU, so one started $2,500 block above the free
-        # 1,000,000; 2 SSO connections at $125; one custom domain at $99.
-        # Datadog: 6 Enterprise hosts at $23.
-        assert costs["workos_identity"] == pytest.approx(2500.0 + 2 * 125.0 + 99.0)
+        # WorkOS: 900,000 MAU inside the free 1,000,000; 2 SSO connections at
+        # $125; one custom domain at $99. Datadog: 6 Enterprise hosts at $23.
+        assert costs["workos_identity"] == pytest.approx(2 * 125.0 + 99.0)
         assert costs["datadog_observability"] == pytest.approx(6 * 23.0)
 
     def test_yearly_is_twelve_months(self, seed_catalog):

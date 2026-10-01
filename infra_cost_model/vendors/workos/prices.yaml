@@ -1,11 +1,10 @@
-# WorkOS prices, read from https://workos.com/pricing on 2026-09-24 and checked
-# again on 2026-10-01. The page states no effective date, so effective_date is
-# the date the page was read.
+# WorkOS prices, read from https://workos.com/pricing on 2026-09-24. The page
+# states no effective date, so effective_date is the date the page was read.
 #
 # AuthKit: the first 1,000,000 monthly active users are free. WorkOS bills
-# each additional block of 1,000,000 at $2,500 a month, and a partly used
-# block costs the whole $2,500. The overage row states that with
-# block_size, so price_usd is the price of one block (#369).
+# each additional block of 1,000,000 at $2,500 a month. A price row has no
+# block unit, so the overage row spreads that price over each user
+# ($0.0025), which understates a partly used block.
 - vendor: workos
   service: WorkOS
   region: global
@@ -21,10 +20,9 @@
   region: global
   usage_metric: AuthKit-MAU
   unit: users
-  price_usd: 2500.0
+  price_usd: 0.0025
   start_usage_amount: 1000000
-  block_size: 1000000
-  effective_date: 2026-10-01
+  effective_date: 2026-09-24
   source: https://workos.com/pricing
 
 # Single Sign-On, per connection a month: $125 for connections 1 to 15, $100
@@ -118,7 +116,7 @@
   source: https://workos.com/pricing
 
 # Audit Logs: $125 a month for each SIEM streaming connection, and $99 a month
-# for each 1,000,000 retained events, a partly used block billed whole.
+# for each 1,000,000 retained events.
 - vendor: workos
   service: WorkOS
   region: global
@@ -132,35 +130,9 @@
   service: WorkOS
   region: global
   usage_metric: AuditLog-Retention
-  unit: events
+  unit: million-events
   price_usd: 99.0
-  start_usage_amount: 0
-  block_size: 1000000
-  effective_date: 2026-10-01
-  source: https://workos.com/pricing
-
-# Radar: the first 1,000 checks a month are free, then $100 a month for each
-# 50,000 additional checks, a partly used block billed whole.
-- vendor: workos
-  service: WorkOS
-  region: global
-  usage_metric: Radar-Check
-  unit: checks
-  price_usd: 0.0
-  start_usage_amount: 0
-  end_usage_amount: 1000
-  effective_date: 2026-10-01
-  source: https://workos.com/pricing
-
-- vendor: workos
-  service: WorkOS
-  region: global
-  usage_metric: Radar-Check
-  unit: checks
-  price_usd: 100.0
-  start_usage_amount: 1000
-  block_size: 50000
-  effective_date: 2026-10-01
+  effective_date: 2026-09-24
   source: https://workos.com/pricing
 
 # Custom domain: $99 a month.
