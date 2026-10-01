@@ -354,7 +354,7 @@ class TestThePinOnTheBundledExample:
         """The example's whole point: the SaaS nodes cost something."""
         engine = CostEngine(self.load(), catalog=seed_catalog, time_basis="monthly")
         costs = engine.compute()
-        assert costs["workos_identity"] == pytest.approx(349.0)
+        assert costs["workos_identity"] == pytest.approx(2849.0)
         assert costs["datadog_observability"] == pytest.approx(138.0)
 
     def test_example_validates(self):

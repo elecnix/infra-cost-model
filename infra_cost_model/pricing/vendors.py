@@ -108,6 +108,14 @@ def _parse_row(row: Any, source: str, index: int, fetched_at: str) -> Price:
     if per is not None and (not isinstance(per, str) or not per.strip()):
         raise _row_error(source, index, "'per' must be a non-empty string or null")
 
+    block_size = row.get("block_size")
+    if block_size is not None:
+        if isinstance(block_size, bool) or not isinstance(block_size, (int, float)):
+            raise _row_error(source, index, "'block_size' must be a positive number or null")
+        block_size = float(block_size)
+        if not math.isfinite(block_size) or block_size <= 0:
+            raise _row_error(source, index, "'block_size' must be a positive finite number")
+
     return Price(
         vendor=row["vendor"].lower(),
         service=row["service"],
@@ -124,6 +132,7 @@ def _parse_row(row: Any, source: str, index: int, fetched_at: str) -> Price:
         source="vendor",
         fetched_at=fetched_at,
         per=per,
+        block_size=block_size,
     )
 
 
@@ -174,8 +183,8 @@ def load_vendor_prices(cache: PricingCache) -> int:
                         vendor, service, region, product_family, attributes,
                         attributes_hash, usage_metric, unit, price_usd,
                         start_usage_amount, end_usage_amount, purchase_option,
-                        effective_date, source, fetched_at, per
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        effective_date, source, fetched_at, per, block_size
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         price.vendor,
@@ -194,6 +203,7 @@ def load_vendor_prices(cache: PricingCache) -> int:
                         price.source,
                         price.fetched_at,
                         price.per,
+                        price.block_size,
                     ),
                 )
     finally:
