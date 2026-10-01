@@ -135,7 +135,7 @@ class _CostResult:
         # with a block size goes through the tier loop below, which rounds
         # its band up to whole blocks (#369).
         all_null_start = (all(t.start_usage_amount is None for t in self.tiers)
-                          and not any(t.block_size for t in self.tiers))
+                          and not any(t.block_size is not None for t in self.tiers))
 
         if all_null_start:
             # Simple flat price - average of all prices * quantity

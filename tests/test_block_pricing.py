@@ -59,11 +59,29 @@ class TestBoundary:
         assert t.total_cost(2_000_001) == 5000.0
 
 
+def test_a_hair_over_a_boundary_starts_the_next_block():
+    # 1,000,000.0000001 units is over one block, so it bills two.
+    assert billed_blocks(1_000_000.0000001, 1_000_000) == 2
+    assert tiers().total_cost(2_000_000.0000001) == 5000.0
+
+
+def test_zero_in_a_band_costs_nothing():
+    assert tiers().total_cost(0) == 0.0
+    assert tiers().total_cost(1_000_000) == 0.0
+    assert billed_blocks(0, 1_000_000) == 0
+
+
+def test_a_zero_block_size_in_the_cache_is_refused():
+    t = tiers(block_size=0)
+    with pytest.raises(ValueError, match="block_size"):
+        t.total_cost(1_200_000)
+
+
 def test_billed_blocks():
     assert billed_blocks(0, 10) == 0
     assert billed_blocks(-5, 10) == 0
     assert billed_blocks(10, 10) == 1
-    assert billed_blocks(10.0000000001, 10) == 1
+    assert billed_blocks(10 * (1 + 1e-15), 10) == 1
     assert billed_blocks(10.5, 10) == 2
 
 

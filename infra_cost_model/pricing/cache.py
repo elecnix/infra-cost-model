@@ -50,16 +50,20 @@ def billed_blocks(quantity: float, block_size: float) -> int:
     1,000,000 is 2 blocks, and 1,000,000 is 1. A quantity of zero or less
     is no blocks. The tolerance keeps float noise, such as a quantity
     derived per second and scaled back to a month, from tipping an exact
-    multiple into one more block.
+    multiple into one more block. It is relative (a few float steps), so a
+    quantity that is over a boundary by more than float noise, such as
+    1,000,000.0000001 units in blocks of 1,000,000, starts the next block.
     """
+    if block_size <= 0:
+        raise ValueError(f"block_size must be positive, got {block_size}")
     if quantity <= 0:
         return 0
-    return math.ceil(quantity / block_size - 1e-9)
+    return math.ceil(quantity / block_size - 1e-14)
 
 
 def band_cost(tier: "Price", charged: float) -> float:
     """The cost of ``charged`` units that fall in ``tier``'s band."""
-    if tier.block_size:
+    if tier.block_size is not None:
         return billed_blocks(charged, tier.block_size) * tier.price_usd
     return max(0.0, charged) * tier.price_usd
 
