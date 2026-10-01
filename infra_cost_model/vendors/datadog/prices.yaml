@@ -1,0 +1,41 @@
+# Datadog Infrastructure Monitoring, per host a month, read from
+# https://www.datadoghq.com/pricing/ on 2026-09-24. The page states no
+# effective date, so effective_date is the date the page was read.
+#
+# The page gives two prices for each plan: billed annually, and on demand
+# (month to month). The -OnDemand metrics hold the on-demand price.
+- vendor: datadog
+  service: Infrastructure
+  region: global
+  usage_metric: Infra-Pro-Host
+  unit: hosts
+  price_usd: 15.0
+  effective_date: 2026-09-24
+  source: https://www.datadoghq.com/pricing/
+
+- vendor: datadog
+  service: Infrastructure
+  region: global
+  usage_metric: Infra-Pro-Host-OnDemand
+  unit: hosts
+  price_usd: 18.0
+  effective_date: 2026-09-24
+  source: https://www.datadoghq.com/pricing/
+
+- vendor: datadog
+  service: Infrastructure
+  region: global
+  usage_metric: Infra-Enterprise-Host
+  unit: hosts
+  price_usd: 23.0
+  effective_date: 2026-09-24
+  source: https://www.datadoghq.com/pricing/
+
+- vendor: datadog
+  service: Infrastructure
+  region: global
+  usage_metric: Infra-Enterprise-Host-OnDemand
+  unit: hosts
+  price_usd: 27.0
+  effective_date: 2026-09-24
+  source: https://www.datadoghq.com/pricing/

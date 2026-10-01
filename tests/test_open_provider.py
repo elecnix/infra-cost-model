@@ -13,10 +13,10 @@ def _model(provider):
     }
 
 
-def test_provider_registry_skips_template_and_includes_aliases():
+def test_provider_registry_skips_template_and_lists_vendor_ids():
     assert "example-vendor" not in KNOWN_PROVIDERS
-    assert "github-copilot" in KNOWN_PROVIDERS
     assert "github" in KNOWN_PROVIDERS
+    assert "datadog" in KNOWN_PROVIDERS
 
 
 def test_provider_accepts_known_github():

@@ -1,0 +1,7 @@
+# Azure prices come from the live catalog. This directory holds only the
+# Microsoft Entra External ID rows ported from the identity-provider module
+# (#254).
+id: azure
+display_name: Microsoft Azure
+homepage: https://azure.microsoft.com
+pricing_page: https://azure.microsoft.com/en-us/pricing/details/microsoft-entra-external-id

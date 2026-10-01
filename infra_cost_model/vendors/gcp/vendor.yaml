@@ -1,0 +1,6 @@
+# Google Cloud prices come from the live catalog. This directory holds only
+# the Identity Platform rows ported from the identity-provider module (#254).
+id: gcp
+display_name: Google Cloud
+homepage: https://cloud.google.com
+pricing_page: https://cloud.google.com/identity-platform/pricing

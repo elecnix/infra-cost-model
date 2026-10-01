@@ -1,10 +1,15 @@
 """SaaS shapes in models with several workflows (#305).
 
-A shape's parameters, such as a free allowance or a subscription rate,
-describe a month of the node's whole use. The engine used to call the shape
-handler once per workflow, so a node reached by 2 workflows got its free
-allowance twice and a usage-driven subscription billed twice. The engine now
-adds up a month of use across the workflows and calls the handler once.
+A shape's parameters describe a month of the node's whole use. The engine
+used to call the shape handler once per workflow, so a node reached by 2
+workflows got a free allowance twice and a usage-driven subscription billed
+twice. The engine now adds up a month of use across the workflows and calls
+the handler once.
+
+The built-in ``transactional`` shape is linear, so pooling does not change
+its cost. Vendor price rows, which replaced the free-allowance and
+subscription shapes (#246), are pooled by the catalog (#294). These tests
+register two nonlinear shapes in code to keep the engine's pooling covered.
 """
 
 import copy
@@ -14,6 +19,7 @@ import pytest
 
 from infra_cost_model.engine import CostEngine
 from infra_cost_model.engine.engine import SECONDS_PER_MONTH
+from infra_cost_model.saas import SaaSPricingRegistry
 from infra_cost_model.sdk import parse_yaml_dsl
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
@@ -37,9 +43,30 @@ def model(metric, *monthly_counts):
     }
 
 
-FREE_TIER = {"unit": "users", "value": 1, "shape": "free_tier",
+def _free_allowance(quantity, params):
+    """First ``free`` units free, then ``overage`` for each unit."""
+    return max(0.0, quantity - params["free"]) * params["overage"]
+
+
+def _subscription(quantity, params):
+    """``rate`` once in any month with use; ``rate`` per unit when fixed."""
+    if quantity <= 0:
+        return 0.0
+    return params["rate"] if params.get("fixed") is False else params["rate"] * quantity
+
+
+@pytest.fixture(autouse=True)
+def nonlinear_shapes():
+    SaaSPricingRegistry.register("test_free_allowance", _free_allowance)
+    SaaSPricingRegistry.register("test_subscription", _subscription)
+    yield
+    SaaSPricingRegistry._handlers.pop("test_free_allowance", None)
+    SaaSPricingRegistry._handlers.pop("test_subscription", None)
+
+
+FREE_TIER = {"unit": "users", "value": 1, "shape": "test_free_allowance",
              "free": 10_000, "overage": 0.02}
-SUBSCRIPTION = {"unit": "calls", "value": 1, "shape": "flat_subscription",
+SUBSCRIPTION = {"unit": "calls", "value": 1, "shape": "test_subscription",
                 "rate": 49.0}
 
 
@@ -79,7 +106,7 @@ class TestUsageDrivenSubscription:
 def test_fixed_shape_keeps_the_last_workflow_rule():
     """A fixed metric is a property of the node, so it counts once."""
     fixed = {"unit": "seats", "value": 3, "fixed": True,
-             "shape": "per_unit_flat", "rate": 10.0}
+             "shape": "test_subscription", "rate": 10.0}
     assert monthly_total(model(fixed, 100, 100)) == pytest.approx(30)
 
 
@@ -95,7 +122,7 @@ def test_data_pipeline_example_prices_a_shared_shape_once():
                           "to": "aws_s3_bucket.reports", "rate": 1})
     shaped = copy.deepcopy(base)
     shaped["nodes"]["aws_s3_bucket.reports"]["usageMetrics"]["writes"] = {
-        "unit": "writes", "value": 1, "shape": "free_tier",
+        "unit": "writes", "value": 1, "shape": "test_free_allowance",
         "free": 30_000, "overage": 0.01,
     }
 

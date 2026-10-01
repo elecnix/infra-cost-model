@@ -76,7 +76,7 @@ class TestWhitelistCoversHandlers:
 
     def test_the_handlers_read_something(self):
         """Guard against the regex silently matching nothing."""
-        assert handler_param_names() >= {"rate", "free", "overage"}
+        assert handler_param_names() >= {"percentage_rate", "per_call", "volume", "fixed_per_transaction"}
 
 
 class TestKnownParamsValidate:
@@ -88,33 +88,11 @@ class TestKnownParamsValidate:
         metric = {"unit": "u", "value": 1, "shape": "transactional", param: 1}
         assert validate_cost_model(model_with_metric(metric)) == []
 
-    def test_tiers_accepts_a_list(self):
-        """`tiers` was read by free_tier and refused by the schema.
-
-        It is a list of bands rather than a number, so it gets its own case.
-        """
-        metric = {
-            "unit": "u", "value": 1, "shape": "free_tier",
-            "tiers": [{"up_to": 50000, "rate": 0.01}],
-        }
-        assert validate_cost_model(model_with_metric(metric)) == []
-
-    def test_tiers_accepts_a_list_of_tier_objects(self):
-        """`tiers` is a list of boundaries and rates, not a number."""
-        metric = {
-            "unit": "u", "value": 1, "shape": "free_tier", "free": 0,
-            "tiers": [
-                {"up_to": 50000, "rate": 0.01},
-                {"up_to": 100000, "rate": 0.005},
-            ],
-        }
-        assert validate_cost_model(model_with_metric(metric)) == []
-
     def test_unknown_key_still_rejected(self):
         """The restriction the whitelist exists for still holds."""
-        metric = {"unit": "u", "value": 1, "shape": "per_unit_flat", "rat": 125}
+        metric = {"unit": "u", "value": 1, "shape": "transactional", "per_cal": 0.01}
         errors = validate_cost_model(model_with_metric(metric))
-        assert any("rat" in e for e in errors)
+        assert any("per_cal" in e for e in errors)
 
 
 def test_shape_description_examples_are_registered_shapes():
