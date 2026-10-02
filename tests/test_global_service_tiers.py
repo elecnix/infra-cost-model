@@ -165,7 +165,7 @@ def test_pool_region_choice_ignores_node_order(tmp_path):
 def test_pool_is_skipped_when_no_region_prices_the_total(tmp_path):
     # A pool that no region can price keeps the costs of its regional pools.
     from infra_cost_model.engine.engine import (
-        _CatalogCharge, _price_global_pools,
+        _CatalogCharge, _price_billing_scopes,
     )
     catalog = PricingCatalog(db_path=tmp_path / "pricing.db")
     pools = {
@@ -175,4 +175,4 @@ def test_pool_is_skipped_when_no_region_prices_the_total(tmp_path):
             metric=ZONES[1])]
         for region in ("us-east-1", "eu-west-1")
     }
-    assert _price_global_pools(catalog, pools) == {}
+    assert _price_billing_scopes(catalog, pools) == {}
