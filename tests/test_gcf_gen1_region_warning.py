@@ -1,9 +1,11 @@
-"""A 1st gen Cloud Function in a region with no 1st gen prices warns (#400).
+"""A 1st gen Cloud Function in a region our catalog has no rows for warns (#400).
 
-The Infracost API has no 1st gen Cloud Run functions CPU or memory price in 15
-of the synced GCP regions, so a `google_cloudfunctions_function` there has
-unpriced usage. GCP doesn't offer 1st gen functions there; the 2nd gen resource
-bills at Cloud Run rates.
+A `google_cloudfunctions_function` in a region listed in
+`FUNCTIONS_GEN1_UNPRICED_REGIONS` has unpriced CPU and memory usage, and the
+warning points at the 2nd gen resource, which is priced at Cloud Run rates in
+every region. The set's membership is unverified (see the comment beside it),
+so the warning states what the catalog lacks rather than what the provider
+sells, and a region that is not in the set is treated as unknown.
 """
 import warnings
 
@@ -41,8 +43,15 @@ def test_supported_region_is_silent(extract, region):
 def test_unpriced_region_warns_and_points_at_2nd_gen(region):
     (message,) = _warnings_from(CloudFunction.extract_tf, _tf_function(region))
     assert region in message
-    assert "does not offer 1st gen" in message
+    assert "no 1st gen Cloud Run functions rows" in message
     assert "google_cloudfunctions2_function" in message
+
+
+def test_the_warning_claims_nothing_about_the_provider():
+    """The set's membership is unverified, so the message must not assert it."""
+    (message,) = _warnings_from(CloudFunction.extract_tf, _tf_function("us-south1"))
+    assert "GCP does not offer" not in message
+    assert "does not sell" not in message
 
 
 def test_unpriced_region_warns_from_pulumi_too():
@@ -59,13 +68,33 @@ def test_2nd_gen_never_warns(region):
         "values": {"location": region, "service_config": [{"available_memory": "256M"}]}}) == []
 
 
-def test_missing_region_is_silent():
+def test_missing_region_is_silent_and_returns_the_resource():
+    """CDK states no region, so the check cannot be made and stays quiet."""
+    extract = CloudFunction.extract_tf(_tf_function(None))
+    assert extract.region is None
     assert _warnings_from(CloudFunction.extract_tf, _tf_function(None)) == []
+
+
+def test_cdk_extraction_states_no_region_and_does_not_warn():
+    resource = {"LogicalId": "MyFn", "Properties": {"AvailableMemoryMb": 256}}
+    assert _warnings_from(CloudFunction.extract_cdk, resource) == []
+    assert CloudFunction.extract_cdk(resource).region is None
 
 
 def test_every_listed_region_is_a_synced_gcp_region():
     assert FUNCTIONS_GEN1_UNPRICED_REGIONS <= set(sync_regions("gcp"))
-    assert len(FUNCTIONS_GEN1_UNPRICED_REGIONS) == 15
+    assert len(FUNCTIONS_GEN1_UNPRICED_REGIONS) == 14
+
+
+def test_the_set_holds_only_region_names():
+    assert all(isinstance(region, str) and region
+               for region in FUNCTIONS_GEN1_UNPRICED_REGIONS)
+    assert None not in FUNCTIONS_GEN1_UNPRICED_REGIONS
+
+
+def test_a_supported_region_is_not_in_the_set():
+    for region in ("us-central1", "europe-west2", "us-east4", "europe-west4"):
+        assert region not in FUNCTIONS_GEN1_UNPRICED_REGIONS
 
 
 def test_the_warning_is_its_own_category():

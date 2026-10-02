@@ -29,10 +29,10 @@ _FUNCTION_CPU_GHZ = ((128, 0.2), (256, 0.4), (512, 0.8), (1024, 1.4),
 
 
 class Gen1FunctionRegionWarning(UserWarning):
-    """A 1st gen Cloud Function in a region where GCP doesn't sell one (#400).
+    """A 1st gen Cloud Function in a region our catalog has no rows for (#400).
 
     A category of its own, so a caller can tell it apart from an unpriced
-    metric caused by a catalog with no rows, and turn it into an error.
+    metric caused by a catalog with no rows at all, and turn it into an error.
     """
 
 
@@ -79,12 +79,18 @@ class CloudFunction(ComputeResource):
 
     @staticmethod
     def _extract(address: str, region: Any, config: dict) -> ResourceExtract:
+        """Extract a 1st gen function, warning where the catalog has no rows.
+
+        An unset region stays silent: CloudFormation never states one, so the
+        check could not be made for every CDK function, and the engine's
+        unpriced-metric warning still fires on the missing rows.
+        """
         if _lower(region) in FUNCTIONS_GEN1_UNPRICED_REGIONS:
             warnings.warn(Gen1FunctionRegionWarning(
-                f"{address}: GCP does not offer 1st gen Cloud Run functions in "
-                f"{region}, so the engine reports its usage as unpriced. A "
-                f"google_cloudfunctions2_function (2nd gen) prices the same "
-                f"workload at Cloud Run rates."
+                f"{address}: the catalog has no 1st gen Cloud Run functions rows "
+                f"for {region}, so the engine reports this function's usage as "
+                f"unpriced. A google_cloudfunctions2_function (2nd gen) is priced "
+                f"at Cloud Run rates in every region."
             ))
         return ResourceExtract(
             resource_address=address,
