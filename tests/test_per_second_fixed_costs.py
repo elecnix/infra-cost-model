@@ -144,5 +144,7 @@ def test_what_if_and_sensitivity_name_the_per_second_basis(argv, tmp_path, capsy
     import yaml
     path = tmp_path / "m.yaml"
     path.write_text(yaml.safe_dump(single(mixed_node())))
-    assert main([argv[0], str(path), *argv[1:]]) == 0
+    # --no-catalog: this node prices from its pricingRates, and it carries no
+    # provider, which the engine only demands once a catalog is in play.
+    assert main([argv[0], str(path), *argv[1:], "--no-catalog"]) == 0
     assert "(per second)" in capsys.readouterr().out.splitlines()[0]
