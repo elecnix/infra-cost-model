@@ -166,11 +166,12 @@ def test_cool_blob_is_priced(seed_catalog):
 
 
 @pytest.mark.parametrize("values,match", [
-    ({"account_tier": "Premium", "account_replication_type": "LRS"}, "Premium"),
-    ({"account_tier": "Standard", "account_replication_type": "RAGZRS",
-      "access_tier": "Hot"}, "RA-GZRS"),
+    ({"account_tier": "Premium", "account_replication_type": "GRS"}, "GRS"),
+    ({"account_replication_type": "ZRS", "access_tier": "Archive"}, "Archive"),
 ])
 def test_blob_settings_without_rows_warn(values, match):
+    """A Premium account has no GRS redundancy, and Archive none that is
+    zone-redundant."""
     resource = {"address": "azurerm_storage_account.s", "type": "azurerm_storage_account",
                 "values": {"location": REGION, **values}}
     with pytest.warns(UserWarning, match=rf"azurerm_storage_account.s.*{match}"):
@@ -310,17 +311,17 @@ def test_standard_account_from_an_sku_doesnt_warn():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         node = extract_resources_from_arm(template)["Microsoft.Storage/storageAccounts:s"]
-    assert node["config"] == {"accountTier": "Standard", "replicationType": "RAGRS",
-                              "accessTier": "Cool"}
+    assert node["config"] == {"accountTier": "Standard", "accountKind": "StorageV2",
+                              "replicationType": "RAGRS", "accessTier": "Cool"}
     assert AzureBlobStorage().catalog_metrics_for(node["config"])["storageGb"] == (
         "Blob-Cool-RAGRS-GB-Month")
 
 
-def test_premium_account_is_unpriced_not_priced_as_standard():
+def test_premium_account_prices_its_own_rows():
     metrics = AzureBlobStorage().catalog_metrics_for(
         {"accountTier": "Premium", "replicationType": "LRS"})
-    assert metrics["storageGb"] == "Blob-Premium-Hot-LRS-GB-Month"
-    assert metrics["storageGb"] not in seeded("BlobStorage")
+    assert metrics["storageGb"] == "Blob-Premium-LRS-GB-Month"
+    assert metrics["storageGb"] in seeded("BlobStorage")
 
 
 def test_shared_meters_select_their_own_sku():
