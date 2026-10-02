@@ -73,7 +73,8 @@ class CloudFunction(ComputeResource):
     def from_address(cls, resource_address: str) -> Optional["CloudFunction"]:
         if (resource_address.startswith("google_cloudfunctions_function.") or
                 "google:cloudfunctions:Function:" in resource_address or
-                "CloudFunctions::Function:" in resource_address):
+                "CloudFunctions::Function:" in resource_address or
+                matches_gcp_type(resource_address, CloudFunction)):
             return cls()
         return None
 
@@ -113,7 +114,7 @@ class CloudFunction(ComputeResource):
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
-        return cls._extract(resource.get("id", ""), inputs.get("region"), {
+        return cls._extract(pulumi_address(resource), inputs.get("region"), {
             "memoryMb": inputs.get("availableMemoryMb"),
             "timeout": inputs.get("timeout"),
             "runtime": inputs.get("runtime"),
@@ -204,7 +205,8 @@ class CloudFunctionGen2(ComputeResource):
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudFunctionGen2"]:
         if (resource_address.startswith("google_cloudfunctions2_function.") or
-                "google:cloudfunctionsv2:Function:" in resource_address):
+                "google:cloudfunctionsv2:Function:" in resource_address or
+                matches_gcp_type(resource_address, CloudFunctionGen2)):
             return cls()
         return None
 
@@ -244,7 +246,7 @@ class CloudFunctionGen2(ComputeResource):
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
-        return cls._extract(resource.get("id", ""), inputs.get("location"),
+        return cls._extract(pulumi_address(resource), inputs.get("location"),
                             inputs.get("serviceConfig") or {}, inputs.get("buildConfig") or {},
                             ("availableMemory", "availableCpu", "timeoutSeconds"))
 
@@ -330,7 +332,8 @@ class CloudStorage(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["CloudStorage"]:
         if (resource_address.startswith("google_storage_bucket.") or
                 "google:storage:Bucket:" in resource_address or
-                "Storage::Bucket:" in resource_address):
+                "Storage::Bucket:" in resource_address or
+                matches_gcp_type(resource_address, CloudStorage)):
             return cls()
         return None
 
@@ -374,7 +377,7 @@ class CloudStorage(StorageResource):
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
-        return cls._extract(resource.get("id", ""), {
+        return cls._extract(pulumi_address(resource), {
             "location": inputs.get("location"),
             "storageClass": inputs.get("storageClass"),
         })
@@ -414,7 +417,8 @@ class CloudRun(RoutingResource):
     def from_address(cls, resource_address: str) -> Optional["CloudRun"]:
         if (resource_address.startswith("google_cloud_run_service.") or
                 "google:cloudrun:Service:" in resource_address or
-                "CloudRun::Service:" in resource_address):
+                "CloudRun::Service:" in resource_address or
+                matches_gcp_type(resource_address, CloudRun)):
             return cls()
         return None
 
@@ -437,7 +441,7 @@ class CloudRun(RoutingResource):
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
         return ResourceExtract(
-            resource_address=resource.get("id", ""),
+            resource_address=pulumi_address(resource),
             node_type="routing",
             provider="gcp",
             service="CloudRun",
@@ -474,7 +478,8 @@ class Firestore(StorageResource):
     def from_address(cls, resource_address: str) -> Optional["Firestore"]:
         if (resource_address.startswith("google_firestore_database.") or
                 "google:firestore:Database:" in resource_address or
-                "Firestore::Database:" in resource_address):
+                "Firestore::Database:" in resource_address or
+                matches_gcp_type(resource_address, Firestore)):
             return cls()
         return None
 
@@ -498,7 +503,7 @@ class Firestore(StorageResource):
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
         return ResourceExtract(
-            resource_address=resource.get("id", ""),
+            resource_address=pulumi_address(resource),
             node_type="storage",
             provider="gcp",
             service="Firestore",
@@ -520,3 +525,33 @@ class Firestore(StorageResource):
             region=properties.get("LocationId"),
             config={"location": properties.get("LocationId")},
         )
+
+
+def pulumi_address(resource: dict) -> str:
+    """The address of a Pulumi resource: its URN, which names the type.
+
+    The ``id`` of a stack export names no resource type, as in
+    ``assets-bucket-93a1f2``, so the pricing layer can't tell which handler
+    owns the node (#396).
+    """
+    return resource.get("urn") or resource.get("id", "")
+
+
+# Pulumi type tokens of the resources these handlers price (#396).
+PULUMI_TYPE_TOKENS = {
+    CloudFunction: ("gcp:cloudfunctions/function:Function",),
+    CloudFunctionGen2: ("gcp:cloudfunctionsv2/function:Function",),
+    CloudStorage: ("gcp:storage/bucket:Bucket",),
+    CloudRun: ("gcp:cloudrun/service:Service",),
+    Firestore: ("gcp:firestore/database:Database",),
+}
+
+
+def matches_gcp_type(resource_address: str, handler: type) -> bool:
+    """Whether ``resource_address`` names a Pulumi resource of ``handler``'s type.
+
+    Only the URN carries the Pulumi type, as one whole segment of
+    ``urn:pulumi:prod::shop::gcp:storage/bucket:Bucket::assets``.
+    """
+    return any(f"::{token}::" in resource_address
+               for token in PULUMI_TYPE_TOKENS.get(handler, ()))
