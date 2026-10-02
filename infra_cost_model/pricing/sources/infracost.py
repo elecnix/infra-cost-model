@@ -163,6 +163,18 @@ _CLOUD_RUN_TIER_2_REGIONS = frozenset({
     "southamerica-east1", "southamerica-west1", "us-west2", "us-west3", "us-west4",
 })
 
+# Synced GCP regions with no 1st gen Cloud Run functions row (Infracost Cloud
+# Pricing API, checked 2026-09-24). GCP doesn't offer 1st gen functions there,
+# so a `google_cloudfunctions_function` in one of them has unpriced CPU and
+# memory usage (#375, #400). The handler warns at extraction, and the 2nd gen
+# resource, priced at Cloud Run rates, covers the same workload.
+FUNCTIONS_GEN1_UNPRICED_REGIONS = frozenset({
+    "africa-south1", "asia-south2", "australia-southeast2", "europe-southwest1",
+    "europe-west4", "europe-west8", "europe-west9", "europe-west10", "europe-west12",
+    "me-central1", "me-central2", "me-west1", "northamerica-northeast2",
+    "southamerica-west1", "us-south1",
+})
+
 # Azure regions that lack the internet egress meter of the Microsoft global
 # network, mapped to a region of the same zone that has it (#392). Azure
 # bills egress by zone (https://azure.microsoft.com/pricing/details/bandwidth/),
