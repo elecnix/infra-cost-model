@@ -1536,8 +1536,10 @@ def _settings_product(metric: str) -> str:
     A metric of another account kind names it in full, as in
     `Blob-Storage-Cool-LRS-Retrieval-GB`, so the longest matching key wins.
     """
-    return max((key for key in _SETTINGS_PRODUCTS if metric.startswith(key + "-")),
-               key=len)
+    keys = [key for key in _SETTINGS_PRODUCTS if metric.startswith(key + "-")]
+    if not keys:
+        raise KeyError(f"No product in _SETTINGS_PRODUCTS for {metric!r}")
+    return max(keys, key=len)
 
 
 def _settings_descriptor(metric: str, sku: str, meter: str, unit: str) -> dict:
