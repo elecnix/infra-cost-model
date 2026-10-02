@@ -285,11 +285,21 @@ def test_a_priced_location_does_not_warn(location):
     assert [str(w.message) for w in record] == []
 
 
-def test_a_configurable_dual_region_warns():
-    """A pair of regions a bucket names itself has no rows in the catalogue."""
+@pytest.mark.parametrize("location", [" US ", "NAM4 ", " us-CENTRAL1 "])
+def test_a_padded_location_is_the_location_it_names(location):
+    """The catalog region is the code without padding, so it finds its rows."""
+    node = extract_resources_from_tf({"resource": [{
+        "address": "google_storage_bucket.b", "type": "google_storage_bucket",
+        "values": {"location": location, "storage_class": "STANDARD"}}]})
+    assert node["google_storage_bucket.b"]["region"] == location.strip().lower()
+
+
+@pytest.mark.parametrize("location", ["EU4", "NAM7", "nam7"])
+def test_an_undefined_location_code_warns(location):
+    """Cloud Storage defines six dual-regions, and EU4 is not one of them."""
     resource = {"address": "google_storage_bucket.b", "type": "google_storage_bucket",
-                "values": {"location": "US-CENTRAL1+US-WEST1", "storage_class": "STANDARD"}}
-    with pytest.warns(UserWarning, match=r"google_storage_bucket.b.*dual-region.*unpriced"):
+                "values": {"location": location, "storage_class": "STANDARD"}}
+    with pytest.warns(UserWarning, match=r"google_storage_bucket.b.*no catalog rows"):
         extract_resources_from_tf({"resource": [resource]})
 
 

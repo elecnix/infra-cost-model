@@ -176,10 +176,12 @@ AZURE_EGRESS_METER_FALLBACK = {"polandcentral": "germanywestcentral"}
 
 # The Cloud Storage locations that are not GCP regions (#397). A bucket's
 # location is the catalog region: `us`, `eu` and `asia` for a multi-region,
-# and the code of a pair of regions for a dual-region. The Cloud Storage
-# pricing page lists six predefined dual-regions, asia1, eur4, eur5, eur7,
-# eur8 and nam4. A configurable dual-region names its own pair of regions,
-# which the catalogue doesn't hold.
+# and the code of a pair of regions for a dual-region. Cloud Storage
+# defines six predefined dual-regions, asia1, eur4, eur5, eur7, eur8 and
+# nam4 (https://cloud.google.com/storage/docs/locations). A location that is
+# none of these has no rows. A configurable dual-region shares its location
+# code with a multi-region, so a bucket's `location` reads as that
+# multi-region; the dual-region rows price the code on their own.
 GCS_MULTI_REGIONS = ("us", "eu", "asia")
 GCS_DUAL_REGIONS = ("nam4", "eur4", "eur5", "eur7", "eur8", "asia1")
 GCS_LOCATIONS = GCS_MULTI_REGIONS + GCS_DUAL_REGIONS
