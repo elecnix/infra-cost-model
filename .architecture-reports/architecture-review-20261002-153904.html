@@ -50,11 +50,12 @@
 
     <div class="mt-6 bg-white rounded-xl border border-slate-200 p-6">
       <h3 class="text-sm font-semibold text-slate-700 mb-4">Where <code class="text-xs">engine.py</code> churn actually lands</h3>
-      <p class="text-xs text-slate-500 mb-4">2,824 changed lines across 57 commits, bucketed by region of the file.</p>
+      <p class="text-xs text-slate-500 mb-1"><strong>Method:</strong> 2,824 lines <em>added</em> to <code class="text-xs">engine.py</code> across the 57 commits that touch it. A further 585 deleted lines are not attributable to a new-side region and are excluded. Each added line is bucketed by its position in the file.</p>
+      <p class="text-xs text-slate-500 mb-4">Cross-checked against <code class="text-xs">git blame</code>: the six bug-fix commits that introduced the pool algorithms own 296 of that block's 395 surviving lines (74.9%).</p>
       <div class="space-y-3">
         <div>
-          <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L529–923 · pool / billing-scope block</span><span class="font-semibold">36.9%</span></div>
-          <div class="churn-bar"><div class="churn-fill" style="width:36.9%"></div></div>
+          <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L529–923 · pool / billing-scope block</span><span class="font-semibold">36.5%</span></div>
+          <div class="churn-bar"><div class="churn-fill" style="width:36.5%"></div></div>
         </div>
         <div>
           <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L35–347 · validation predicates</span><span class="font-semibold">31.8%</span></div>
@@ -74,9 +75,9 @@
         </div>
       </div>
       <p class="mt-5 text-sm text-slate-600 border-t border-slate-100 pt-4">
-        <strong>The read:</strong> the DAG walk and the pricing arithmetic are stable — 0% churn across 57 commits
-        on the facade, 11% on the aggregator. Essentially all the volatility is in
-        <em>“what gets counted once, and in which region”</em>. That is the module to deepen.
+        <strong>The read:</strong> the DAG walk and the pricing arithmetic are stable — not a single added line
+        in 57 commits for the facade and the sensitivity analyzers, 11% on the aggregator. Essentially all the
+        volatility is in <em>“what gets counted once, and in which region”</em>. That is the module to deepen.
       </p>
     </div>
   </section>
@@ -113,7 +114,7 @@
             <p class="text-slate-600 leading-relaxed mt-2">
               The tables themselves are pure data and unified — all keyed
               <code class="text-xs">(vendor, service, metric)</code>. The <em>application</em> logic is not unified,
-              and that is where 36.9% of engine churn lands.
+              and that is where 36.5% of the lines added to engine.py land.
             </p>
           </div>
           <div>
@@ -634,9 +635,9 @@ flowchart TB
     <h2 class="text-2xl font-semibold mb-4">C1 · One billing-scope resolver</h2>
     <p class="text-slate-300 leading-relaxed mb-5">
       It is the only candidate where the churn data, the seam analysis and the bug history all point at the same
-      395 lines. Five algorithms, five guard conditions, five lookup tables, six bug fixes — and 36.9% of all engine
-      churn. Every other candidate is either cheap (C4, C9), gated behind a decision (C6, C7, C8), or a behaviour
-      change with migration cost (C2, C3).
+      395 lines. Five algorithms, five guard conditions, five lookup tables, six bug fixes — and 36.5% of the lines
+      added to <code>engine.py</code> across 57 commits. Every other candidate is either cheap (C4, C9), gated
+      behind a decision (C6, C7, C8), or a behaviour change with migration cost (C2, C3).
     </p>
     <p class="text-slate-300 leading-relaxed mb-5">
       C1 also improves the <em>next</em> thing that will happen, which is the point. The repo has six open PRs
@@ -647,8 +648,8 @@ flowchart TB
     <div class="grid md:grid-cols-3 gap-4 text-sm">
       <div class="bg-slate-800 rounded-lg p-4">
         <p class="text-slate-400 text-xs mb-1">Churn</p>
-        <p class="text-2xl font-semibold text-orange-400">36.9%</p>
-        <p class="text-slate-400 text-xs mt-1">of all engine.py changes, in 17% of the file</p>
+        <p class="text-2xl font-semibold text-orange-400">36.5%</p>
+        <p class="text-slate-400 text-xs mt-1">of lines added to engine.py, in 17% of the file</p>
       </div>
       <div class="bg-slate-800 rounded-lg p-4">
         <p class="text-slate-400 text-xs mb-1">Algorithms merged</p>
