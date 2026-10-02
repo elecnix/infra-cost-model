@@ -13,15 +13,14 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
-from infra_cost_model.pricing.free_tiers import (
-    ACCOUNT, FREE_ALLOWANCE_REGIONS, SharedFreeAllowance, free_tier_scope,
-    shared_free_allowance,
+from infra_cost_model.pricing.billing_scope import (
+    BILLING_GLOBAL, BILLING_POOL, BILLING_REGION, BILLING_SHARED, BillingScope,
+    billing_scope,
 )
+from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
 from infra_cost_model.pricing.global_services import (
     GLOBAL_PRICE_REGIONS, is_global_metric,
 )
-from infra_cost_model.pricing.price_pools import price_pool
 from infra_cost_model.version_requirement import require_engine
 
 
@@ -570,22 +569,16 @@ def _price_pooled_charges(catalog: PricingCatalog,
     node costs still add up to the pool cost. Returns, per node, the change
     to its usage-driven cost (per second) and to its fixed cost (per
     month), and updates ``cost`` on each charge. A pool with one charge
-    keeps its cost, unless it shares an account-wide free allowance with a
-    pool in another region (#336), or its metric shares a free allowance
-    with other metrics (#338), or its metric belongs to a global service
-    used in another region (#378), or its region shares a meter or SKU with
-    another pool's region (#389), or its free allowance covers a few regions
-    together and another of them has a pool (#402).
+    keeps its cost, unless ``billing_scope`` says it shares a bill with
+    another pool: one account-wide free allowance (#336), one allowance
+    shared across metrics (#338), one account-wide price (#378), one meter
+    or SKU (#389), or one allowance over a few named regions (#402).
     """
     pools: dict[tuple, list[_CatalogCharge]] = defaultdict(list)
     for charge in charges:
         pools[charge.pool].append(charge)
 
-    pool_costs = _price_account_wide_pools(catalog, pools)
-    pool_costs.update(_price_shared_allowance_pools(catalog, pools))
-    pool_costs.update(_price_global_pools(catalog, pools))
-    pool_costs.update(_price_region_group_pools(catalog, pools))
-    pool_costs.update(_price_free_region_pools(catalog, pools))
+    pool_costs = _price_billing_scopes(catalog, pools)
 
     deltas: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
     for key, members in pools.items():
@@ -611,195 +604,139 @@ def _price_pooled_charges(catalog: PricingCatalog,
     return deltas
 
 
-def _price_account_wide_pools(catalog: PricingCatalog,
-                              pools: dict[tuple, list[_CatalogCharge]]
-                              ) -> dict[tuple, float]:
-    """Share each account-wide free allowance across regions (#336).
+def _price_billing_scopes(catalog: PricingCatalog,
+                          pools: dict[tuple, list[_CatalogCharge]]
+                          ) -> dict[tuple, float]:
+    """Price each billing scope's pools once, by the scope's own rule.
 
-    Some providers give a free allowance once to the account, across all
-    regions. For each such metric used in more than one region, this applies
-    the allowance once to the total quantity and gives each region a part of
-    it in proportion to the region's quantity. Each region pays its own rate
-    for the rest. Returns the monthly cost of each regional pool it priced.
-    The pricing layer says which metrics are account-wide.
+    The pricing layer's ``billing_scope`` says which pools share one bill,
+    what the group's allowance is, and which rows price the group's total,
+    so the precedence between the rules is the order it checks them in
+    rather than the order this calls them. Pools the tables do not name
+    keep their own price, as does a scope with fewer than two members,
+    except an allowance shared across metrics, which states its own
+    quantity and so prices a single metric too (#338). Returns the monthly
+    cost of each pool it priced.
     """
-    accounts: dict[tuple, list[tuple]] = defaultdict(list)
-    for key, members in pools.items():
-        provider, service, _, metric, scaling = key
-        if shared_free_allowance(provider, service, metric) is not None:
-            continue  # _price_shared_allowance_pools prices it (#338).
-        if is_global_metric(provider, service, metric):
-            continue  # _price_global_pools prices it (#378).
-        if (free_tier_scope(provider, service, metric) == ACCOUNT
-                and sum(c.quantity for c in members) > 0):
-            accounts[(provider, service, metric, scaling)].append(key)
-
-    costs: dict[tuple, float] = {}
-    for keys in accounts.values():
-        if len(keys) >= 2:
-            costs.update(_share_free_allowance(catalog, pools, keys))
-    return costs
-
-
-def _price_free_region_pools(catalog: PricingCatalog,
-                             pools: dict[tuple, list[_CatalogCharge]]
-                             ) -> dict[tuple, float]:
-    """Share a free allowance across the few regions it covers (#402).
-
-    Cloud Storage gives its Always Free quotas to the use in three US
-    regions together: "Usage is aggregated across these 3 regions"
-    (https://cloud.google.com/storage/pricing). For each such metric used
-    in more than one of those regions, this applies the allowance once to
-    their total and gives each region a part of it in proportion to its
-    quantity. Each region pays its own rate for the rest. Pools in other
-    regions keep their own price, as their rows state no free tier. A
-    metric whose regions share a meter or SKU is left to
-    ``_price_region_group_pools``. Returns the monthly cost of each
-    regional pool it priced.
-    """
-    groups: dict[tuple, list[tuple]] = defaultdict(list)
+    scopes: dict[BillingScope, list[tuple]] = defaultdict(list)
     for key, members in pools.items():
         provider, service, region, metric, scaling = key
-        free_regions = FREE_ALLOWANCE_REGIONS.get((provider, service, metric))
-        if (free_regions is not None and region in free_regions
-                and price_pool(provider, service, metric, region) is None
-                and sum(c.quantity for c in members) > 0):
-            groups[(provider, service, metric, scaling)].append(key)
+        if sum(c.quantity for c in members) <= 0:
+            continue
+        scopes[billing_scope(provider, service, metric, region, scaling)
+               ].append(key)
 
     costs: dict[tuple, float] = {}
-    for keys in groups.values():
-        if len(keys) >= 2:
-            costs.update(_share_free_allowance(catalog, pools, keys))
+    for scope, keys in scopes.items():
+        if scope.kind == BILLING_REGION:
+            continue  # No shared bill: each pool prices from its own rows.
+        if len(keys) < 2 and scope.kind != BILLING_SHARED:
+            continue
+        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
+        if scope.kind == BILLING_SHARED:
+            costs.update(_price_allowance_group(
+                catalog, pools, keys, quantities, scope.allowance))
+        elif scope.kind in (BILLING_GLOBAL, BILLING_POOL) and not scope.free_regions:
+            costs.update(_price_bill_group(catalog, pools, keys, quantities, scope))
+        elif scope.kind == BILLING_POOL:
+            costs.update(_price_partly_free_group(catalog, pools, keys,
+                                                  quantities, scope.free_regions))
+        else:
+            costs.update(_price_allowance_group(
+                catalog, pools, keys, quantities, _rows_allowance(catalog, pools,
+                                                                 keys, quantities)))
     return costs
 
 
-def _share_free_allowance(catalog: PricingCatalog,
-                          pools: dict[tuple, list[_CatalogCharge]],
-                          keys: list[tuple]) -> dict[tuple, float]:
-    """Apply one free allowance to the total of several regional pools.
+def _rows_allowance(catalog: PricingCatalog,
+                    pools: dict[tuple, list[_CatalogCharge]],
+                    keys: list[tuple], quantities: dict[tuple, float]
+                    ) -> Optional[float]:
+    """The free allowance a group's rows state, or ``None`` if one is missing.
+
+    The rows of one region state the allowance as a leading run of $0
+    tiers (#336, #402). Regions normally state the same one, so where they
+    differ the smallest is used, that the account never gets more than any
+    region states. A region with no rows leaves the group unpriced: there is
+    no rate to charge the paid quantity at.
+    """
+    results = [
+        _query_month(catalog, pools[k][0].parameters,
+                     k[0], k[1], k[2], k[3], quantities[k])
+        for k in keys
+    ]
+    if any(r is None for r in results):
+        return None
+    return min(r.free_allowance for r in results)
+
+
+def _query_month(catalog: PricingCatalog, parameters: dict, vendor, service,
+                 region, metric: str, quantity: float):
+    """Price a whole month of use of one metric in one region."""
+    return catalog.query(vendor, service, region, metric, quantity,
+                         parameters=parameters,
+                         period_seconds=SECONDS_PER_MONTH)
+
+
+def _price_allowance_group(catalog: PricingCatalog,
+                           pools: dict[tuple, list[_CatalogCharge]],
+                           keys: list[tuple], quantities: dict[tuple, float],
+                           allowance: Optional[float]) -> dict[tuple, float]:
+    """Apply one free allowance to the total of a group's pools.
 
     Each pool gets a part of the allowance in proportion to its quantity
     and pays its own region's rate for the rest, priced from the first paid
     tier. Returns the monthly cost of each pool, or nothing when a region
-    has no rows.
+    has no rows or the allowance is unknown.
     """
-    quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
-    total = sum(quantities.values())
-    results = {
-        k: catalog.query(k[0], k[1], k[2], k[3], quantities[k],
-                         parameters=pools[k][0].parameters,
-                         period_seconds=SECONDS_PER_MONTH)
-        for k in keys
-    }
-    if any(r is None for r in results.values()):
+    if allowance is None:
         return {}
-    # Regions normally state the same allowance. When they differ, use the
-    # smallest so the account never gets more than any region states.
-    allowance = min(r.free_allowance for r in results.values())
+    total = sum(quantities.values())
     free_fraction = min(1.0, allowance / total)
-    return {
-        k: catalog.query(
+    costs = {}
+    for k in keys:
+        result = catalog.query(
             k[0], k[1], k[2], k[3], quantities[k] * (1.0 - free_fraction),
             parameters=pools[k][0].parameters,
             include_free_tier=False,
-            period_seconds=SECONDS_PER_MONTH).total_cost
-        for k in keys
-    }
+            period_seconds=SECONDS_PER_MONTH)
+        if result is not None:
+            costs[k] = result.total_cost
+    return costs
 
 
-def _price_global_pools(catalog: PricingCatalog,
-                        pools: dict[tuple, list[_CatalogCharge]]
-                        ) -> dict[tuple, float]:
-    """Price each global metric once across all regions (#378).
+def _price_bill_group(catalog: PricingCatalog,
+                      pools: dict[tuple, list[_CatalogCharge]],
+                      keys: list[tuple], quantities: dict[tuple, float],
+                      scope: BillingScope) -> dict[tuple, float]:
+    """Price a group's total once and give each pool a part by quantity.
 
-    A global service, such as Route 53, bills the account's use in every
-    region together at one price. For each such metric used in more than one
-    region, this prices the total quantity once and gives each regional pool
-    a part of the cost in proportion to its quantity. The rows stored under
-    ``GLOBAL_PRICE_REGIONS`` price the total, or else the rows of the pool's
+    A global service (#378) or a meter or SKU (#389) counts its tiers on
+    the whole group's total, at one price. The rows of the scope's
+    ``price_regions`` price that total, or else the rows of the pool's
     region that comes first in alphabetical order and has some, so the
     choice doesn't depend on node order. Returns the monthly cost of each
-    regional pool it priced. The pricing layer says which metrics are global.
+    pool, or nothing when no region has rows.
     """
-    accounts: dict[tuple, list[tuple]] = defaultdict(list)
-    for key, members in pools.items():
-        provider, service, _, metric, scaling = key
-        if (is_global_metric(provider, service, metric)
-                and sum(c.quantity for c in members) > 0):
-            accounts[(provider, service, metric, scaling)].append(key)
-
-    costs: dict[tuple, float] = {}
-    for (provider, service, metric, _), keys in accounts.items():
-        if len(keys) < 2:
-            continue
-        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
-        total = sum(quantities.values())
-        regions = list(GLOBAL_PRICE_REGIONS) + sorted(k[2] for k in keys)
-        result = None
-        for region in regions:
-            result = catalog.query(provider, service, region, metric, total,
-                                   parameters=pools[keys[0]][0].parameters,
-                                   period_seconds=SECONDS_PER_MONTH)
-            if result is not None:
-                break
-        if result is None:
-            continue
-        for k in keys:
-            costs[k] = result.total_cost * quantities[k] / total
-    return costs
-
-
-def _price_region_group_pools(catalog: PricingCatalog,
-                              pools: dict[tuple, list[_CatalogCharge]]
-                              ) -> dict[tuple, float]:
-    """Price each group of regions that share a meter or SKU once (#389).
-
-    Azure bills internet egress on one meter for each zone, and GCP bills
-    Cloud Run egress on one SKU for each continent. Each counts its tiers
-    on the group's total. For each group with pools in more than one
-    region, this prices the total quantity once and gives each regional
-    pool a part of the cost in proportion to its quantity. The rows of the
-    group's region that comes first in alphabetical order and has some
-    price the total, so the choice doesn't depend on node order. Returns
-    the monthly cost of each regional pool it priced. The pricing layer
-    says which regions share a group.
-    """
-    groups: dict[tuple, list[tuple]] = defaultdict(list)
-    for key, members in pools.items():
-        provider, service, region, metric, scaling = key
-        group = price_pool(provider, service, metric, region)
-        if group is not None and sum(c.quantity for c in members) > 0:
-            groups[(provider, service, metric, scaling, group)].append(key)
-
-    costs: dict[tuple, float] = {}
-    for (provider, service, metric, _, _), keys in groups.items():
-        if len(keys) < 2:
-            continue
-        free_regions = FREE_ALLOWANCE_REGIONS.get((provider, service, metric))
-        if free_regions is not None:
-            costs.update(_price_partly_free_group(catalog, pools, keys, free_regions))
-            continue
-        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
-        total = sum(quantities.values())
-        result = None
-        for region in sorted(k[2] for k in keys):
-            result = catalog.query(provider, service, region, metric, total,
-                                   parameters=pools[keys[0]][0].parameters,
-                                   period_seconds=SECONDS_PER_MONTH)
-            if result is not None:
-                break
-        if result is None:
-            continue
-        for k in keys:
-            costs[k] = result.total_cost * quantities[k] / total
-    return costs
+    provider, service, _, metric, _ = keys[0]
+    parameters = pools[keys[0]][0].parameters
+    total = sum(quantities.values())
+    result = None
+    for region in (*scope.price_regions, *sorted(k[2] for k in keys)):
+        result = _query_month(catalog, parameters, provider, service,
+                              region, metric, total)
+        if result is not None:
+            break
+    if result is None:
+        return {}
+    return {k: result.total_cost * quantities[k] / total for k in keys}
 
 
 def _price_partly_free_group(catalog: PricingCatalog,
                              pools: dict[tuple, list[_CatalogCharge]],
-                             keys: list[tuple], free_regions: tuple[str, ...]
-                             ) -> dict[tuple, float]:
-    """Price a group whose free allowance covers some regions only (#404).
+                             keys: list[tuple], quantities: dict[tuple, float],
+                             free_regions: tuple[str, ...]) -> dict[tuple, float]:
+    """Price a meter group whose free allowance covers some regions (#404).
 
     Cloud Storage bills egress from every region on one SKU, but gives its
     free 100 GiB to the use in three US regions only. The rows of those
@@ -810,18 +747,17 @@ def _price_partly_free_group(catalog: PricingCatalog,
     the rest of the allowance is paid at the first paid price. The cost is
     split by each pool's paid quantity, and a free region's pool gets a
     part of the free use in proportion to its quantity. Returns the monthly
-    cost of each regional pool, or nothing when no region has rows.
+    cost of each pool, or nothing when no region has rows.
     """
     provider, service, _, metric, _ = keys[0]
-    quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
+    parameters = pools[keys[0]][0].parameters
     total = sum(quantities.values())
     free_keys = [k for k in keys if k[2] in free_regions]
     result = None
     for region in (sorted(k[2] for k in free_keys)
                    + sorted(k[2] for k in keys if k not in free_keys)):
-        result = catalog.query(provider, service, region, metric, total,
-                               parameters=pools[keys[0]][0].parameters,
-                               period_seconds=SECONDS_PER_MONTH)
+        result = _query_month(catalog, parameters, provider, service,
+                              region, metric, total)
         if result is not None:
             break
     if result is None:
@@ -841,43 +777,6 @@ def _price_partly_free_group(catalog: PricingCatalog,
     paid_total = sum(paid.values())
     return {k: cost * paid[k] / paid_total if paid_total > 0 else 0.0
             for k in keys}
-
-
-def _price_shared_allowance_pools(catalog: PricingCatalog,
-                                  pools: dict[tuple, list[_CatalogCharge]]
-                                  ) -> dict[tuple, float]:
-    """Share one free allowance across several metrics (#338).
-
-    Some providers give one free allowance to several metrics of a service,
-    such as SQS standard and FIFO requests. For each such group, this
-    applies the allowance once to the total quantity of all its metrics in
-    all regions, and gives each pool a part of it in proportion to the
-    pool's quantity. Each pool pays its own metric's rate, in its own
-    region, for the rest, priced from the first paid tier. The allowance
-    comes from the pricing layer's table, which overrides the free tiers of
-    the metrics' rows. Returns the monthly cost of each pool it priced.
-    """
-    groups: dict[SharedFreeAllowance, list[tuple]] = defaultdict(list)
-    for key, members in pools.items():
-        provider, service, _, metric, _ = key
-        group = shared_free_allowance(provider, service, metric)
-        if group is not None and sum(c.quantity for c in members) > 0:
-            groups[group].append(key)
-
-    costs: dict[tuple, float] = {}
-    for group, keys in groups.items():
-        quantities = {k: sum(c.quantity for c in pools[k]) for k in keys}
-        free_fraction = min(1.0, group.allowance / sum(quantities.values()))
-        for k in keys:
-            paid = quantities[k] * (1.0 - free_fraction)
-            result = catalog.query(
-                k[0], k[1], k[2], k[3], paid,
-                parameters=pools[k][0].parameters,
-                include_free_tier=False,
-                period_seconds=SECONDS_PER_MONTH)
-            if result is not None:
-                costs[k] = result.total_cost
-    return costs
 
 
 @dataclass
