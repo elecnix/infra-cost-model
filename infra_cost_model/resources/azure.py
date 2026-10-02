@@ -1387,14 +1387,15 @@ _BLOB_UNPRICED = {("Archive", "ZRS"), ("Archive", "GZRS"), ("Archive", "RA-GZRS"
 # `Hot RA-GZRS` and `Cool RA-GZRS`). Those writes are not billed separately,
 # so the handler does not price them and does not warn that it cannot.
 _BLOB_NO_WRITE_METER = {("Hot", "RA-GZRS"), ("Cool", "RA-GZRS")}
-# The days a blob stays in a tier before deleting it costs: Azure charges a
-# Cool blob deleted under 30 days, a Cold one under 90 and an Archive one
-# under 180 (https://azure.microsoft.com/en-us/pricing/details/storage/blobs/).
-# It publishes one early-deletion meter per SKU, priced at the tier's storage
-# price for the whole window, and no meter per number of days, so
-# `earlyDeleteGb` counts the GB deleted before the window and no setting
-# selects another row.
-_BLOB_MINIMUM_RETENTION_DAYS = {"Cool": 30, "Cold": 90, "Archive": 180}
+# The tiers that bill data retrieval, with the days a blob stays in one
+# before deleting it costs: a Cool blob deleted under 30 days, a Cold one
+# under 90 and an Archive one under 180
+# (https://azure.microsoft.com/en-us/pricing/details/storage/blobs/). Azure
+# publishes one early-deletion meter per SKU, at the tier's storage price
+# for the whole window, and no meter per number of days, so `earlyDeleteGb`
+# counts the GB deleted before the window and no setting selects another
+# row.
+_BLOB_COOL_TIERS = {"Cool": 30, "Cold": 90, "Archive": 180}
 # The access tier and redundancy that publish an early-deletion meter. Azure
 # gives each one a meter at the tier's storage price for the whole window,
 # and none to the two zone-redundant Cool SKUs. The general-purpose v1
@@ -1422,14 +1423,14 @@ def blob_product(config: dict) -> tuple[str, str]:
 
 
 def blob_account_kind(config: dict) -> Optional[str]:
-    """The infix a storage account's kind gives its metrics, or ``None``.
+    """The kind of a storage account, or ``None`` for a kind with no rows.
 
-    Gives the general-purpose v2 one, the default of
-    ``azurerm_storage_account``, for an unset kind, and ``None`` for a kind
-    with no catalog rows.
+    Gives `storagev2`, the default of ``azurerm_storage_account``, for an
+    unset kind.
     """
-    kind = _text(config.get("accountKind")) or "StorageV2"
-    return _BLOB_KINDS.get(kind.lower().replace("-", "").replace("_", ""))
+    kind = (_text(config.get("accountKind")) or "StorageV2").lower()
+    kind = kind.replace("-", "").replace("_", "")
+    return kind if kind in _BLOB_KINDS else None
 
 
 def blob_metric_prefix(config: dict) -> Optional[str]:
@@ -1448,7 +1449,7 @@ def blob_metric_prefix(config: dict) -> Optional[str]:
     kind = blob_account_kind(config) if account_tier == "standard" else None
     if kind is None or (tier, replication) in _BLOB_UNPRICED:
         return None
-    return f"Blob-{kind}{tier}-{replication.replace('-', '')}"
+    return f"Blob-{_BLOB_KINDS[kind]}{tier}-{replication.replace('-', '')}"
 
 
 def blob_pricing_warning(address: str, config: dict) -> Optional[str]:
@@ -1494,7 +1495,7 @@ class AzureBlobStorage(StorageResource):
         tier, replication = blob_product(config)
         account_tier = (_text(config.get("accountTier")) or "Standard").lower()
         if (tier, replication) == ("Hot", "LRS") and account_tier == "standard" \
-                and blob_account_kind(config) == "":
+                and blob_account_kind(config) == "storagev2":
             return self.catalog_metrics
         prefix = blob_metric_prefix(config)
         unpriced = prefix is None
@@ -1511,10 +1512,10 @@ class AzureBlobStorage(StorageResource):
                    "dataOutGb": _EGRESS_METRIC}
         if (tier, replication) not in _BLOB_NO_WRITE_METER:
             metrics["writeRequests"] = f"{prefix}-Write-Operation"
-        if not unpriced and tier in _BLOB_MINIMUM_RETENTION_DAYS:
+        if not unpriced and tier in _BLOB_COOL_TIERS:
             metrics["dataRetrievalGb"] = f"{prefix}-Retrieval-GB"
             early_delete = _BLOB_EARLY_DELETE
-            if blob_account_kind(config) == "Storage-":
+            if blob_account_kind(config) == "storage":
                 early_delete = {(t, r) for t, r in early_delete
                                 if t in _BLOB_V1_EARLY_DELETE_TIERS}
             if (tier, replication) in early_delete:
