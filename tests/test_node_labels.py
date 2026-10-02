@@ -232,7 +232,7 @@ def test_compute_several_exclude_labels_combine(model_file, capsys):
 # --- analyze ---
 
 def test_analyze_group_by_prints_the_subtotals(model_file, capsys):
-    assert main(["analyze", str(model_file), "--group-by", "category"]) == 0
+    assert main(["analyze", str(model_file), "--no-catalog", "--group-by", "category"]) == 0
     out = capsys.readouterr().out
     assert "category=platform: $100.000000" in out
     assert "Total Monthly Cost: $176.000000" in out
@@ -241,7 +241,7 @@ def test_analyze_group_by_prints_the_subtotals(model_file, capsys):
 def test_analyze_json_reports_the_groups(model_file, capsys):
     import json
 
-    assert main(["analyze", str(model_file), "--json", "--group-by", "category"]) == 0
+    assert main(["analyze", str(model_file), "--no-catalog", "--json", "--group-by", "category"]) == 0
     output = json.loads(capsys.readouterr().out)
     groups = {entry["label"]: entry for entry in output["groups"]}
     assert groups["platform"]["subtotal"] == 100.0
@@ -252,7 +252,7 @@ def test_analyze_json_reports_the_groups(model_file, capsys):
 def test_analyze_json_reports_the_excluded_nodes(model_file, capsys):
     import json
 
-    assert main(["analyze", str(model_file), "--json", "--exclude-label", "category=llm"]) == 0
+    assert main(["analyze", str(model_file), "--no-catalog", "--json", "--exclude-label", "category=llm"]) == 0
     output = json.loads(capsys.readouterr().out)
     assert "llm" not in output["costs"]
     assert output["excluded_nodes"] == [{"node": "llm", "cost": 21.0}]
@@ -262,7 +262,7 @@ def test_analyze_json_reports_the_excluded_nodes(model_file, capsys):
 def test_analyze_json_omits_the_groups_without_the_flag(model_file, capsys):
     import json
 
-    assert main(["analyze", str(model_file), "--json"]) == 0
+    assert main(["analyze", str(model_file), "--no-catalog", "--json"]) == 0
     output = json.loads(capsys.readouterr().out)
     assert "groups" not in output
     assert "excluded_nodes" not in output
