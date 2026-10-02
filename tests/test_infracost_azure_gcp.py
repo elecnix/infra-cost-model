@@ -23,6 +23,7 @@ from infra_cost_model.engine.engine import UnpricedMetricWarning
 from infra_cost_model.pricing.cache import PricingCache
 from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.pricing.sources import infracost as ic
+from infra_cost_model.resources.registry import ResourceRegistry
 from infra_cost_model.resources.azure import (
     APIManagement, AzureBlobStorage, AzureFunction, CosmosDB,
 )
@@ -582,6 +583,60 @@ _SERVICE = {
     AzureBlobStorage: "BlobStorage", CloudFunction: "CloudFunctions",
     CloudStorage: "CloudStorage", CloudRun: "CloudRun", Firestore: "Firestore",
 }
+
+# Every registered handler, not a hand-picked Azure+GCP list: a handler that
+# names a catalog metric the table cannot price is a gap a live sync silently
+# cannot fill, and a list written by hand stops noticing new handlers.
+REGISTRY_HANDLERS = [h for provider in ("aws", "azure", "gcp")
+                     for h in ResourceRegistry.handlers_by_provider(provider)]
+
+
+def _handler_vendor(handler) -> str:
+    """The cloud a handler prices in; AWS handlers live outside resources.azure/gcp."""
+    if handler.__module__.endswith("azure"):
+        return "azure"
+    return "gcp" if handler.__module__.endswith("gcp") else "aws"
+
+
+# Metrics a handler names that METRIC_DESCRIPTORS does not hold. A live sync
+# stores no rows for these, so the engine reads them as a $0 price. Listed
+# rather than left implicit, so the day one is priced this test says so.
+KNOWN_DESCRIPTOR_GAPS = {
+    "BedrockModel": {"Bedrock-Cached-Input-Token", "Bedrock-Input-Token",
+                     "Bedrock-Output-Token"},
+    "SecretsManagerSecret": {"SecretsManager-API-Call"},
+}
+
+
+def _descriptor_gaps() -> dict:
+    gaps = {}
+    for handler in REGISTRY_HANDLERS:
+        missing = {n for n in _handler_catalog_metrics(handler)
+                   if n not in ic.METRIC_DESCRIPTORS}
+        if missing:
+            gaps[handler.__name__] = missing
+    return gaps
+
+
+@pytest.mark.parametrize("handler", REGISTRY_HANDLERS, ids=lambda h: h.__name__)
+def test_every_handler_catalog_metric_is_described_and_stored_under_its_service(handler):
+    """Each handler's metrics have a descriptor, in the handler's cloud, stored
+    under the service the engine queries for them."""
+    vendor = _handler_vendor(handler)
+    names = _handler_catalog_metrics(handler)
+    for name in names - KNOWN_DESCRIPTOR_GAPS.get(handler.__name__, set()):
+        d = ic.METRIC_DESCRIPTORS[name]
+        assert d.get("vendor", "aws") == vendor, f"{name} in {handler.__name__}"
+        # A handler names another service when the provider bills the metric
+        # under it, as Azure bills egress as Bandwidth (#372).
+        declared = handler().catalog_services.get(name)
+        if declared is not None:
+            assert (d.get("store_service") or d["service"]) == declared, f"{name}"
+
+
+def test_the_metrics_without_a_descriptor_are_exactly_the_known_ones():
+    """A new gap fails here; pricing a listed one means deleting it from the list."""
+    assert _descriptor_gaps() == KNOWN_DESCRIPTOR_GAPS
 
 
 def _handler_catalog_metrics(handler):
