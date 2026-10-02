@@ -206,6 +206,9 @@ class ResourceRegistry:
             Extracted resource dict or None if unsupported.
         """
         handler = cls.from_address(resource_address)
+        if not handler and source_format == "pulumi":
+            # A Pulumi `id` names no resource type; the URN carries it (#396).
+            handler = cls.from_address(resource_data.get("urn", ""))
         if not handler:
             return None
 
