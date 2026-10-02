@@ -69,12 +69,16 @@ def test_bucket_and_function_are_extracted():
     assert bucket["nodeType"] == "storage"
     assert bucket["service"] == "CloudStorage"
     assert bucket["region"] == "us-central1"
+    assert bucket["resourceAddress"] == (
+        "urn:pulumi:prod::shop::gcp:storage/bucket:Bucket::assets")
     assert bucket["config"] == {"location": "US-CENTRAL1", "storageClass": "STANDARD"}
 
     function = nodes["projects/shop/locations/us-central1/functions/api"]
     assert function["nodeType"] == "compute"
     assert function["service"] == "CloudFunctions"
     assert function["region"] == "us-central1"
+    assert function["resourceAddress"] == (
+        "urn:pulumi:prod::shop::gcp:cloudfunctions/function:Function::api")
     assert function["config"] == {"memoryMb": 256, "timeout": 60, "runtime": "python311"}
 
 
@@ -101,6 +105,22 @@ def test_function_derives_its_catalog_quantities():
 def test_an_unknown_gcp_type_is_reported_as_unsupported():
     with pytest.warns(UserWarning, match=r"projects/shop/zones/us-central1-a/instances/vm"):
         extract_resources_from_pulumi(STACK)
+
+
+def test_an_empty_urn_still_addresses_the_node_by_its_id():
+    """An empty URN names no type, so the id is the address left."""
+    stack = {"deployment": {"resources": [
+        {"urn": "", "id": "google:storage:Bucket:assets",
+         "inputs": {"location": "US-CENTRAL1"}}]}}
+    node = extract(stack)["google:storage:Bucket:assets"]
+    assert node["resourceAddress"] == "google:storage:Bucket:assets"
+    assert ResourceRegistry.from_address(node["resourceAddress"]) is CloudStorage
+
+
+def test_an_empty_urn_and_a_type_less_id_are_reported_as_unsupported():
+    stack = {"deployment": {"resources": [{"urn": "", "id": "assets-bucket-93a1f2"}]}}
+    with pytest.warns(UserWarning, match=r"assets-bucket-93a1f2"):
+        assert extract_resources_from_pulumi(stack) == {}
 
 
 # (handler, Pulumi type token, a Terraform and a CDK address)
@@ -134,6 +154,22 @@ def test_a_handler_does_not_match_another_gcp_type(handler, token, tf_address, c
     other = next(t[1] for t in TYPES if t[1] != token)
     assert handler.from_address(f"urn:pulumi:prod::shop::{other}::name") is None
     assert not matches_gcp_type(f"urn:pulumi:prod::shop::{other}::name", handler)
+
+
+@pytest.mark.parametrize("token,handler,other_generation", [
+    ("gcp:cloudfunctions/function:Function", CloudFunction, CloudFunctionGen2),
+    ("gcp:cloudfunctionsv2/function:Function", CloudFunctionGen2, CloudFunction),
+])
+def test_the_registry_prices_a_function_at_its_own_generation(
+        token, handler, other_generation):
+    """Neither generation may claim the other's URN.
+
+    A 1st gen function matched by `CloudFunctionGen2` bills at Cloud Run rates,
+    and a 2nd gen one matched by `CloudFunction` loses its generation.
+    """
+    urn = f"urn:pulumi:prod::shop::{token}::api"
+    assert ResourceRegistry.from_address(urn) is handler
+    assert ResourceRegistry.from_address(urn) is not other_generation
 
 
 def test_the_id_alone_names_no_type():
