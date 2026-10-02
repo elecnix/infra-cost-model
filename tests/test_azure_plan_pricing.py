@@ -15,7 +15,9 @@ from infra_cost_model.engine.engine import CostEngine
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
 from infra_cost_model.pricing.free_tiers import ACCOUNT, free_tier_scope
 from infra_cost_model.pricing.sources import infracost as ic
-from infra_cost_model.resources.azure import AppServicePlan, AzureFunction
+from infra_cost_model.resources.azure import (
+    _DEDICATED_SKUS, _dedicated_sku_priced, AppServicePlan, AzureFunction,
+)
 from infra_cost_model.resources.registry import (
     ResourceRegistry, extract_resources_from_arm, extract_resources_from_pulumi,
     extract_resources_from_tf,
@@ -136,17 +138,45 @@ def test_the_other_sku_families_bill_their_instance_hour(sku, os, metric):
     assert metric in seeded("AppService")
 
 
+def plan_resource(sku, os):
+    """A Terraform App Service plan of ``sku`` on ``os``."""
+    return {"address": "azurerm_service_plan.plan", "type": "azurerm_service_plan",
+            "values": {"location": REGION, "sku_name": sku, "os_type": os}}
+
+
 @pytest.mark.parametrize("sku,os", [
     ("P1", "Linux"),        # the classic Premium plans are Windows-only
     ("PC2", "Windows"),     # the container plans run Windows containers
     ("I1v4", "WindowsContainer"),
 ])
 def test_a_sku_with_no_rows_on_that_os_warns(sku, os):
-    resource = {"address": "azurerm_service_plan.plan", "type": "azurerm_app_service_plan",
-                "values": {"location": REGION, "os_type": os,
-                           "sku": [{"name": sku, "tier": "Premium", "capacity": 1}]}}
     with pytest.warns(UserWarning, match=r"azurerm_service_plan.plan.*no catalog rows"):
-        extract_resources_from_tf({"resource": [resource]})
+        extract_resources_from_tf({"resource": [plan_resource(sku, os)]})
+
+
+@pytest.mark.parametrize("sku,os,hourly", [
+    ("P1", "Windows", 0.30), ("P2", "Windows", 0.60),
+    ("P3", "Windows", 1.20), ("P4", "Windows", 2.40),
+    ("B1", "Linux", 0.017), ("S1", "Windows", 0.10),
+])
+def test_a_plan_with_rows_extracts_and_prices_without_warning(sku, os, hourly, seed_catalog):
+    address = "azurerm_service_plan.plan"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        node = extract_resources_from_tf({"resource": [plan_resource(sku, os)]})[address]
+    node["usageMetrics"] = {"instanceHours": {"unit": "hours", "value": 730, "fixed": True}}
+    costs, engine = compute({address: node}, seed_catalog, address)
+    assert costs[address] == pytest.approx(730 * hourly)
+    assert engine.unpriced_metrics == []
+
+
+def test_a_plan_warns_exactly_where_its_metric_has_no_rows():
+    """The handler's OS table agrees with the metric names in the seed (#407)."""
+    rows = seeded("AppService")
+    for sku in sorted(_DEDICATED_SKUS.values()):
+        for os_name in ("Linux", "Windows", "WindowsContainer"):
+            metric = f"AppService-{os_name}-{sku}-Instance-Hour"
+            assert _dedicated_sku_priced(sku, os_name) == (metric in rows), metric
 
 
 def test_unknown_sku_warns():

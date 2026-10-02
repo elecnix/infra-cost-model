@@ -1699,13 +1699,18 @@ def _plan_sku(sku: Any) -> Optional[str]:
 
 
 def _dedicated_sku_priced(sku: Any, os_name: str) -> bool:
-    """Whether the dedicated plan SKU ``sku`` has rows on ``os_name`` (#407)."""
+    """Whether the metric of the dedicated plan ``sku`` on ``os_name`` has rows (#407).
+
+    Each SKU family has rows for the operating systems Azure sells it on: Linux
+    and Windows for most, Windows alone for the classic Premium plans, and
+    Windows containers for the Premium container (Xenon) plans.
+    """
     name = (sku or "").lower()
-    if name not in _DEDICATED_SKUS:
-        return False
     if name in _WINDOWS_CONTAINER_SKUS:
         return os_name == "WindowsContainer"
-    return os_name in ("Linux", "Windows") and name not in _WINDOWS_ONLY_SKUS
+    if name in _WINDOWS_ONLY_SKUS:
+        return os_name == "Windows"
+    return name in _DEDICATED_SKUS and os_name in ("Linux", "Windows")
 
 
 def _plan_os(value: Any, reserved: Any = None) -> str:
