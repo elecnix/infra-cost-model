@@ -12,6 +12,12 @@ class DynamoDBTable(StorageResource):
     def valid_metrics(self) -> list[str]:
         return ["readRequests", "writeRequests", "storageGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"readRequests": "Dynamo-ReadRequest",
+                "writeRequests": "Dynamo-WriteRequest",
+                "storageGb": "Dynamo-Storage"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> StorageResource | None:
         """Parse resource address to determine if it's a DynamoDB table."""

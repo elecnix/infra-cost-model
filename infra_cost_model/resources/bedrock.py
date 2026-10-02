@@ -15,7 +15,8 @@ class BedrockModel(ComputeResource):
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["invocations", "inputTokens", "outputTokens"]
+        return ["invocations", "inputTokens", "outputTokens",
+                "cachedReadTokens", "cacheWriteTokens"]
 
     @property
     def catalog_metrics(self) -> dict[str, str]:

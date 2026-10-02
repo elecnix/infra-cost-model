@@ -18,6 +18,20 @@ class RDSInstance(StorageResource):
     def valid_metrics(self) -> list[str]:
         return ["instanceHours", "storageGb", "backupStorageGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"instanceHours": "RDS-Instance-Hour-db.t3.micro",
+                "storageGb": "RDS-Storage-gp3",
+                "backupStorageGb": "RDS-Backup-Storage"}
+
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        """The instance class the resource settings select prices its own row."""
+        instance_class = (config or {}).get("instanceClass")
+        if not instance_class:
+            return self.catalog_metrics
+        return {**self.catalog_metrics,
+                "instanceHours": f"RDS-Instance-Hour-{instance_class}"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["RDSInstance"]:
         if (resource_address.startswith("aws_db_instance.") or

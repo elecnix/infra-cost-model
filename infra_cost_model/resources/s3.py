@@ -33,7 +33,11 @@ class S3Bucket(StorageResource):
     def catalog_metrics(self) -> dict[str, str]:
         # ``S3-DataTransfer`` is the name of the rows that #332 removed, so
         # models written against them keep a price.
-        return {"dataOutGb": _EGRESS_METRIC, "S3-DataTransfer": _EGRESS_METRIC}
+        return {"putRequests": "S3-PutRequest",
+                "getRequests": "S3-GetRequest",
+                "storageGb": "S3-Storage",
+                "dataOutGb": _EGRESS_METRIC,
+                "S3-DataTransfer": _EGRESS_METRIC}
 
     @property
     def catalog_services(self) -> dict[str, str]:

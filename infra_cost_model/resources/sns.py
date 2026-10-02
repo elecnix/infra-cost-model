@@ -17,6 +17,13 @@ class SNSTopic(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["publishes", "sqsDeliveries", "lambdaDeliveries", "httpDeliveries"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"publishes": "SNS-Publish",
+                "sqsDeliveries": "SNS-Delivery-SQS",
+                "lambdaDeliveries": "SNS-Delivery-Lambda",
+                "httpDeliveries": "SNS-Delivery-HTTP"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["SNSTopic"]:
         if (resource_address.startswith("aws_sns_topic.") or

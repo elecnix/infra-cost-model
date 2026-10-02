@@ -29,10 +29,10 @@ nodes:
     service: AmazonALB
     region: us-east-1
     usageMetrics:
-      ALB-Hour: { unit: hours, value: 730, fixed: true }   # always-on, $/month
+      albHours: { unit: hours, value: 730, fixed: true }   # always-on, $/month
       # One LCU-hour covers 25 new connections a second for an hour, or
       # 90,000 connections. One request opens one connection: 1/90,000.
-      ALB-LCU-NewConnections: { unit: LCU-hours, value: 0.0000111111 }
+      newConnections: { unit: LCU-hours, value: 0.0000111111 }
 
   aws_lambda_function.api:
     nodeType: compute
@@ -52,7 +52,7 @@ nodes:
     service: AmazonDynamoDB
     region: us-east-1
     usageMetrics:
-      Dynamo-ReadRequest: { unit: requests, value: 1 }
+      readRequests: { unit: requests, value: 1 }
 
   # NAT gateway: mixed — fixed gateway-hours plus usage-driven GB processed.
   # It DOES receive an edge (egress flows through it), and because only one of

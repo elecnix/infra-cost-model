@@ -21,7 +21,7 @@ nodes:
     region: us-east-1
     service: AmazonAPIGatewayHTTP
     usageMetrics:
-      APIGateway-HTTP-Request: { unit: requests, value: 1 }
+      requests: { unit: requests, value: 1 }
 
   # An HTTP API has no egress price of its own. AWS bills the response bytes
   # as data transfer out to the internet.
@@ -66,7 +66,7 @@ nodes:
     region: us-east-1
     service: AmazonS3
     usageMetrics:
-      S3-PutRequest: { unit: requests, value: 1 }
+      putRequests: { unit: requests, value: 1 }
 
   aws_lambda_function.processor:
     nodeType: compute
@@ -86,7 +86,7 @@ nodes:
     region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
-      Dynamo-WriteRequest: { unit: requests, value: 1 }
+      writeRequests: { unit: requests, value: 1 }
 
 edges:
   # Every response leaves AWS as data transfer out

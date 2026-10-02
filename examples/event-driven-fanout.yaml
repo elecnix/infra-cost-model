@@ -22,7 +22,7 @@ nodes:
     region: us-east-1
     service: AmazonAPIGatewayHTTP
     usageMetrics:
-      APIGateway-HTTP-Request: { unit: requests, value: 1 }
+      requests: { unit: requests, value: 1 }
 
   # An HTTP API has no egress price of its own. AWS bills the response bytes
   # as data transfer out to the internet.
@@ -53,7 +53,7 @@ nodes:
     region: us-east-1
     service: AmazonSNS
     usageMetrics:
-      SNS-Publish: { unit: requests, value: 1 }
+      publishes: { unit: requests, value: 1 }
 
   aws_sqs_queue.orders_queue:
     nodeType: routing
@@ -62,7 +62,7 @@ nodes:
     region: us-east-1
     service: AmazonSQS
     usageMetrics:
-      SQS-Standard-Request: { unit: requests, value: 1 }
+      messagesSent: { unit: requests, value: 1 }
 
   aws_sqs_queue.notifications_queue:
     nodeType: routing
@@ -71,7 +71,7 @@ nodes:
     region: us-east-1
     service: AmazonSQS
     usageMetrics:
-      SQS-Standard-Request: { unit: requests, value: 1 }
+      messagesSent: { unit: requests, value: 1 }
 
   aws_sqs_queue.analytics_queue:
     nodeType: routing
@@ -80,7 +80,7 @@ nodes:
     region: us-east-1
     service: AmazonSQS
     usageMetrics:
-      SQS-Standard-Request: { unit: requests, value: 1 }
+      messagesSent: { unit: requests, value: 1 }
 
   aws_lambda_function.order_processor:
     nodeType: compute
@@ -123,7 +123,7 @@ nodes:
     service: AmazonDynamoDB
     usageMetrics:
       # One write per call. The edge from order_processor carries rate 2.
-      Dynamo-WriteRequest: { unit: requests, value: 1 }
+      writeRequests: { unit: requests, value: 1 }
 
   aws_sns_topic.alerts:
     nodeType: routing
@@ -132,7 +132,7 @@ nodes:
     region: us-east-1
     service: AmazonSNS
     usageMetrics:
-      SNS-Publish: { unit: requests, value: 1 }
+      publishes: { unit: requests, value: 1 }
 
   aws_s3_bucket.data_lake:
     nodeType: storage
@@ -141,7 +141,7 @@ nodes:
     region: us-east-1
     service: AmazonS3
     usageMetrics:
-      S3-PutRequest: { unit: requests, value: 1 }
+      putRequests: { unit: requests, value: 1 }
 
 edges:
   # Every response leaves AWS as data transfer out
