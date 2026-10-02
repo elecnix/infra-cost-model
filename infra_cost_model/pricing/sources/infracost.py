@@ -1720,6 +1720,8 @@ METRIC_DESCRIPTORS.update({
 # `Hot ZRS Read Operations`. The SKU filter still selects one product.
 _SETTINGS_PRODUCTS = {
     "Blob": ("Storage", "BlobStorage", "General Block Blob v2"),
+    "Blob-Storage": ("Storage", "BlobStorage", "Blob Storage"),
+    "Blob-Premium": ("Storage", "BlobStorage", "Premium Block Blob"),
     "APIM": ("API Management", "APIManagement", "API Management"),
     "CosmosDB": ("Azure Cosmos DB", "CosmosDB", "Azure Cosmos DB"),
 }
@@ -1778,6 +1780,103 @@ _SETTINGS_METERS = {
     "Blob-Archive-RAGRS-GB-Month": ("Archive RA-GRS", "Archive RA-GRS Data Stored", "1 GB/Month"),
     "Blob-Archive-RAGRS-Read-Operation": ("Archive RA-GRS", "Archive Read Operations", "10K"),
     "Blob-Archive-RAGRS-Write-Operation": ("Archive RA-GRS", "Archive GRS Write Operations", "10K"),
+
+    # Data retrieval and early deletion of the cool tiers (#398). Azure gives
+    # each SKU one Early Delete meter, at the tier's storage price for the
+    # whole minimum-retention window; the retrieval meter is per GB read back
+    # from the tier. Azure publishes neither for the Hot tier, and no early
+    # deletion meter for the two zone-redundant Cool SKUs.
+    "Blob-Archive-GRS-Early-Delete-GB": ("Archive GRS", "Archive GRS Early Delete", "1 GB"),
+    "Blob-Archive-GRS-Retrieval-GB": ("Archive GRS", "Archive Data Retrieval", "1 GB"),
+    "Blob-Archive-LRS-Early-Delete-GB": ("Archive LRS", "Archive LRS Early Delete", "1 GB"),
+    "Blob-Archive-LRS-Retrieval-GB": ("Archive LRS", "Archive Data Retrieval", "1 GB"),
+    "Blob-Archive-RAGRS-Early-Delete-GB": ("Archive RA-GRS", "Archive RA-GRS Early Delete", "1 GB"),
+    "Blob-Archive-RAGRS-Retrieval-GB": ("Archive RA-GRS", "Archive Data Retrieval", "1 GB"),
+    "Blob-Cold-GRS-Early-Delete-GB": ("Cold GRS", "Cold GRS Early Delete", "1 GB"),
+    "Blob-Cold-GRS-Retrieval-GB": ("Cold GRS", "Cold GRS Data Retrieval", "1 GB"),
+    "Blob-Cold-GZRS-Early-Delete-GB": ("Cold GZRS", "Cold GZRS Early Delete", "1 GB"),
+    "Blob-Cold-GZRS-Retrieval-GB": ("Cold GZRS", "Cold GZRS Data Retrieval", "1 GB"),
+    "Blob-Cold-LRS-Early-Delete-GB": ("Cold LRS", "Cold LRS Early Delete", "1 GB"),
+    "Blob-Cold-LRS-Retrieval-GB": ("Cold LRS", "Cold LRS Data Retrieval", "1 GB"),
+    "Blob-Cold-RAGRS-Early-Delete-GB": ("Cold RA-GRS", "Cold RA-GRS Early Delete", "1 GB"),
+    "Blob-Cold-RAGRS-Retrieval-GB": ("Cold RA-GRS", "Cold RA-GRS Data Retrieval", "1 GB"),
+    "Blob-Cold-RAGZRS-Early-Delete-GB": ("Cold RA-GZRS", "Cold RA-GZRS Early Delete", "1 GB"),
+    "Blob-Cold-RAGZRS-Retrieval-GB": ("Cold RA-GZRS", "Cold RA-GZRS Data Retrieval", "1 GB"),
+    "Blob-Cold-ZRS-Early-Delete-GB": ("Cold ZRS", "Cold ZRS Early Delete", "1 GB"),
+    "Blob-Cold-ZRS-Retrieval-GB": ("Cold ZRS", "Cold ZRS Data Retrieval", "1 GB"),
+    "Blob-Cool-GRS-Early-Delete-GB": ("Cool GRS", "Cool GRS Early Delete", "1 GB"),
+    "Blob-Cool-GRS-Retrieval-GB": ("Cool GRS", "Cool Data Retrieval", "1 GB"),
+    "Blob-Cool-GZRS-Retrieval-GB": ("Cool GZRS", "Cool ZRS Data Retrieval", "1 GB"),
+    "Blob-Cool-LRS-Early-Delete-GB": ("Cool LRS", "Cool LRS Early Delete", "1 GB"),
+    "Blob-Cool-LRS-Retrieval-GB": ("Cool LRS", "Cool Data Retrieval", "1 GB"),
+    "Blob-Cool-RAGRS-Early-Delete-GB": ("Cool RA-GRS", "Cool RA-GRS Early Delete", "1 GB"),
+    "Blob-Cool-RAGRS-Retrieval-GB": ("Cool RA-GRS", "Cool Data Retrieval", "1 GB"),
+    "Blob-Cool-RAGZRS-GB-Month": ("Cool RA-GZRS", "Cool RA-GZRS Data Stored", "1 GB/Month"),
+    "Blob-Cool-RAGZRS-Read-Operation": ("Cool RA-GZRS", "Cool ZRS Read Operations", "10K"),
+    # Hot and Cool RA-GZRS have no write meter of their own, only these and,
+    # for Cool, the retrieval meter above (#398).
+    "Blob-Hot-RAGZRS-GB-Month": ("Hot RA-GZRS", "Hot RA-GZRS Data Stored", "1 GB/Month"),
+    "Blob-Hot-RAGZRS-Read-Operation": ("Hot RA-GZRS", "Hot ZRS Read Operations", "10K"),
+    "Blob-Cool-RAGZRS-Retrieval-GB": ("Cool RA-GZRS", "Cool ZRS Data Retrieval", "1 GB"),
+    "Blob-Cool-ZRS-Early-Delete-GB": ("Cool ZRS", "Cool ZRS Early Delete", "1 GB"),
+    "Blob-Cool-ZRS-Retrieval-GB": ("Cool ZRS", "Cool ZRS Data Retrieval", "1 GB"),
+    "Blob-Premium-LRS-GB-Month": ("Premium LRS", "Premium LRS Data Stored", "1 GB/Month"),
+    "Blob-Premium-LRS-Read-Operation": ("Premium LRS", "Premium LRS Read Operations", "10K"),
+    "Blob-Premium-LRS-Write-Operation": ("Premium LRS", "Premium LRS Write Operations", "10K"),
+    "Blob-Premium-ZRS-GB-Month": ("Premium ZRS", "Premium ZRS Data Stored", "1 GB/Month"),
+    "Blob-Premium-ZRS-Read-Operation": ("Premium ZRS", "Premium ZRS Read Operations", "10K"),
+    "Blob-Premium-ZRS-Write-Operation": ("Premium ZRS", "Premium ZRS Write Operations", "10K"),
+    "Blob-Storage-Archive-GRS-Early-Delete-GB": ("Archive GRS", "Archive GRS Early Delete", "1 GB"),
+    "Blob-Storage-Archive-GRS-GB-Month": ("Archive GRS", "Archive GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Archive-GRS-Read-Operation": ("Archive GRS", "Archive Read Operations", "10K"),
+    "Blob-Storage-Archive-GRS-Retrieval-GB": ("Archive GRS", "Archive Data Retrieval", "1 GB"),
+    "Blob-Storage-Archive-GRS-Write-Operation": ("Archive GRS", "Archive GRS Write Operations", "10K"),
+    "Blob-Storage-Archive-LRS-Early-Delete-GB": ("Archive LRS", "Archive LRS Early Delete", "1 GB"),
+    "Blob-Storage-Archive-LRS-GB-Month": ("Archive LRS", "Archive LRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Archive-LRS-Read-Operation": ("Archive LRS", "Archive Read Operations", "10K"),
+    "Blob-Storage-Archive-LRS-Retrieval-GB": ("Archive LRS", "Archive Data Retrieval", "1 GB"),
+    "Blob-Storage-Archive-LRS-Write-Operation": ("Archive LRS", "Archive LRS Write Operations", "10K"),
+    "Blob-Storage-Archive-RAGRS-Early-Delete-GB": ("Archive RA-GRS", "Archive RA-GRS Early Delete", "1 GB"),
+    "Blob-Storage-Archive-RAGRS-GB-Month": ("Archive RA-GRS", "Archive RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Archive-RAGRS-Read-Operation": ("Archive RA-GRS", "Archive Read Operations", "10K"),
+    "Blob-Storage-Archive-RAGRS-Retrieval-GB": ("Archive RA-GRS", "Archive Data Retrieval", "1 GB"),
+    "Blob-Storage-Archive-RAGRS-Write-Operation": ("Archive RA-GRS", "Archive GRS Write Operations", "10K"),
+    "Blob-Storage-Cold-GRS-Early-Delete-GB": ("Cold GRS", "Cold GRS Early Delete", "1 GB"),
+    "Blob-Storage-Cold-GRS-GB-Month": ("Cold GRS", "Cold GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Cold-GRS-Read-Operation": ("Cold GRS", "Cold GRS Read Operations", "10K"),
+    "Blob-Storage-Cold-GRS-Retrieval-GB": ("Cold GRS", "Cold GRS Data Retrieval", "1 GB"),
+    "Blob-Storage-Cold-GRS-Write-Operation": ("Cold GRS", "Cold GRS Write Operations", "10K"),
+    "Blob-Storage-Cold-LRS-Early-Delete-GB": ("Cold LRS", "Cold LRS Early Delete", "1 GB"),
+    "Blob-Storage-Cold-LRS-GB-Month": ("Cold LRS", "Cold LRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Cold-LRS-Read-Operation": ("Cold LRS", "Cold LRS Read Operations", "10K"),
+    "Blob-Storage-Cold-LRS-Retrieval-GB": ("Cold LRS", "Cold LRS Data Retrieval", "1 GB"),
+    "Blob-Storage-Cold-LRS-Write-Operation": ("Cold LRS", "Cold LRS Write Operations", "10K"),
+    "Blob-Storage-Cold-RAGRS-Early-Delete-GB": ("Cold RA-GRS", "Cold RA-GRS Early Delete", "1 GB"),
+    "Blob-Storage-Cold-RAGRS-GB-Month": ("Cold RA-GRS", "Cold RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Cold-RAGRS-Read-Operation": ("Cold RA-GRS", "Cold RA-GRS Read Operations", "10K"),
+    "Blob-Storage-Cold-RAGRS-Retrieval-GB": ("Cold RA-GRS", "Cold RA-GRS Data Retrieval", "1 GB"),
+    "Blob-Storage-Cold-RAGRS-Write-Operation": ("Cold RA-GRS", "Cold RA-GRS Write Operations", "10K"),
+    "Blob-Storage-Cool-GRS-GB-Month": ("Cool GRS", "Cool GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Cool-GRS-Read-Operation": ("Cool GRS", "Cool Read Operations", "10K"),
+    "Blob-Storage-Cool-GRS-Retrieval-GB": ("Cool GRS", "Cool Data Retrieval", "1 GB"),
+    "Blob-Storage-Cool-GRS-Write-Operation": ("Cool GRS", "Cool GRS Write Operations", "10K"),
+    "Blob-Storage-Cool-LRS-GB-Month": ("Cool LRS", "Cool LRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Cool-LRS-Read-Operation": ("Cool LRS", "Cool Read Operations", "10K"),
+    "Blob-Storage-Cool-LRS-Retrieval-GB": ("Cool LRS", "Cool Data Retrieval", "1 GB"),
+    "Blob-Storage-Cool-LRS-Write-Operation": ("Cool LRS", "Cool LRS Write Operations", "10K"),
+    "Blob-Storage-Cool-RAGRS-GB-Month": ("Cool RA-GRS", "Cool RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Cool-RAGRS-Read-Operation": ("Cool RA-GRS", "Cool Read Operations", "10K"),
+    "Blob-Storage-Cool-RAGRS-Retrieval-GB": ("Cool RA-GRS", "Cool Data Retrieval", "1 GB"),
+    "Blob-Storage-Cool-RAGRS-Write-Operation": ("Cool RA-GRS", "Cool GRS Write Operations", "10K"),
+    "Blob-Storage-Hot-GRS-GB-Month": ("Hot GRS", "Hot GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Hot-GRS-Read-Operation": ("Hot GRS", "Hot Read Operations", "10K"),
+    "Blob-Storage-Hot-GRS-Write-Operation": ("Hot GRS", "Hot GRS Write Operations", "10K"),
+    "Blob-Storage-Hot-LRS-GB-Month": ("Hot LRS", "Hot LRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Hot-LRS-Read-Operation": ("Hot LRS", "Hot Read Operations", "10K"),
+    "Blob-Storage-Hot-LRS-Write-Operation": ("Hot LRS", "Hot LRS Write Operations", "10K"),
+    "Blob-Storage-Hot-RAGRS-GB-Month": ("Hot RA-GRS", "Hot RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Storage-Hot-RAGRS-Read-Operation": ("Hot RA-GRS", "Hot Read Operations", "10K"),
+    "Blob-Storage-Hot-RAGRS-Write-Operation": ("Hot RA-GRS", "Hot GRS Write Operations", "10K"),
     "APIM-Developer-Unit-Hour": ("Developer", "Developer Unit", "1 Hour"),
     "APIM-Basic-Unit-Hour": ("Basic", "Basic Unit", "1 Hour"),
     "APIM-Standard-Unit-Hour": ("Standard", "Standard Unit", "1 Hour"),
@@ -1792,11 +1891,21 @@ _SETTINGS_METERS = {
     "CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour": ("mRUs", "100 Multi-master RU/s", "1/Hour"),
 }
 _STORE_UNITS = {"10K": ("requests", 10_000), "1 GB/Month": ("GB-Mo", 1),
-                "1 Hour": ("hours", 1), "1/Hour": ("hours", 1)}
+                "1 GB": ("GB", 1), "1 Hour": ("hours", 1), "1/Hour": ("hours", 1)}
+
+
+def _settings_product(metric: str) -> str:
+    """The key of ``_SETTINGS_PRODUCTS`` that names ``metric``'s product.
+
+    A metric of another account kind names it in full, as in
+    `Blob-Storage-Cool-LRS-Retrieval-GB`, so the longest matching key wins.
+    """
+    return max((key for key in _SETTINGS_PRODUCTS if metric.startswith(key + "-")),
+               key=len)
 
 
 def _settings_descriptor(metric: str, sku: str, meter: str, unit: str) -> dict:
-    service, store_service, product = _SETTINGS_PRODUCTS[metric.split("-")[0]]
+    service, store_service, product = _SETTINGS_PRODUCTS[_settings_product(metric)]
     store_unit, scale = _STORE_UNITS[unit]
     descriptor = {
         "vendor": "azure", "service": service, "store_service": store_service,

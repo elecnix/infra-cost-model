@@ -73,11 +73,17 @@ def openai_metrics() -> set[str]:
 
 def settings_metrics() -> set[tuple[str, str]]:
     """The metrics that the settings of a resource select (#375)."""
+    blob_configs = [
+        {"accessTier": tier, "replicationType": replication}
+        for tier in ("Hot", "Cool", "Cold", "Archive")
+        for replication in ("LRS", "ZRS", "GRS", "RAGRS", "GZRS", "RAGZRS")]
+    # A Premium account and a general-purpose v1 account have rows of their
+    # own (#398).
+    blob_configs += [{"accountTier": "Premium", "replicationType": replication}
+                     for replication in ("LRS", "ZRS")]
+    blob_configs += [dict(config, accountKind="Storage") for config in blob_configs]
     configs = {
-        "BlobStorage": (AzureBlobStorage, [
-            {"accessTier": tier, "replicationType": replication}
-            for tier in ("Hot", "Cool", "Cold", "Archive")
-            for replication in ("LRS", "ZRS", "GRS", "RAGRS", "GZRS", "RAGZRS")]),
+        "BlobStorage": (AzureBlobStorage, blob_configs),
         "APIManagement": (APIManagement, [
             {"skuName": f"{tier}_1"} for tier in (
                 "Consumption", "Developer", "Basic", "Standard", "Premium", "Isolated",

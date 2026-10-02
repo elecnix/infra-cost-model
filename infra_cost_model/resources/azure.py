@@ -1369,15 +1369,43 @@ class AzureOpenAIDeployment(AzureOpenAI):
         return cls._extract(address, resource, account_ref, model, sku)
 
 
-# Blob Storage access tiers and redundancy types (#375). A general-purpose v2
-# account has rows for each pair, except those `_BLOB_UNPRICED` lists: Azure
-# gives Hot and Cool RA-GZRS no write meter of their own, and Archive has no
-# zone-redundant option.
+# Blob Storage access tiers, redundancy types and account kinds (#375, #398).
+# The kind selects the product the account bills: a general-purpose v2 account
+# the `General Block Blob v2` one, a general-purpose v1 account (the original
+# `Storage` kind) the `Blob Storage` one, and a Premium account the
+# `Premium Block Blob` one. The value is the infix its metrics carry.
 _BLOB_TIERS = {"hot": "Hot", "cool": "Cool", "cold": "Cold", "archive": "Archive"}
 _BLOB_REPLICATIONS = {"lrs": "LRS", "zrs": "ZRS", "grs": "GRS", "ragrs": "RA-GRS",
                       "gzrs": "GZRS", "ragzrs": "RA-GZRS"}
-_BLOB_UNPRICED = {("Hot", "RA-GZRS"), ("Cool", "RA-GZRS"), ("Archive", "ZRS"),
-                  ("Archive", "GZRS"), ("Archive", "RA-GZRS")}
+_BLOB_KINDS = {"storagev2": "", "storage": "Storage-"}
+# Archive has no zone-redundant option.
+_BLOB_UNPRICED = {("Archive", "ZRS"), ("Archive", "GZRS"), ("Archive", "RA-GZRS")}
+# Azure publishes no write meter for Hot and Cool RA-GZRS. It bills Hot RA-GRS
+# writes on the meter `Hot GRS Write Operations` that Hot GRS writes use, and
+# gives RA-GZRS no such meter: neither SKU has one in the Azure Retail Prices
+# API (checked 2026-10-02, product `General Block Blob v2`, skuName
+# `Hot RA-GZRS` and `Cool RA-GZRS`). Those writes are not billed separately,
+# so the handler does not price them and does not warn that it cannot.
+_BLOB_NO_WRITE_METER = {("Hot", "RA-GZRS"), ("Cool", "RA-GZRS")}
+# The days a blob stays in a tier before deleting it costs: Azure charges a
+# Cool blob deleted under 30 days, a Cold one under 90 and an Archive one
+# under 180 (https://azure.microsoft.com/en-us/pricing/details/storage/blobs/).
+# It publishes one early-deletion meter per SKU, priced at the tier's storage
+# price for the whole window, and no meter per number of days, so
+# `earlyDeleteGb` counts the GB deleted before the window and no setting
+# selects another row.
+_BLOB_MINIMUM_RETENTION_DAYS = {"Cool": 30, "Cold": 90, "Archive": 180}
+# The access tier and redundancy that publish an early-deletion meter. Azure
+# gives each one a meter at the tier's storage price for the whole window,
+# and none to the two zone-redundant Cool SKUs. The general-purpose v1
+# product has no Cool meter either.
+_BLOB_EARLY_DELETE = {
+    ("Cool", "LRS"), ("Cool", "ZRS"), ("Cool", "GRS"), ("Cool", "RA-GRS"),
+    ("Cold", "LRS"), ("Cold", "ZRS"), ("Cold", "GRS"), ("Cold", "RA-GRS"),
+    ("Cold", "GZRS"), ("Cold", "RA-GZRS"),
+    ("Archive", "LRS"), ("Archive", "GRS"), ("Archive", "RA-GRS"),
+}
+_BLOB_V1_EARLY_DELETE_TIERS = {tier for tier, _ in _BLOB_EARLY_DELETE} - {"Cool"}
 
 
 def blob_product(config: dict) -> tuple[str, str]:
@@ -1393,17 +1421,44 @@ def blob_product(config: dict) -> tuple[str, str]:
                                    replication))
 
 
+def blob_account_kind(config: dict) -> Optional[str]:
+    """The infix a storage account's kind gives its metrics, or ``None``.
+
+    Gives the general-purpose v2 one, the default of
+    ``azurerm_storage_account``, for an unset kind, and ``None`` for a kind
+    with no catalog rows.
+    """
+    kind = _text(config.get("accountKind")) or "StorageV2"
+    return _BLOB_KINDS.get(kind.lower().replace("-", "").replace("_", ""))
+
+
+def blob_metric_prefix(config: dict) -> Optional[str]:
+    """The prefix of the catalog metrics an account's settings select.
+
+    ``None`` when the Azure Retail Prices API has no product for them, so
+    the account's usage is reported unpriced rather than priced at another
+    product's rates.
+    """
+    account_tier = (_text(config.get("accountTier")) or "Standard").lower()
+    tier, replication = blob_product(config)
+    if account_tier == "premium":
+        # A Premium block blob account has no access tier of its own: its SKU
+        # names the redundancy alone.
+        return f"Blob-Premium-{replication}" if replication in ("LRS", "ZRS") else None
+    kind = blob_account_kind(config) if account_tier == "standard" else None
+    if kind is None or (tier, replication) in _BLOB_UNPRICED:
+        return None
+    return f"Blob-{kind}{tier}-{replication.replace('-', '')}"
+
+
 def blob_pricing_warning(address: str, config: dict) -> Optional[str]:
     """Why the catalog has no rows for a storage account's settings, or ``None``."""
-    account_tier = _text(config.get("accountTier"))
-    if account_tier and account_tier.lower() != "standard":
-        return (f"{address}: storage account tier {account_tier!r} has no catalog rows, "
-                f"so the engine reports its usage as unpriced. The catalog prices "
-                f"Standard general-purpose v2 accounts.")
-    tier, replication = blob_product(config)
-    if (tier not in _BLOB_TIERS.values() or replication not in _BLOB_REPLICATIONS.values()
-            or (tier, replication) in _BLOB_UNPRICED):
-        return (f"{address}: Blob Storage {tier} {replication} has no catalog rows, so the "
+    if blob_metric_prefix(config) is None:
+        tier, replication = blob_product(config)
+        settings = " ".join(part for part in (
+            _text(config.get("accountTier")), _text(config.get("accountKind")),
+            tier, replication) if part)
+        return (f"{address}: Blob Storage {settings} has no catalog rows, so the "
                 f"engine reports its usage as unpriced.")
     return None
 
@@ -1411,14 +1466,16 @@ def blob_pricing_warning(address: str, config: dict) -> Optional[str]:
 class AzureBlobStorage(StorageResource):
     """Azure Blob Storage - storage node (equivalent to S3).
 
-    The access tier and the redundancy of the account select the rows
-    (#375). Cool, Cold and Archive also bill data retrieval and early
-    deletion, which no metric counts yet.
+    The account kind, the access tier and the redundancy select the rows
+    (#375, #398). Cool, Cold and Archive also bill ``dataRetrievalGb`` per
+    GB read back, and ``earlyDeleteGb`` for the blobs deleted before the
+    tier's minimum retention.
     """
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["storageGb", "readRequests", "writeRequests", "dataOutGb"]
+        return ["storageGb", "readRequests", "writeRequests", "dataOutGb",
+                "dataRetrievalGb", "earlyDeleteGb"]
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
@@ -1435,19 +1492,48 @@ class AzureBlobStorage(StorageResource):
     def catalog_metrics_for(self, config: dict) -> dict[str, str]:
         config = config or {}
         tier, replication = blob_product(config)
-        account_tier = _text(config.get("accountTier")) or "Standard"
-        standard = account_tier.lower() == "standard"
-        if standard and (tier, replication) == ("Hot", "LRS"):
+        account_tier = (_text(config.get("accountTier")) or "Standard").lower()
+        if (tier, replication) == ("Hot", "LRS") and account_tier == "standard" \
+                and blob_account_kind(config) == "":
             return self.catalog_metrics
-        prefix = f"Blob-{tier}-{replication.replace('-', '')}"
-        if not standard:
-            # A Premium account has no rows, so its usage is unpriced
-            # instead of priced at Standard rates.
-            prefix = f"Blob-{account_tier}-{tier}-{replication.replace('-', '')}"
-        return {**self.catalog_metrics,
-                "storageGb": f"{prefix}-GB-Month",
-                "readRequests": f"{prefix}-Read-Operation",
-                "writeRequests": f"{prefix}-Write-Operation"}
+        prefix = blob_metric_prefix(config)
+        unpriced = prefix is None
+        if unpriced:
+            # No product for these settings: name the metrics after them, so
+            # the catalog cannot resolve them and the engine reports the
+            # account's usage as unpriced.
+            prefix = "Blob-Unpriced-{}".format("-".join(
+                part for part in (_text(config.get("accountTier")),
+                                  _text(config.get("accountKind")), tier, replication)
+                if part))
+        metrics = {"storageGb": f"{prefix}-GB-Month",
+                   "readRequests": f"{prefix}-Read-Operation",
+                   "dataOutGb": _EGRESS_METRIC}
+        if (tier, replication) not in _BLOB_NO_WRITE_METER:
+            metrics["writeRequests"] = f"{prefix}-Write-Operation"
+        if not unpriced and tier in _BLOB_MINIMUM_RETENTION_DAYS:
+            metrics["dataRetrievalGb"] = f"{prefix}-Retrieval-GB"
+            early_delete = _BLOB_EARLY_DELETE
+            if blob_account_kind(config) == "Storage-":
+                early_delete = {(t, r) for t, r in early_delete
+                                if t in _BLOB_V1_EARLY_DELETE_TIERS}
+            if (tier, replication) in early_delete:
+                metrics["earlyDeleteGb"] = f"{prefix}-Early-Delete-GB"
+        return metrics
+
+    def derive_catalog_usage(self, usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
+        """The writes that the account's settings do not bill separately.
+
+        Azure publishes no write meter for Hot and Cool RA-GZRS, so those
+        writes are not charged and no catalog quantity names them.
+        """
+        if "writeRequests" not in usage:
+            return None
+        tier, replication = blob_product(config or {})
+        if (tier, replication) not in _BLOB_NO_WRITE_METER:
+            return None
+        return DerivedCatalogUsage(consumed=frozenset({"writeRequests"}), quantities={})
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureBlobStorage"]:
@@ -1476,6 +1562,7 @@ class AzureBlobStorage(StorageResource):
         values = resource.get("values") or {}
         return cls._extract(resource.get("address", ""), values.get("location"), {
             "accountTier": values.get("account_tier"),
+            "accountKind": values.get("account_kind"),
             "replicationType": values.get("account_replication_type"),
             "accessTier": values.get("access_tier"),
         })
@@ -1489,6 +1576,7 @@ class AzureBlobStorage(StorageResource):
             tier, _, replication = (inputs["sku"].get("name") or "").partition("_")
         return cls._extract(resource.get("id", ""), inputs.get("location"), {
             "accountTier": tier or None,
+            "accountKind": inputs.get("kind"),
             "replicationType": replication or None,
             "accessTier": inputs.get("accessTier"),
         })
@@ -1504,6 +1592,7 @@ class AzureBlobStorage(StorageResource):
             region=properties.get("location"),
             config={
                 "accountTier": properties.get("sku", {}).get("name"),
+                "accountKind": properties.get("Kind"),
                 "accessTier": properties.get("accessTier"),
             },
         )
@@ -1518,6 +1607,7 @@ class AzureBlobStorage(StorageResource):
                                            parameters)
         return cls._extract(resource.get(ARM_ADDRESS_KEY, ""), arm_region(resource), {
             "accountTier": tier or None,
+            "accountKind": _text(resource.get("kind")),
             "replicationType": replication or None,
             "accessTier": access_tier,
         })
