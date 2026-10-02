@@ -1406,7 +1406,7 @@ _BLOB_EARLY_DELETE = {
     ("Cold", "GZRS"), ("Cold", "RA-GZRS"),
     ("Archive", "LRS"), ("Archive", "GRS"), ("Archive", "RA-GRS"),
 }
-_BLOB_V1_EARLY_DELETE_TIERS = {tier for tier, _ in _BLOB_EARLY_DELETE} - {"Cool"}
+_BLOB_V1_EARLY_DELETE_TIERS = {"Cold", "Archive"}
 
 
 def blob_product(config: dict) -> tuple[str, str]:

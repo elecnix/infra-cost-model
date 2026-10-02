@@ -113,8 +113,6 @@ def test_the_minimum_retention_windows_are_azure_s(tier, window):
 def test_early_deletion_costs_the_tier_s_whole_window(seed_catalog, tier, window):
     """Azure prices an early deletion at the tier's storage price for the
     whole minimum-retention window."""
-    """Azure prices an early deletion at the tier's storage price for the
-    whole minimum-retention window."""
     address = "azurerm_storage_account.cold_blobs"
     model = one_node(address, {
         "storageGb": {"unit": "GB", "value": 1, "fixed": True},
