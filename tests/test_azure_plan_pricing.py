@@ -138,32 +138,97 @@ def test_the_other_sku_families_bill_their_instance_hour(sku, os, metric):
     assert metric in seeded("AppService")
 
 
-def plan_resource(sku, os):
-    """A Terraform App Service plan of ``sku`` on ``os``."""
-    return {"address": "azurerm_service_plan.plan", "type": "azurerm_service_plan",
-            "values": {"location": REGION, "sku_name": sku, "os_type": os}}
+def plan_resource(values, resource_type="azurerm_service_plan"):
+    """An App Service plan as ``terraform show -json`` states it."""
+    return {"address": f"{resource_type}.plan", "type": resource_type,
+            "values": {"location": REGION, **values}}
 
 
-@pytest.mark.parametrize("sku,os", [
-    ("P1", "Linux"),        # the classic Premium plans are Windows-only
-    ("PC2", "Windows"),     # the container plans run Windows containers
-    ("I1v4", "WindowsContainer"),
-])
-def test_a_sku_with_no_rows_on_that_os_warns(sku, os):
-    with pytest.warns(UserWarning, match=r"azurerm_service_plan.plan.*no catalog rows"):
-        extract_resources_from_tf({"resource": [plan_resource(sku, os)]})
-
-
-@pytest.mark.parametrize("sku,os,hourly", [
-    ("P1", "Windows", 0.30), ("P2", "Windows", 0.60),
-    ("P3", "Windows", 1.20), ("P4", "Windows", 2.40),
-    ("B1", "Linux", 0.017), ("S1", "Windows", 0.10),
-])
-def test_a_plan_with_rows_extracts_and_prices_without_warning(sku, os, hourly, seed_catalog):
-    address = "azurerm_service_plan.plan"
+def extract_plan(values, resource_type="azurerm_service_plan"):
+    """The node a Terraform plan extracts to, with no warning about its SKU."""
+    address = f"{resource_type}.plan"
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        node = extract_resources_from_tf({"resource": [plan_resource(sku, os)]})[address]
+        node = extract_resources_from_tf(
+            {"resource": [plan_resource(values, resource_type)]})[address]
+    return address, node
+
+
+# The two shapes a Terraform App Service plan carries: `azurerm_service_plan`
+# states `sku_name`, `os_type` and `worker_count`, `azurerm_app_service_plan`
+# a `sku` block and `kind` (#407).
+SKU_NAME_SHAPE = {"sku_name": "P1", "os_type": "Windows"}
+SKU_BLOCK_SHAPE = {"sku": [{"size": "P1", "tier": "Premium", "capacity": 2}], "kind": "Windows"}
+
+
+@pytest.mark.parametrize("resource_type,values", [
+    ("azurerm_service_plan", SKU_NAME_SHAPE),
+    ("azurerm_service_plan", {**SKU_NAME_SHAPE, "worker_count": 2}),
+    ("azurerm_service_plan", {**SKU_BLOCK_SHAPE, "os_type": "Windows"}),
+    ("azurerm_app_service_plan", SKU_NAME_SHAPE),
+    ("azurerm_app_service_plan", SKU_BLOCK_SHAPE),
+])
+def test_every_terraform_plan_shape_resolves_its_sku(resource_type, values):
+    _, node = extract_plan(values, resource_type)
+    assert node["config"]["sku"] == "P1"
+    assert node["config"]["os"] == "Windows"
+    assert node["config"]["hostingPlan"] == "dedicated"
+
+
+@pytest.mark.parametrize("resource_type,values,os_name", [
+    ("azurerm_service_plan", {"sku_name": "S1", "os_type": "Linux"}, "Linux"),
+    ("azurerm_service_plan", {"sku_name": "PC2", "os_type": "WindowsContainer"},
+     "WindowsContainer"),
+    ("azurerm_app_service_plan", {"kind": "Linux", "reserved": True,
+                                  "sku": [{"size": "S1", "tier": "Standard"}]}, "Linux"),
+    ("azurerm_app_service_plan", {"kind": "xenon",
+                                  "sku": [{"size": "PC2", "tier": "PremiumContainer"}]},
+     "WindowsContainer"),
+])
+def test_a_terraform_plan_resolves_its_operating_system(resource_type, values, os_name):
+    _, node = extract_plan(values, resource_type)
+    assert node["config"]["os"] == os_name
+
+
+@pytest.mark.parametrize("resource_type,values", [
+    ("azurerm_service_plan", {"sku_name": "P1", "os_type": "Linux"}),
+    ("azurerm_service_plan", {"sku": [{"size": "P1", "tier": "Premium"}], "os_type": "Linux"}),
+    ("azurerm_app_service_plan", {"sku_name": "P1", "os_type": "Linux"}),
+])
+def test_a_sku_with_no_rows_on_that_os_warns(resource_type, values):
+    with pytest.warns(UserWarning, match=rf"{resource_type}.plan.*no catalog rows"):
+        extract_resources_from_tf({"resource": [plan_resource(values, resource_type)]})
+
+
+@pytest.mark.parametrize("resource_type,values", [
+    ("azurerm_service_plan", {"sku_name": "PC2", "os_type": "Windows"}),
+    ("azurerm_service_plan", {"sku_name": "PC3", "os_type": "Linux"}),
+    ("azurerm_service_plan", {"sku_name": "I1v4", "os_type": "WindowsContainer"}),
+    ("azurerm_app_service_plan", {"sku_name": "PC2", "os_type": "Windows"}),
+])
+def test_a_sku_with_no_rows_on_that_container_os_warns(resource_type, values):
+    with pytest.warns(UserWarning, match=rf"{resource_type}.plan.*no catalog rows"):
+        extract_resources_from_tf({"resource": [plan_resource(values, resource_type)]})
+
+
+@pytest.mark.parametrize("resource_type,values,hourly", [
+    ("azurerm_service_plan", {"sku_name": "P1", "os_type": "Windows"}, 0.30),
+    ("azurerm_service_plan", {"sku_name": "P2", "os_type": "Windows"}, 0.60),
+    ("azurerm_service_plan", {"sku_name": "P3", "os_type": "Windows"}, 1.20),
+    ("azurerm_service_plan", {"sku_name": "P4", "os_type": "Windows"}, 2.40),
+    ("azurerm_service_plan", {"sku": [{"size": "P1", "tier": "PremiumV3", "capacity": 2}],
+                              "os_type": "Windows"}, 0.30),
+    ("azurerm_service_plan", {"sku_name": "B1", "os_type": "Linux"}, 0.017),
+    ("azurerm_service_plan", {"sku_name": "S1", "os_type": "Windows"}, 0.10),
+    ("azurerm_app_service_plan", {"sku_name": "P1", "os_type": "Windows"}, 0.30),
+    ("azurerm_app_service_plan", {"kind": "Windows",
+                                  "sku": [{"size": "P2", "tier": "Premium",
+                                           "capacity": 2}]}, 0.60),
+    ("azurerm_app_service_plan", {"sku_name": "B1", "os_type": "Linux"}, 0.017),
+])
+def test_a_plan_with_rows_extracts_and_prices_without_warning(resource_type, values, hourly,
+                                                              seed_catalog):
+    address, node = extract_plan(values, resource_type)
     node["usageMetrics"] = {"instanceHours": {"unit": "hours", "value": 730, "fixed": True}}
     costs, engine = compute({address: node}, seed_catalog, address)
     assert costs[address] == pytest.approx(730 * hourly)

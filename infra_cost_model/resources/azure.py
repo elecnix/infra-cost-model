@@ -283,14 +283,10 @@ def service_plans_from_tf(resources: list) -> list:
     for resource in resources:
         if not isinstance(resource, dict):
             continue
-        values = resource.get("values") or {}
-        if resource.get("type") == "azurerm_service_plan":
-            sku, tier = values.get("sku_name"), None
-        elif resource.get("type") == "azurerm_app_service_plan":
-            block = _first_block(values.get("sku"))
-            sku, tier = block.get("size"), block.get("tier")
-        else:
+        if resource.get("type") not in ("azurerm_service_plan", "azurerm_app_service_plan"):
             continue
+        values = resource.get("values") or {}
+        sku, tier, _, _ = _tf_plan_settings(values)
         plans.append(ServicePlan(id=values.get("id"), name=values.get("name"),
                                  sku=sku, tier=tier))
     return plans
@@ -1725,6 +1721,22 @@ def _plan_os(value: Any, reserved: Any = None) -> str:
     return "Windows"
 
 
+def _tf_plan_settings(values: dict) -> tuple:
+    """A Terraform plan's SKU, tier, OS and instance count (#407).
+
+    ``azurerm_service_plan`` states ``sku_name``, ``os_type`` and
+    ``worker_count``; ``azurerm_app_service_plan`` states a ``sku`` block of
+    ``tier``, ``size`` and ``capacity``, and names its OS in ``kind`` with
+    ``reserved``. A plan carries one of the two shapes, so read whichever it
+    has: branching on the resource type is how the two schemas got swapped.
+    """
+    block = _first_block(values.get("sku"))
+    return (block.get("size") or values.get("sku_name"),
+            block.get("tier"),
+            _plan_os(values.get("os_type") or values.get("kind"), values.get("reserved")),
+            block.get("capacity") or values.get("worker_count"))
+
+
 class AppServicePlan(ComputeResource):
     """An App Service plan, which bills its instances (#383).
 
@@ -1789,15 +1801,9 @@ class AppServicePlan(ComputeResource):
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         values = resource.get("values") or {}
-        if resource.get("type") == "azurerm_app_service_plan":
-            block = _first_block(values.get("sku"))
-            return cls._extract(resource.get("address", ""), values.get("location"),
-                                block.get("size"), block.get("tier"),
-                                _plan_os(values.get("kind"), values.get("reserved")),
-                                block.get("capacity"))
+        sku, tier, os_name, instances = _tf_plan_settings(values)
         return cls._extract(resource.get("address", ""), values.get("location"),
-                            values.get("sku_name"), None, _plan_os(values.get("os_type")),
-                            values.get("worker_count"))
+                            sku, tier, os_name, instances)
 
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
