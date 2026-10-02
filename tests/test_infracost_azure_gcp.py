@@ -150,6 +150,11 @@ RETAIL = (
                   (0.0, 0.0), (100.0, 0.08), (10100.0, 0.065), (50100.0, 0.06),
                   (150100.0, 0.04)],
               effective="2023-02-21T00:00:00Z")
+    # Cosmos DB autoscale (#399): $0.012 per 100 RU/s, 1.5 times the manual
+    # rate, on the autoscale product, which the Infracost catalogue has not.
+    + _retail("eastus", "Azure Cosmos DB", "Databases", "Azure Cosmos DB autoscale",
+              "AP1", "AP1 100 RUs", "1/Hour", [(0.0, 0.012)],
+              effective="2020-05-18T00:00:00Z")
 )
 
 GCP = [
@@ -394,6 +399,8 @@ EXPECTED = [
      [(0, None, 0.00000025)]),
     ("CosmosDB-Storage-GB-Month", "eastus", "azure", "CosmosDB", "GB-Mo",
      [(0, None, 0.25)]),
+    ("CosmosDB-Autoscale-100RU-Hour", "eastus", "azure", "CosmosDB", "hours",
+     [(0, None, 0.012)]),
     ("APIM-Consumption-Call", "eastus", "azure", "APIManagement", "requests",
      [(0, 1_000_000, 0), (1_000_000, None, 0.0000035)]),
     ("Blob-Hot-LRS-GB-Month", "eastus", "azure", "BlobStorage", "GB-Mo",
@@ -468,8 +475,8 @@ EXPECTED = [
      [(0, 1, 0), (1, None, 0.15)]),
 ]
 
-# The descriptors that read the Azure Retail Prices API (#372).
-RETAIL_SOURCED = {"Bandwidth-Internet-Out-GB"}
+# The descriptors that read the Azure Retail Prices API (#372, #399).
+RETAIL_SOURCED = {"Bandwidth-Internet-Out-GB", "CosmosDB-Autoscale-100RU-Hour"}
 
 
 @pytest.mark.parametrize("metric,region,vendor,service,unit,tiers", EXPECTED,
