@@ -58,8 +58,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # compute
     p_compute = sub.add_parser("compute", help="Compute costs from a cost model")
     p_compute.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
-    p_compute.add_argument("--no-catalog", action="store_true",
-                           help="Disable pricing catalog (use embedded pricing rates)")
+    _add_catalog_flags(p_compute)
     p_compute.add_argument("--time-basis", choices=["perSecond", "monthly", "yearly"], default="perSecond",
                            help="Time basis for cost reporting (default: perSecond)")
     p_compute.add_argument("--monthly", action="store_true",
@@ -73,6 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # analyze
     p_analyze = sub.add_parser("analyze", help="Full analysis with derived usage")
     p_analyze.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
+    _add_catalog_flags(p_analyze)
     p_analyze.add_argument("--json", action="store_true", help="Output in JSON format")
     p_analyze.add_argument("--budget", type=float, metavar="<usd>",
                            help="Exit with code 1 if total cost exceeds this USD threshold")
@@ -84,8 +84,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_extract = sub.add_parser("extract", help="Extract resources from IaC (Terraform/Pulumi/CDK/ARM)")
     p_extract.add_argument("path", metavar="<path>", help="Path to IaC JSON export file")
     p_extract.add_argument("--from", dest="source_format", metavar="FORMAT",
-                           choices=["terraform", "pulumi", "cdk", "arm"], default="terraform",
-                           help="Source format: terraform, pulumi, cdk, or arm (default: terraform)")
+                           choices=list(IAC_SOURCE_FORMATS), default="terraform",
+                           help=f"Source format: {', '.join(IAC_SOURCE_FORMATS)} (default: terraform)")
     p_extract.add_argument("--json", action="store_true", help="Output in JSON format")
     p_extract.set_defaults(func=cmd_extract)
 
@@ -123,8 +123,7 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="Parameter to vary (e.g., frequency, edge:from->to)")
     p_whatif.add_argument("--value", required=True, type=float, metavar="<float>",
                           help="New value for the parameter")
-    p_whatif.add_argument("--catalog", action="store_true",
-                          help="Use pricing catalog")
+    _add_catalog_flags(p_whatif)
     p_whatif.add_argument("--monthly", action="store_true",
                           help="Show costs in monthly terms (default: per-second)")
     p_whatif.set_defaults(func=cmd_whatif)
@@ -136,8 +135,7 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Parameter to sweep (e.g., frequency, edge:from->to)")
     p_sens.add_argument("--steps", type=int, default=10, metavar="<int>",
                         help="Number of steps (default: 10)")
-    p_sens.add_argument("--catalog", action="store_true",
-                        help="Use pricing catalog")
+    _add_catalog_flags(p_sens)
     p_sens.add_argument("--monthly", action="store_true",
                         help="Show costs in monthly terms (default: per-second)")
     p_sens.set_defaults(func=cmd_sensitivity)
@@ -153,8 +151,7 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="Output format: table (default) or json")
     p_what_if.add_argument("--compare", metavar="<other-model.yaml>",
                            help="Path to second cost model for A/B comparison")
-    p_what_if.add_argument("--catalog", action="store_true",
-                           help="Use pricing catalog")
+    _add_catalog_flags(p_what_if)
     p_what_if.add_argument("--monthly", action="store_true",
                            help="Show costs in monthly terms (default: per-second)")
     p_what_if.set_defaults(func=cmd_what_if_sweep)
@@ -169,8 +166,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_coverage = sub.add_parser("coverage", help="Check coverage between cost model and IaC resources")
     p_coverage.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     p_coverage.add_argument("--from", dest="source_format", metavar="FORMAT",
-                            choices=["terraform", "pulumi", "cdk", "arm"], default="terraform",
-                            help="Source format: terraform, pulumi, cdk, or arm (default: terraform)")
+                            choices=list(IAC_SOURCE_FORMATS), default="terraform",
+                            help=f"Source format: {', '.join(IAC_SOURCE_FORMATS)} (default: terraform)")
     p_coverage.add_argument("iac_file", metavar="<iac-file>", help="Path to IaC JSON export")
     p_coverage.add_argument("--exit-on-uncosted", action="store_true",
                             help="Exit with error code 1 if uncosted resources exist (for CI budget gates)")
@@ -188,6 +185,53 @@ def _build_parser() -> argparse.ArgumentParser:
     p_import.set_defaults(func=cmd_import_infracost)
 
     return parser
+
+
+# The IaC export formats `--from` accepts, in the order `--help` lists them.
+IAC_SOURCE_FORMATS = ("terraform", "pulumi", "cdk", "arm")
+
+
+def _add_catalog_flags(parser: argparse.ArgumentParser) -> None:
+    """Give a pricing command the same `--catalog` / `--no-catalog` pair.
+
+    Principle 13 prices by query, so the catalog is the default on every
+    command and `--no-catalog` is the offline escape hatch onto the model's
+    embedded `pricingRates`. Both flags resolve to one `use_catalog` attribute,
+    so a command reads the default in one place instead of re-deciding it.
+    Passing both is an error rather than a silent precedence rule.
+    """
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--catalog", dest="use_catalog", action="store_true", default=True,
+                       help="Price from the pricing catalog (default)")
+    group.add_argument("--no-catalog", dest="use_catalog", action="store_false",
+                       help="Price from the model's embedded pricingRates instead")
+
+
+def _pricing_catalog(args: argparse.Namespace) -> Optional[PricingCatalog]:
+    """The catalog to price with, or None when `--no-catalog` was passed."""
+    return PricingCatalog() if args.use_catalog else None
+
+
+def _load_model(path) -> dict:
+    """Read and parse a cost model YAML file.
+
+    Returns the parsed model, or raises _CLIError once the message is on
+    stderr. Every command that takes a `<yaml-file>` shares this adapter so a
+    missing file or a DSL error reads the same way everywhere.
+    """
+    model_path = Path(path)
+    if not model_path.exists():
+        _print_stderr(f"File not found: {model_path}")
+        raise _CLIError(1)
+
+    from infra_cost_model.sdk import parse_yaml_dsl
+    content = model_path.read_text()
+
+    try:
+        return parse_yaml_dsl(content)
+    except ValueError as e:
+        _print_stderr(f"Error: {e}")
+        raise _CLIError(1)
 
 
 def _print_stderr(msg: str) -> None:
@@ -280,20 +324,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     """Validate a cost model file."""
-    yaml_path = Path(args.yaml_file)
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
-
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        content = f.read()
-
-    try:
-        model = parse_yaml_dsl(content)
-    except ValueError as e:
-        _print_stderr(f"Error: {e}")
-        return 1
+    model = _load_model(args.yaml_file)
 
     errors = validate_cost_model(model)
 
@@ -324,7 +355,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             print(f"  - {error}")
         return 1
 
-    print(f"✓ Valid cost model: {yaml_path}")
+    print(f"✓ Valid cost model: {args.yaml_file}")
     return 0
 
 
@@ -347,24 +378,9 @@ def _model_name(model: dict) -> str:
 
 def cmd_compute(args: argparse.Namespace) -> int:
     """Compute costs from a cost model file."""
-    yaml_path = Path(args.yaml_file)
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
+    model = _load_model(args.yaml_file)
 
-    use_catalog = not args.no_catalog
-
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        content = f.read()
-
-    try:
-        model = parse_yaml_dsl(content)
-    except ValueError as e:
-        _print_stderr(f"Error: {e}")
-        return 1
-
-    catalog = PricingCatalog() if use_catalog else None
+    catalog = _pricing_catalog(args)
 
     # Resolve time basis: --monthly flag (deprecated) or --time-basis
     time_basis = args.time_basis
@@ -382,7 +398,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
             _print_stderr(f"BUDGET BREACH: total ${total:.6f} exceeds budget ${args.budget:.6f} by ${overage:.6f}")
             return 1
 
-        pricing_source = "catalog" if use_catalog else "embedded pricing rates"
+        pricing_source = "catalog" if args.use_catalog else "embedded pricing rates"
         print(f"Costs for: {_model_name(model)} (pricing: {pricing_source}, {time_basis})")
         print("-" * 40)
         for node, cost in sorted(costs.items()):
@@ -408,22 +424,9 @@ def cmd_compute(args: argparse.Namespace) -> int:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Full analysis including derived usage and costs."""
-    yaml_path = Path(args.yaml_file)
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
+    model = _load_model(args.yaml_file)
 
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        content = f.read()
-
-    try:
-        model = parse_yaml_dsl(content)
-    except ValueError as e:
-        _print_stderr(f"Error: {e}")
-        return 1
-
-    engine = CostEngine(model, time_basis="monthly")
+    engine = CostEngine(model, catalog=_pricing_catalog(args), time_basis="monthly")
 
     try:
         costs = engine.compute()
@@ -523,20 +526,7 @@ def cmd_seed_pricing(args: argparse.Namespace) -> int:
 
 def cmd_graph(args: argparse.Namespace) -> int:
     """Render DAG visualization."""
-    yaml_path = Path(args.yaml_file)
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
-
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        content = f.read()
-
-    try:
-        model = parse_yaml_dsl(content)
-    except ValueError as e:
-        _print_stderr(f"Error: {e}")
-        return 1
+    model = _load_model(args.yaml_file)
 
     # Check for flat override conflicts (Principle 9)
     warnings_list = []
@@ -598,6 +588,31 @@ def cmd_graph(args: argparse.Namespace) -> int:
     return 0
 
 
+def _extract_from_source(source_format: str, data: dict) -> dict:
+    """Resource addresses and nodes from one IaC export, keyed by format.
+
+    `extract` and `coverage` both read IaC JSON, so the format dispatch lives
+    here once. The registry owns a fourth copy of this ladder; that belongs
+    next to `ResourceHandlerRegistry.extract`, which already dispatches on
+    `source_format` (#420).
+    """
+    if source_format == "terraform":
+        from infra_cost_model.resources.registry import extract_resources_from_tf
+        return extract_resources_from_tf(data)
+    if source_format == "pulumi":
+        from infra_cost_model.resources.registry import extract_resources_from_pulumi
+        return extract_resources_from_pulumi(data)
+    if source_format == "cdk":
+        from infra_cost_model.resources.registry import extract_resources_from_cdk
+        return extract_resources_from_cdk(data)
+    if source_format == "arm":
+        from infra_cost_model.resources.registry import extract_resources_from_arm
+        return extract_resources_from_arm(data)
+    # Both call sites reject an unknown format with their own message first;
+    # this keeps the function total rather than returning None.
+    raise _CLIError(1)
+
+
 def cmd_extract(args: argparse.Namespace) -> int:
     """Extract resources from IaC tool output."""
     path = Path(args.path)
@@ -610,23 +625,12 @@ def cmd_extract(args: argparse.Namespace) -> int:
             data = json.load(f)
 
         source_format = args.source_format
-
-        if source_format == "terraform":
-            from infra_cost_model.resources.registry import extract_resources_from_tf
-            nodes = extract_resources_from_tf(data)
-        elif source_format == "pulumi":
-            from infra_cost_model.resources.registry import extract_resources_from_pulumi
-            nodes = extract_resources_from_pulumi(data)
-        elif source_format == "cdk":
-            from infra_cost_model.resources.registry import extract_resources_from_cdk
-            nodes = extract_resources_from_cdk(data)
-        elif source_format == "arm":
-            from infra_cost_model.resources.registry import extract_resources_from_arm
-            nodes = extract_resources_from_arm(data)
-        else:
+        if source_format not in IAC_SOURCE_FORMATS:
             _print_stderr(f"Unknown source format: {source_format}")
-            _print_stderr("Valid formats: terraform, pulumi, cdk, arm")
+            _print_stderr(f"Valid formats: {', '.join(IAC_SOURCE_FORMATS)}")
             return 1
+
+        nodes = _extract_from_source(source_format, data)
 
         if args.json:
             print(json.dumps(nodes, indent=2))
@@ -668,27 +672,14 @@ def cmd_import_infracost(args: argparse.Namespace) -> int:
 
 def cmd_whatif(args: argparse.Namespace) -> int:
     """Run what-if analysis by varying a single parameter."""
-    yaml_path = Path(args.yaml_file)
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
-
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        content = f.read()
-
-    try:
-        model = parse_yaml_dsl(content)
-    except ValueError as e:
-        _print_stderr(f"Error: {e}")
-        return 1
+    model = _load_model(args.yaml_file)
 
     error = _single_workflow_error(model, "whatif")
     if error is not None:
         _print_stderr(f"Error: {error}")
         return 1
 
-    catalog = PricingCatalog() if args.catalog else None
+    catalog = _pricing_catalog(args)
     time_basis = "monthly" if args.monthly else "perSecond"
 
     try:
@@ -715,27 +706,14 @@ def cmd_whatif(args: argparse.Namespace) -> int:
 
 def cmd_sensitivity(args: argparse.Namespace) -> int:
     """Run sensitivity analysis by sweeping a parameter across a range."""
-    yaml_path = Path(args.yaml_file)
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
-
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        content = f.read()
-
-    try:
-        model = parse_yaml_dsl(content)
-    except ValueError as e:
-        _print_stderr(f"Error: {e}")
-        return 1
+    model = _load_model(args.yaml_file)
 
     error = _single_workflow_error(model, "sensitivity")
     if error is not None:
         _print_stderr(f"Error: {error}")
         return 1
 
-    catalog = PricingCatalog() if args.catalog else None
+    catalog = _pricing_catalog(args)
     time_basis = "monthly" if args.monthly else "perSecond"
 
     try:
@@ -768,20 +746,7 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
 
     Supports single-model sweep and A/B comparison mode.
     """
-    yaml_path = Path(args.yaml_file)
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
-
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        content = f.read()
-
-    try:
-        model = parse_yaml_dsl(content)
-    except ValueError as e:
-        _print_stderr(f"Error: {e}")
-        return 1
+    model = _load_model(args.yaml_file)
 
     error = _single_workflow_error(model, "what-if")
     if error is not None:
@@ -799,25 +764,14 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
         _print_stderr(f"Error: --values must contain at least 2 values, got {len(values)}")
         return 1
 
-    catalog = PricingCatalog() if args.catalog else None
+    catalog = _pricing_catalog(args)
     time_basis = "monthly" if args.monthly else "perSecond"
 
     analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
 
     # Comparison mode
     if args.compare:
-        compare_path = Path(args.compare)
-        if not compare_path.exists():
-            _print_stderr(f"Comparison file not found: {compare_path}")
-            return 1
-
-        with open(compare_path) as f:
-            compare_content = f.read()
-        try:
-            other_model = parse_yaml_dsl(compare_content)
-        except ValueError as e:
-            _print_stderr(f"Error in comparison model: {e}")
-            return 1
+        other_model = _load_model(args.compare)
 
         error = _single_workflow_error(other_model, "what-if --compare")
         if error is not None:
@@ -998,27 +952,13 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         0 if no uncosted resources or --exit-on-uncosted not set
         1 if --exit-on-uncosted and uncosted resources exist
     """
-    yaml_path = Path(args.yaml_file)
     iac_path = Path(args.iac_file)
-
-    if not yaml_path.exists():
-        _print_stderr(f"File not found: {yaml_path}")
-        return 1
 
     if not iac_path.exists():
         _print_stderr(f"File not found: {iac_path}")
         return 1
 
-    # Load and parse cost model YAML
-    from infra_cost_model.sdk import parse_yaml_dsl
-    with open(yaml_path) as f:
-        yaml_content = f.read()
-
-    try:
-        model = parse_yaml_dsl(yaml_content)
-    except ValueError as e:
-        _print_stderr(f"Error parsing cost model: {e}")
-        return 1
+    model = _load_model(args.yaml_file)
 
     # Extract model node resourceAddress values
     nodes = model.get("nodes", {})
@@ -1036,22 +976,11 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         return 1
 
     source_format = args.source_format
-
-    if source_format == "terraform":
-        from infra_cost_model.resources.registry import extract_resources_from_tf
-        extracted = extract_resources_from_tf(iac_data)
-    elif source_format == "pulumi":
-        from infra_cost_model.resources.registry import extract_resources_from_pulumi
-        extracted = extract_resources_from_pulumi(iac_data)
-    elif source_format == "cdk":
-        from infra_cost_model.resources.registry import extract_resources_from_cdk
-        extracted = extract_resources_from_cdk(iac_data)
-    elif source_format == "arm":
-        from infra_cost_model.resources.registry import extract_resources_from_arm
-        extracted = extract_resources_from_arm(iac_data)
-    else:
+    if source_format not in IAC_SOURCE_FORMATS:
         _print_stderr(f"Unknown source format: {source_format}")
         return 1
+
+    extracted = _extract_from_source(source_format, iac_data)
 
     iac_addresses = set(extracted.keys())
 
