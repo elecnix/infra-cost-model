@@ -372,8 +372,10 @@ class AzureFunction(ComputeResource):
         if plan == "flexConsumption":
             memory_mb = next((mb for mb in _FLEX_INSTANCE_MB if usage["memoryMb"] <= mb),
                              _FLEX_INSTANCE_MB[-1])
-            # Executions on an always-ready instance bill at the always-ready
-            # rates, the ones that scale out bill at the on-demand rates (#407).
+            # An app with always-ready instances bills its executions on the
+            # always-ready meters. Which executions land on those instances and
+            # which scale out is not modelled, so a mix is priced at the
+            # always-ready rates (#407).
             ready = "AlwaysReady-" if _always_ready_instances(config) else ""
             return DerivedCatalogUsage(
                 consumed=frozenset(inputs),
