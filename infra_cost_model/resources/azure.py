@@ -299,7 +299,8 @@ class AzureFunction(ComputeResource):
     def valid_metrics(self) -> list[str]:
         return ["invocations", "avgDurationMs", "memoryMb"]
 
-    def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+    def derive_catalog_usage(self, usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
         """Derive executions and GB-seconds, the quantities the consumption plan bills.
 
         Azure rounds memory up to the next 128 MB and bills at least 100 ms
@@ -457,20 +458,89 @@ class AzureFunction(ComputeResource):
             },
         )
 
+def _capabilities(value: Any) -> set:
+    """The capability names of a Cosmos DB account, lower case."""
+    names = set()
+    for item in value or []:
+        name = item.get("name") if isinstance(item, dict) else item
+        if isinstance(name, str):
+            names.add(name.strip().lower())
+    return names
+
+
+def cosmos_capacity_mode(capabilities: Any, capacity_mode: Any = None) -> str:
+    """``serverless`` or ``provisioned``, from the account's settings (#375).
+
+    An account is serverless when ``capacityMode`` says so, or when it has
+    the ``EnableServerless`` capability. Any other account has provisioned
+    throughput.
+    """
+    if isinstance(capacity_mode, str) and capacity_mode.strip().lower() == "serverless":
+        return "serverless"
+    return "serverless" if "enableserverless" in _capabilities(capabilities) else "provisioned"
+
+
+# Request units per operation on a 1 KB item, from "Request Units in Azure
+# Cosmos DB" (https://learn.microsoft.com/azure/cosmos-db/request-units): a
+# point read costs 1 RU, and a write about 5 RU with the default indexing
+# policy. A node's `config` can set `ruPerRead` and `ruPerWrite` (#374).
+DEFAULT_RU_PER_READ = 1.0
+DEFAULT_RU_PER_WRITE = 5.0
+
+
 class CosmosDB(StorageResource):
-    """Azure Cosmos DB - storage node (equivalent to DynamoDB)."""
+    """Azure Cosmos DB - storage node (equivalent to DynamoDB).
+
+    A serverless account bills request units. A provisioned account bills
+    hours of 100 RU/s of throughput (the ``throughputHours`` metric, which is
+    usually fixed), and its reads and writes cost nothing more (#375).
+    """
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["readRequests", "writeRequests", "requestUnits", "storageGb"]
+        return ["readRequests", "writeRequests", "requestUnits", "storageGb",
+                "throughputHours"]
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
         # Serverless accounts bill request units, and a read or a write costs a
         # number of them that depends on the item. So the catalog prices
-        # `requestUnits`, and has no price for a read or a write.
+        # `requestUnits`, and `derive_catalog_usage` turns reads and writes
+        # into request units (#374).
         return {"requestUnits": "CosmosDB-Serverless-RU",
                 "storageGb": "CosmosDB-Storage-GB-Month"}
+
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        config = config or {}
+        if (config.get("capacityMode") or "serverless") == "serverless":
+            return self.catalog_metrics
+        throughput = ("CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour"
+                      if config.get("multiRegionWrites") else "CosmosDB-Provisioned-100RU-Hour")
+        return {"storageGb": "CosmosDB-Storage-GB-Month", "throughputHours": throughput}
+
+    def derive_catalog_usage(self, usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
+        """Request units from reads, writes and ``requestUnits`` (#374).
+
+        A read costs ``ruPerRead`` request units and a write ``ruPerWrite``,
+        from the node's ``config``, by default the figures for a 1 KB item.
+        On a provisioned account, the throughput pays for every operation,
+        so they derive no quantity.
+        """
+        config = config or {}
+        inputs = [name for name in ("readRequests", "writeRequests", "requestUnits")
+                  if name in usage]
+        if not inputs:
+            return None
+        if (config.get("capacityMode") or "serverless") != "serverless":
+            return DerivedCatalogUsage(consumed=frozenset(inputs), quantities={})
+        per_read = float(config.get("ruPerRead", DEFAULT_RU_PER_READ))
+        per_write = float(config.get("ruPerWrite", DEFAULT_RU_PER_WRITE))
+        request_units = (usage.get("readRequests", 0.0) * per_read
+                         + usage.get("writeRequests", 0.0) * per_write
+                         + usage.get("requestUnits", 0.0))
+        return DerivedCatalogUsage(consumed=frozenset(inputs),
+                                   quantities={"CosmosDB-Serverless-RU": request_units})
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CosmosDB"]:
@@ -483,6 +553,10 @@ class CosmosDB(StorageResource):
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         values = resource.get("values", {})
+        # azurerm 4.x names it `multiple_write_locations_enabled`, 3.x
+        # `enable_multiple_write_locations`.
+        multi_region = values.get("multiple_write_locations_enabled",
+                                  values.get("enable_multiple_write_locations"))
         return ResourceExtract(
             resource_address=resource.get("address", ""),
             node_type="storage",
@@ -492,13 +566,17 @@ class CosmosDB(StorageResource):
             config={
                 "offerType": values.get("offer_type"),
                 "kind": values.get("kind"),
-                "consistencyLevel": values.get("consistency_policy", {}).get("consistency_level"),
+                "consistencyLevel": _first_block(values.get("consistency_policy")).get(
+                    "consistency_level"),
+                "capacityMode": cosmos_capacity_mode(values.get("capabilities")),
+                "multiRegionWrites": bool(multi_region),
             },
         )
 
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
+        properties = inputs.get("properties") or {}
         return ResourceExtract(
             resource_address=resource.get("id", ""),
             node_type="storage",
@@ -506,8 +584,12 @@ class CosmosDB(StorageResource):
             service="CosmosDB",
             region=inputs.get("location"),
             config={
-                "offerType": inputs.get("offerType"),
+                "offerType": inputs.get("offerType", inputs.get("databaseAccountOfferType")),
                 "kind": inputs.get("kind"),
+                "capacityMode": cosmos_capacity_mode(
+                    inputs.get("capabilities", properties.get("capabilities")),
+                    inputs.get("capacityMode")),
+                "multiRegionWrites": bool(inputs.get("enableMultipleWriteLocations")),
             },
         )
 
@@ -541,15 +623,43 @@ class CosmosDB(StorageResource):
                 "kind": resource.get("kind"),
                 "consistencyLevel": (properties.get("consistencyPolicy") or {}).get(
                     "defaultConsistencyLevel"),
+                "capacityMode": cosmos_capacity_mode(properties.get("capabilities"),
+                                                     properties.get("capacityMode")),
+                "multiRegionWrites": bool(properties.get("enableMultipleWriteLocations")),
             },
         )
+
+
+# API Management tiers (#375). The consumption tier bills calls. The other
+# tiers bill unit-hours (the `unitHours` metric, usually fixed). The v2
+# tiers also bill the calls over a monthly allowance. The classic tiers
+# include every call.
+_APIM_TIERS = {
+    "consumption": "Consumption", "developer": "Developer", "basic": "Basic",
+    "standard": "Standard", "premium": "Premium", "isolated": "Isolated",
+    "basicv2": "BasicV2", "standardv2": "StandardV2", "premiumv2": "PremiumV2",
+}
+_APIM_V2_CALL_TIERS = ("BasicV2", "StandardV2")
+
+
+def apim_tier(sku_name: Any) -> Optional[str]:
+    """The tier of an API Management SKU such as ``Developer_1``.
+
+    Gives ``None`` when the SKU is unset, and the SKU's own name when the
+    tier is unknown.
+    """
+    if not isinstance(sku_name, str) or not sku_name.strip():
+        return None
+    name = sku_name.strip().split("_", 1)[0]
+    return _APIM_TIERS.get(name.lower(), name)
+
 
 class APIManagement(RoutingResource):
     """Azure API Management - routing node (equivalent to API Gateway)."""
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["requests", "dataOutGb"]
+        return ["requests", "dataOutGb", "unitHours"]
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
@@ -558,6 +668,36 @@ class APIManagement(RoutingResource):
     @property
     def catalog_services(self) -> dict[str, str]:
         return {_EGRESS_METRIC: _EGRESS_SERVICE}
+
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        tier = apim_tier((config or {}).get("skuName")) or "Consumption"
+        metrics = dict(self.catalog_metrics)
+        if tier == "Consumption":
+            return metrics
+        del metrics["requests"]
+        metrics["unitHours"] = f"APIM-{tier}-Unit-Hour"
+        if tier in _APIM_V2_CALL_TIERS:
+            metrics["requests"] = f"APIM-{tier}-Call"
+        return metrics
+
+    def derive_catalog_usage(self, usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
+        """The classic tiers include every call, so their calls cost nothing."""
+        tier = apim_tier((config or {}).get("skuName")) or "Consumption"
+        if ("requests" not in usage or tier == "Consumption"
+                or tier in _APIM_V2_CALL_TIERS or tier not in _APIM_TIERS.values()):
+            return None
+        return DerivedCatalogUsage(consumed=frozenset({"requests"}), quantities={})
+
+    @staticmethod
+    def _warn_unknown_tier(address: str, sku_name: Any) -> None:
+        tier = apim_tier(sku_name)
+        if tier is not None and tier not in _APIM_TIERS.values():
+            warnings.warn(
+                f"{address}: API Management SKU {sku_name!r} names a tier that has no "
+                f"catalog rows, so the engine reports its usage as unpriced. The "
+                f"catalog prices {', '.join(sorted(_APIM_TIERS.values()))}."
+            )
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["APIManagement"]:
@@ -570,8 +710,10 @@ class APIManagement(RoutingResource):
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         values = resource.get("values", {})
+        address = resource.get("address", "")
+        cls._warn_unknown_tier(address, values.get("sku_name"))
         return ResourceExtract(
-            resource_address=resource.get("address", ""),
+            resource_address=address,
             node_type="routing",
             provider="azure",
             service="APIManagement",
@@ -585,14 +727,21 @@ class APIManagement(RoutingResource):
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
+        address = resource.get("id", "")
+        sku_name = inputs.get("skuName")
+        if sku_name is None and isinstance(inputs.get("sku"), dict):
+            # azure-native gives the SKU as {name, capacity}.
+            sku = inputs["sku"]
+            sku_name = f"{sku.get('name')}_{sku.get('capacity', 1)}" if sku.get("name") else None
+        cls._warn_unknown_tier(address, sku_name)
         return ResourceExtract(
-            resource_address=resource.get("id", ""),
+            resource_address=address,
             node_type="routing",
             provider="azure",
             service="APIManagement",
             region=inputs.get("location"),
             config={
-                "skuName": inputs.get("skuName"),
+                "skuName": sku_name,
                 "publisherName": inputs.get("publisherName"),
             },
         )
@@ -615,14 +764,23 @@ class APIManagement(RoutingResource):
 
     @classmethod
     def extract_arm(cls, resource: dict) -> ResourceExtract:
+        address = resource.get(ARM_ADDRESS_KEY, "")
+        parameters = resource.get(ARM_PARAMETERS_KEY, {})
+        sku = resource.get("sku") or {}
+        name, _ = resolve_arm_value(sku.get("name"), parameters)
+        capacity, _ = resolve_arm_value(sku.get("capacity", 1), parameters)
+        # ARM gives the tier and the unit count apart, as in Terraform's
+        # `Developer_1`.
+        sku_name = f"{name}_{capacity}" if isinstance(name, str) else None
+        cls._warn_unknown_tier(address, sku_name)
         return ResourceExtract(
-            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            resource_address=address,
             node_type="routing",
             provider="azure",
             service="APIManagement",
             region=arm_region(resource),
             config={
-                "skuName": _arm_sku_name(resource),
+                "skuName": sku_name,
                 "publisherName": _arm_properties(resource).get("publisherName"),
             },
         )
@@ -982,8 +1140,52 @@ class AzureOpenAIDeployment(AzureOpenAI):
         return cls._extract(address, resource, account_ref, model, sku)
 
 
+# Blob Storage access tiers and redundancy types (#375). A general-purpose v2
+# account has rows for each pair, except those `_BLOB_UNPRICED` lists: Azure
+# gives Hot and Cool RA-GZRS no write meter of their own, and Archive has no
+# zone-redundant option.
+_BLOB_TIERS = {"hot": "Hot", "cool": "Cool", "cold": "Cold", "archive": "Archive"}
+_BLOB_REPLICATIONS = {"lrs": "LRS", "zrs": "ZRS", "grs": "GRS", "ragrs": "RA-GRS",
+                      "gzrs": "GZRS", "ragzrs": "RA-GZRS"}
+_BLOB_UNPRICED = {("Hot", "RA-GZRS"), ("Cool", "RA-GZRS"), ("Archive", "ZRS"),
+                  ("Archive", "GZRS"), ("Archive", "RA-GZRS")}
+
+
+def blob_product(config: dict) -> tuple[str, str]:
+    """The access tier and redundancy of a storage account's ``config``.
+
+    Gives Hot and LRS, the defaults of ``azurerm_storage_account``, for an
+    unset setting, and the setting as given when it is unknown.
+    """
+    tier = _text(config.get("accessTier")) or "Hot"
+    replication = _text(config.get("replicationType")) or "LRS"
+    return (_BLOB_TIERS.get(tier.lower(), tier),
+            _BLOB_REPLICATIONS.get(replication.lower().replace("-", "").replace("_", ""),
+                                   replication))
+
+
+def blob_pricing_warning(address: str, config: dict) -> Optional[str]:
+    """Why the catalog has no rows for a storage account's settings, or ``None``."""
+    account_tier = _text(config.get("accountTier"))
+    if account_tier and account_tier.lower() != "standard":
+        return (f"{address}: storage account tier {account_tier!r} has no catalog rows, "
+                f"so the engine reports its usage as unpriced. The catalog prices "
+                f"Standard general-purpose v2 accounts.")
+    tier, replication = blob_product(config)
+    if (tier not in _BLOB_TIERS.values() or replication not in _BLOB_REPLICATIONS.values()
+            or (tier, replication) in _BLOB_UNPRICED):
+        return (f"{address}: Blob Storage {tier} {replication} has no catalog rows, so the "
+                f"engine reports its usage as unpriced.")
+    return None
+
+
 class AzureBlobStorage(StorageResource):
-    """Azure Blob Storage - storage node (equivalent to S3)."""
+    """Azure Blob Storage - storage node (equivalent to S3).
+
+    The access tier and the redundancy of the account select the rows
+    (#375). Cool, Cold and Archive also bill data retrieval and early
+    deletion, which no metric counts yet.
+    """
 
     @property
     def valid_metrics(self) -> list[str]:
@@ -1001,6 +1203,23 @@ class AzureBlobStorage(StorageResource):
     def catalog_services(self) -> dict[str, str]:
         return {_EGRESS_METRIC: _EGRESS_SERVICE}
 
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        config = config or {}
+        tier, replication = blob_product(config)
+        account_tier = _text(config.get("accountTier")) or "Standard"
+        standard = account_tier.lower() == "standard"
+        if standard and (tier, replication) == ("Hot", "LRS"):
+            return self.catalog_metrics
+        prefix = f"Blob-{tier}-{replication.replace('-', '')}"
+        if not standard:
+            # A Premium account has no rows, so its usage is unpriced
+            # instead of priced at Standard rates.
+            prefix = f"Blob-{account_tier}-{tier}-{replication.replace('-', '')}"
+        return {**self.catalog_metrics,
+                "storageGb": f"{prefix}-GB-Month",
+                "readRequests": f"{prefix}-Read-Operation",
+                "writeRequests": f"{prefix}-Write-Operation"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["AzureBlobStorage"]:
         if (resource_address.startswith("azurerm_storage_account.") or
@@ -1009,36 +1228,41 @@ class AzureBlobStorage(StorageResource):
             return cls()
         return None
 
-    @classmethod
-    def extract_tf(cls, resource: dict) -> ResourceExtract:
-        values = resource.get("values", {})
+    @staticmethod
+    def _extract(address: str, region: Optional[str], config: dict) -> ResourceExtract:
+        warning = blob_pricing_warning(address, config)
+        if warning:
+            warnings.warn(warning)
         return ResourceExtract(
-            resource_address=resource.get("address", ""),
+            resource_address=address,
             node_type="storage",
             provider="azure",
             service="BlobStorage",
-            region=values.get("location"),
-            config={
-                "accountTier": values.get("account_tier"),
-                "replicationType": values.get("account_replication_type"),
-                "accessTier": values.get("access_tier"),
-            },
+            region=region,
+            config=config,
         )
 
     @classmethod
+    def extract_tf(cls, resource: dict) -> ResourceExtract:
+        values = resource.get("values") or {}
+        return cls._extract(resource.get("address", ""), values.get("location"), {
+            "accountTier": values.get("account_tier"),
+            "replicationType": values.get("account_replication_type"),
+            "accessTier": values.get("access_tier"),
+        })
+
+    @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
-        inputs = resource.get("inputs", {})
-        return ResourceExtract(
-            resource_address=resource.get("id", ""),
-            node_type="storage",
-            provider="azure",
-            service="BlobStorage",
-            region=inputs.get("location"),
-            config={
-                "accountTier": inputs.get("accountTier"),
-                "replicationType": inputs.get("accountReplicationType"),
-            },
-        )
+        inputs = resource.get("inputs") or {}
+        tier, replication = inputs.get("accountTier"), inputs.get("accountReplicationType")
+        if tier is None and isinstance(inputs.get("sku"), dict):
+            # azure-native joins them in the SKU name, as in `Standard_GRS`.
+            tier, _, replication = (inputs["sku"].get("name") or "").partition("_")
+        return cls._extract(resource.get("id", ""), inputs.get("location"), {
+            "accountTier": tier or None,
+            "replicationType": replication or None,
+            "accessTier": inputs.get("accessTier"),
+        })
 
     @classmethod
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
@@ -1058,16 +1282,13 @@ class AzureBlobStorage(StorageResource):
     @classmethod
     def extract_arm(cls, resource: dict) -> ResourceExtract:
         # An ARM storage SKU joins tier and replication, as in `Standard_LRS`.
-        tier, _, replication = (_arm_sku_name(resource) or "").partition("_")
-        return ResourceExtract(
-            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
-            node_type="storage",
-            provider="azure",
-            service="BlobStorage",
-            region=arm_region(resource),
-            config={
-                "accountTier": tier or None,
-                "replicationType": replication or None,
-                "accessTier": _arm_properties(resource).get("accessTier"),
-            },
-        )
+        parameters = resource.get(ARM_PARAMETERS_KEY, {})
+        sku, _ = resolve_arm_value(_arm_sku_name(resource), parameters)
+        tier, _, replication = (sku if isinstance(sku, str) else "").partition("_")
+        access_tier, _ = resolve_arm_value(_arm_properties(resource).get("accessTier"),
+                                           parameters)
+        return cls._extract(resource.get(ARM_ADDRESS_KEY, ""), arm_region(resource), {
+            "accountTier": tier or None,
+            "replicationType": replication or None,
+            "accessTier": access_tier,
+        })

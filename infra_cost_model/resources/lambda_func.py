@@ -14,7 +14,8 @@ class LambdaFunction(ComputeResource):
     def valid_metrics(self) -> list[str]:
         return ["invocations", "avgDurationMs", "memoryMb"]
 
-    def derive_catalog_usage(self, usage: dict[str, float]) -> Optional[DerivedCatalogUsage]:
+    def derive_catalog_usage(self, usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
         """Derive requests and GB-seconds, the quantities Lambda bills.
 
         Duration and memory have no price of their own. They feed the

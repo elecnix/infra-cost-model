@@ -66,7 +66,8 @@ class TestExtract:
 
     def test_config_reads_arm_properties(self):
         nodes, _ = extract_fixture()
-        assert nodes[APIM]["config"]["skuName"] == "Consumption"
+        # The tier and the unit count, as Terraform's `sku_name` gives them (#375).
+        assert nodes[APIM]["config"]["skuName"] == "Consumption_0"
         assert nodes[APIM]["config"]["publisherName"] == "Orders Team"
         assert nodes[FUNC]["config"]["runtime"] == "python"
         assert nodes[COSMOS]["config"]["offerType"] == "Standard"
@@ -213,20 +214,19 @@ class TestCost:
         for addr in model["nodes"]:
             assert addr in costs, f"Node '{addr}' missing from costs"
 
-    def test_only_cosmos_reads_are_unpriced(self, seed_catalog):
+    def test_every_metric_is_priced(self, seed_catalog):
         """The seed prices the Azure handlers in eastus (#363).
 
-        Cosmos DB serverless bills request units, not reads, so the engine
-        reports `readRequests` as unpriced and prices every other metric.
+        Cosmos DB serverless bills request units, and the handler derives
+        them from the reads (#374).
         """
         nodes, _ = extract_fixture()
         engine = CostEngine(build_model(nodes), catalog=seed_catalog, time_basis="monthly")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             costs = engine.compute()
-        assert [(u.node, u.metric) for u in engine.unpriced_metrics] == [
-            (COSMOS, "readRequests")]
-        assert all(costs[addr] > 0 for addr in (APIM, FUNC, BLOB, OPENAI))
+        assert engine.unpriced_metrics == []
+        assert all(costs[addr] > 0 for addr in (APIM, FUNC, BLOB, OPENAI, COSMOS))
 
     def test_extracted_model_has_a_price(self, seed_catalog):
         nodes, _ = extract_fixture()

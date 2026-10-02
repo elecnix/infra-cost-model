@@ -1328,6 +1328,134 @@ METRIC_DESCRIPTORS.update({
 })
 
 
+# Products that the settings of a resource select (#375): the access tier and
+# redundancy of a storage account, the API Management tier, and Cosmos DB
+# provisioned throughput. Each entry gives the SKU, the meter and the unit
+# that Infracost prices, for the product of `_SETTINGS_PRODUCTS`. Azure
+# shares some meters between the SKUs of a tier: the SKU `Hot GRS` bills
+# reads on the meter `Hot Read Operations`, as `Hot LRS` does, `Hot RA-GRS`
+# bills writes on `Hot GRS Write Operations`, and `Hot GZRS` bills reads on
+# `Hot ZRS Read Operations`. The SKU filter still selects one product.
+_SETTINGS_PRODUCTS = {
+    "Blob": ("Storage", "BlobStorage", "General Block Blob v2"),
+    "APIM": ("API Management", "APIManagement", "API Management"),
+    "CosmosDB": ("Azure Cosmos DB", "CosmosDB", "Azure Cosmos DB"),
+}
+_SETTINGS_METERS = {
+    "Blob-Hot-ZRS-GB-Month": ("Hot ZRS", "Hot ZRS Data Stored", "1 GB/Month"),
+    "Blob-Hot-ZRS-Read-Operation": ("Hot ZRS", "Hot ZRS Read Operations", "10K"),
+    "Blob-Hot-ZRS-Write-Operation": ("Hot ZRS", "Hot ZRS Write Operations", "10K"),
+    "Blob-Hot-GRS-GB-Month": ("Hot GRS", "Hot GRS Data Stored", "1 GB/Month"),
+    "Blob-Hot-GRS-Read-Operation": ("Hot GRS", "Hot Read Operations", "10K"),
+    "Blob-Hot-GRS-Write-Operation": ("Hot GRS", "Hot GRS Write Operations", "10K"),
+    "Blob-Hot-RAGRS-GB-Month": ("Hot RA-GRS", "Hot RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Hot-RAGRS-Read-Operation": ("Hot RA-GRS", "Hot Read Operations", "10K"),
+    "Blob-Hot-RAGRS-Write-Operation": ("Hot RA-GRS", "Hot GRS Write Operations", "10K"),
+    "Blob-Hot-GZRS-GB-Month": ("Hot GZRS", "Hot GZRS Data Stored", "1 GB/Month"),
+    "Blob-Hot-GZRS-Read-Operation": ("Hot GZRS", "Hot ZRS Read Operations", "10K"),
+    "Blob-Hot-GZRS-Write-Operation": ("Hot GZRS", "Hot GZRS Write Operations", "10K"),
+    "Blob-Cool-LRS-GB-Month": ("Cool LRS", "Cool LRS Data Stored", "1 GB/Month"),
+    "Blob-Cool-LRS-Read-Operation": ("Cool LRS", "Cool Read Operations", "10K"),
+    "Blob-Cool-LRS-Write-Operation": ("Cool LRS", "Cool LRS Write Operations", "10K"),
+    "Blob-Cool-ZRS-GB-Month": ("Cool ZRS", "Cool ZRS Data Stored", "1 GB/Month"),
+    "Blob-Cool-ZRS-Read-Operation": ("Cool ZRS", "Cool ZRS Read Operations", "10K"),
+    "Blob-Cool-ZRS-Write-Operation": ("Cool ZRS", "Cool ZRS Write Operations", "10K"),
+    "Blob-Cool-GRS-GB-Month": ("Cool GRS", "Cool GRS Data Stored", "1 GB/Month"),
+    "Blob-Cool-GRS-Read-Operation": ("Cool GRS", "Cool Read Operations", "10K"),
+    "Blob-Cool-GRS-Write-Operation": ("Cool GRS", "Cool GRS Write Operations", "10K"),
+    "Blob-Cool-RAGRS-GB-Month": ("Cool RA-GRS", "Cool RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Cool-RAGRS-Read-Operation": ("Cool RA-GRS", "Cool Read Operations", "10K"),
+    "Blob-Cool-RAGRS-Write-Operation": ("Cool RA-GRS", "Cool GRS Write Operations", "10K"),
+    "Blob-Cool-GZRS-GB-Month": ("Cool GZRS", "Cool GZRS Data Stored", "1 GB/Month"),
+    "Blob-Cool-GZRS-Read-Operation": ("Cool GZRS", "Cool ZRS Read Operations", "10K"),
+    "Blob-Cool-GZRS-Write-Operation": ("Cool GZRS", "Cool GZRS Write Operations", "10K"),
+    "Blob-Cold-LRS-GB-Month": ("Cold LRS", "Cold LRS Data Stored", "1 GB/Month"),
+    "Blob-Cold-LRS-Read-Operation": ("Cold LRS", "Cold LRS Read Operations", "10K"),
+    "Blob-Cold-LRS-Write-Operation": ("Cold LRS", "Cold LRS Write Operations", "10K"),
+    "Blob-Cold-ZRS-GB-Month": ("Cold ZRS", "Cold ZRS Data Stored", "1 GB/Month"),
+    "Blob-Cold-ZRS-Read-Operation": ("Cold ZRS", "Cold ZRS Read Operations", "10K"),
+    "Blob-Cold-ZRS-Write-Operation": ("Cold ZRS", "Cold ZRS Write Operations", "10K"),
+    "Blob-Cold-GRS-GB-Month": ("Cold GRS", "Cold GRS Data Stored", "1 GB/Month"),
+    "Blob-Cold-GRS-Read-Operation": ("Cold GRS", "Cold GRS Read Operations", "10K"),
+    "Blob-Cold-GRS-Write-Operation": ("Cold GRS", "Cold GRS Write Operations", "10K"),
+    "Blob-Cold-RAGRS-GB-Month": ("Cold RA-GRS", "Cold RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Cold-RAGRS-Read-Operation": ("Cold RA-GRS", "Cold RA-GRS Read Operations", "10K"),
+    "Blob-Cold-RAGRS-Write-Operation": ("Cold RA-GRS", "Cold RA-GRS Write Operations", "10K"),
+    "Blob-Cold-GZRS-GB-Month": ("Cold GZRS", "Cold GZRS Data Stored", "1 GB/Month"),
+    "Blob-Cold-GZRS-Read-Operation": ("Cold GZRS", "Cold GZRS Read Operations", "10K"),
+    "Blob-Cold-GZRS-Write-Operation": ("Cold GZRS", "Cold GZRS Write Operations", "10K"),
+    "Blob-Cold-RAGZRS-GB-Month": ("Cold RA-GZRS", "Cold RA-GZRS Data Stored", "1 GB/Month"),
+    "Blob-Cold-RAGZRS-Read-Operation": ("Cold RA-GZRS", "Cold RA-GZRS Read Operations", "10K"),
+    "Blob-Cold-RAGZRS-Write-Operation": ("Cold RA-GZRS", "Cold RA-GZRS Write Operations", "10K"),
+    "Blob-Archive-LRS-GB-Month": ("Archive LRS", "Archive LRS Data Stored", "1 GB/Month"),
+    "Blob-Archive-LRS-Read-Operation": ("Archive LRS", "Archive Read Operations", "10K"),
+    "Blob-Archive-LRS-Write-Operation": ("Archive LRS", "Archive LRS Write Operations", "10K"),
+    "Blob-Archive-GRS-GB-Month": ("Archive GRS", "Archive GRS Data Stored", "1 GB/Month"),
+    "Blob-Archive-GRS-Read-Operation": ("Archive GRS", "Archive Read Operations", "10K"),
+    "Blob-Archive-GRS-Write-Operation": ("Archive GRS", "Archive GRS Write Operations", "10K"),
+    "Blob-Archive-RAGRS-GB-Month": ("Archive RA-GRS", "Archive RA-GRS Data Stored", "1 GB/Month"),
+    "Blob-Archive-RAGRS-Read-Operation": ("Archive RA-GRS", "Archive Read Operations", "10K"),
+    "Blob-Archive-RAGRS-Write-Operation": ("Archive RA-GRS", "Archive GRS Write Operations", "10K"),
+    "APIM-Developer-Unit-Hour": ("Developer", "Developer Unit", "1 Hour"),
+    "APIM-Basic-Unit-Hour": ("Basic", "Basic Unit", "1 Hour"),
+    "APIM-Standard-Unit-Hour": ("Standard", "Standard Unit", "1 Hour"),
+    "APIM-Premium-Unit-Hour": ("Premium", "Premium Unit", "1 Hour"),
+    "APIM-Isolated-Unit-Hour": ("Isolated", "Isolated Unit", "1 Hour"),
+    "APIM-BasicV2-Unit-Hour": ("Basic v2", "Basic v2 Unit", "1 Hour"),
+    "APIM-StandardV2-Unit-Hour": ("Standard v2", "Standard v2 Unit", "1 Hour"),
+    "APIM-PremiumV2-Unit-Hour": ("Premium v2", "Premium v2 Unit", "1 Hour"),
+    "APIM-BasicV2-Call": ("Basic v2", "Basic v2 Calls", "10K"),
+    "APIM-StandardV2-Call": ("Standard v2", "Standard v2 Calls", "10K"),
+    "CosmosDB-Provisioned-100RU-Hour": ("RUs", "100 RU/s", "1/Hour"),
+    "CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour": ("mRUs", "100 Multi-master RU/s", "1/Hour"),
+}
+_STORE_UNITS = {"10K": ("requests", 10_000), "1 GB/Month": ("GB-Mo", 1),
+                "1 Hour": ("hours", 1), "1/Hour": ("hours", 1)}
+
+
+def _settings_descriptor(metric: str, sku: str, meter: str, unit: str) -> dict:
+    service, store_service, product = _SETTINGS_PRODUCTS[metric.split("-")[0]]
+    store_unit, scale = _STORE_UNITS[unit]
+    descriptor = {
+        "vendor": "azure", "service": service, "store_service": store_service,
+        "attribute_filters": [{"key": "productName", "value": product},
+                              {"key": "skuName", "value": sku},
+                              {"key": "meterName", "value": meter}],
+        "unit": unit, "store_unit": store_unit,
+    }
+    if scale != 1:
+        descriptor["unit_scale"] = scale
+    return descriptor
+
+
+METRIC_DESCRIPTORS.update({
+    metric: _settings_descriptor(metric, *product)
+    for metric, product in _SETTINGS_METERS.items()
+})
+
+
+# Cloud Storage classes other than Standard, in a single region (#375). The
+# regional catalogue has each class's storage under its own resource group,
+# beside the dual-region product, which the pattern leaves out. The
+# operations are in the global catalogue.
+for _class in ("Nearline", "Coldline", "Archive"):
+    METRIC_DESCRIPTORS[f"GCS-{_class}-GiB-Month"] = {
+        "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+        "attribute_filters": [{"key": "resourceGroup", "value": f"{_class}Storage"}],
+        "attribute_patterns": {
+            "description": rf"{_class} Storage (?!.*(Dual-region|Multi-region)).*"},
+        "unit": "gibibyte month",
+    }
+    for _ops in ("A", "B"):
+        METRIC_DESCRIPTORS[f"GCS-{_class}-Class-{_ops}-Operation"] = {
+            "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+            "query_region": "global",
+            "attribute_filters": [{"key": "description",
+                                   "value": f"Regional {_class} Class {_ops} Operations"}],
+            "unit": "count",
+        }
+
+
 def _live_auth_intended(client: "InfracostClient") -> bool:
     """Whether the caller intended a live sync (a credential is present)."""
     return client.is_authenticated()
