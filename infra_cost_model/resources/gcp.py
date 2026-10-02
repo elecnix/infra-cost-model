@@ -11,7 +11,11 @@ import re
 import warnings
 from typing import Any, Optional
 
-from infra_cost_model.pricing.sources.infracost import GCS_LOCATIONS, GCS_MULTI_REGIONS
+from infra_cost_model.pricing.sources.infracost import (
+    FUNCTIONS_GEN1_UNPRICED_REGIONS,
+    GCS_LOCATIONS,
+    GCS_MULTI_REGIONS,
+)
 
 from .types import (
     ComputeResource, DerivedCatalogUsage, StorageResource, RoutingResource, ResourceExtract,
@@ -22,6 +26,14 @@ from .types import (
 # memory.
 _FUNCTION_CPU_GHZ = ((128, 0.2), (256, 0.4), (512, 0.8), (1024, 1.4),
                      (2048, 2.4), (4096, 4.8), (8192, 4.8))
+
+
+class Gen1FunctionRegionWarning(UserWarning):
+    """A 1st gen Cloud Function in a region our catalog has no rows for (#400).
+
+    A category of its own, so a caller can tell it apart from an unpriced
+    metric caused by a catalog with no rows at all, and turn it into an error.
+    """
 
 
 class CloudFunction(ComputeResource):
@@ -65,53 +77,56 @@ class CloudFunction(ComputeResource):
             return cls()
         return None
 
-    @classmethod
-    def extract_tf(cls, resource: dict) -> ResourceExtract:
-        values = resource.get("values", {})
+    @staticmethod
+    def _extract(address: str, region: Any, config: dict) -> ResourceExtract:
+        """Extract a 1st gen function, warning where the catalog has no rows.
+
+        An unset region stays silent: CloudFormation never states one, so the
+        check could not be made for every CDK function, and the engine's
+        unpriced-metric warning still fires on the missing rows.
+        """
+        if _lower(region) in FUNCTIONS_GEN1_UNPRICED_REGIONS:
+            warnings.warn(Gen1FunctionRegionWarning(
+                f"{address}: the catalog has no 1st gen Cloud Run functions rows "
+                f"for {region}, so the engine reports this function's usage as "
+                f"unpriced. A google_cloudfunctions2_function (2nd gen) is priced "
+                f"at Cloud Run rates in every region."
+            ))
         return ResourceExtract(
-            resource_address=resource.get("address", ""),
+            resource_address=address,
             node_type="compute",
             provider="gcp",
             service="CloudFunctions",
-            region=values.get("region"),
-            config={
-                "memoryMb": values.get("available_memory_mb"),
-                "timeout": values.get("timeout"),
-                "runtime": values.get("runtime"),
-            },
+            region=region,
+            config=config,
         )
+
+    @classmethod
+    def extract_tf(cls, resource: dict) -> ResourceExtract:
+        values = resource.get("values", {})
+        return cls._extract(resource.get("address", ""), values.get("region"), {
+            "memoryMb": values.get("available_memory_mb"),
+            "timeout": values.get("timeout"),
+            "runtime": values.get("runtime"),
+        })
 
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
-        return ResourceExtract(
-            resource_address=resource.get("id", ""),
-            node_type="compute",
-            provider="gcp",
-            service="CloudFunctions",
-            region=inputs.get("region"),
-            config={
-                "memoryMb": inputs.get("availableMemoryMb"),
-                "timeout": inputs.get("timeout"),
-                "runtime": inputs.get("runtime"),
-            },
-        )
+        return cls._extract(resource.get("id", ""), inputs.get("region"), {
+            "memoryMb": inputs.get("availableMemoryMb"),
+            "timeout": inputs.get("timeout"),
+            "runtime": inputs.get("runtime"),
+        })
 
     @classmethod
     def extract_cdk(cls, resource: dict) -> ResourceExtract:
         properties = resource.get("Properties", {})
-        return ResourceExtract(
-            resource_address=resource.get("LogicalId", ""),
-            node_type="compute",
-            provider="gcp",
-            service="CloudFunctions",
-            region=None,
-            config={
-                "memoryMb": properties.get("AvailableMemoryMb"),
-                "timeout": properties.get("Timeout"),
-                "runtime": properties.get("Runtime"),
-            },
-        )
+        return cls._extract(resource.get("LogicalId", ""), None, {
+            "memoryMb": properties.get("AvailableMemoryMb"),
+            "timeout": properties.get("Timeout"),
+            "runtime": properties.get("Runtime"),
+        })
 
 
 # Cloud Run functions (2nd gen): the vCPUs that each memory size gets by

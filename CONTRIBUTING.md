@@ -66,6 +66,8 @@ When the provider's pricing page states other tier bounds than the Infracost API
 
 When the Infracost API has no price for an Azure meter in a region, the sync reads the public Azure Retail Prices API, which Infracost copies ([#376](https://github.com/elecnix/infra-cost-model/issues/376)). A descriptor with `azure_retail` always reads that API. Its rows have the source `azure-retail`, and they replace seed rows the way Infracost rows do. Azure bills internet egress by zone. When a region lacks the egress meter in that API too, `AZURE_EGRESS_METER_FALLBACK` names a region of the same zone to read the meter from ([#392](https://github.com/elecnix/infra-cost-model/issues/392)).
 
+Some synced GCP regions hold no 1st gen Cloud Run functions row, so `FUNCTIONS_GEN1_UNPRICED_REGIONS` lists them and the 1st gen handler warns at extraction, naming the 2nd gen resource that is priced at Cloud Run rates ([#400](https://github.com/elecnix/infra-cost-model/issues/400)). The warning states what the catalog lacks, not what the provider sells; the set's membership is unverified, so confirm it against the API with a working credential before trusting it.
+
 A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. Examples, provider registration and price rows use that identity. A few rows for a cloud provider's own services, such as Amazon Cognito, come from outside the live catalog. They go in the directory for that provider (`aws`, `azure` or `gcp`). `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
 
 ## Development
