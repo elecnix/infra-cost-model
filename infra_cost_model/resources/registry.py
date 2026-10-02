@@ -28,9 +28,10 @@ from .gcp import CloudFunction, CloudFunctionGen2, CloudStorage, CloudRun, Fires
 from .azure import (
     AppServicePlan, AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureOpenAIDeployment,
     AzureBlobStorage, ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, COGNITIVE_ACCOUNTS_KEY,
-    SERVICE_PLANS_KEY, cognitive_accounts_from_arm, cognitive_accounts_from_pulumi,
-    cognitive_accounts_from_tf, resolve_arm_value, service_plans_from_arm,
-    service_plans_from_pulumi, service_plans_from_tf,
+    COSMOS_THROUGHPUT_KEY, SERVICE_PLANS_KEY, cognitive_accounts_from_arm,
+    cognitive_accounts_from_pulumi, cognitive_accounts_from_tf, cosmos_throughput_from_arm,
+    cosmos_throughput_from_pulumi, cosmos_throughput_from_tf, resolve_arm_value,
+    service_plans_from_arm, service_plans_from_pulumi, service_plans_from_tf,
 )
 from .misc_services import SecretsManagerSecret, ECRRepository, Route53Zone
 from .kms import KMSKey
@@ -308,6 +309,8 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
     plans = service_plans_from_tf(resources)
     # OpenAI deployments run in their account's region (#371).
     accounts = cognitive_accounts_from_tf(resources)
+    # Cosmos DB accounts bill the throughput of their databases (#399).
+    throughput = cosmos_throughput_from_tf(resources)
 
     for resource in resources:
         if isinstance(resource, dict):
@@ -315,7 +318,8 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
             if addr:
                 extracted = ResourceRegistry.extract(
                     addr, {**resource, SERVICE_PLANS_KEY: plans,
-                           COGNITIVE_ACCOUNTS_KEY: accounts}, "terraform")
+                           COGNITIVE_ACCOUNTS_KEY: accounts,
+                           COSMOS_THROUGHPUT_KEY: throughput}, "terraform")
                 if extracted:
                     results[addr] = extracted
                 else:
@@ -352,6 +356,8 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
     plans = service_plans_from_pulumi(resources)
     # OpenAI deployments run in their account's region (#371).
     accounts = cognitive_accounts_from_pulumi(resources)
+    # Cosmos DB accounts bill the throughput of their databases (#399).
+    throughput = cosmos_throughput_from_pulumi(resources)
 
     for resource in resources:
         if isinstance(resource, dict):
@@ -359,7 +365,8 @@ def extract_resources_from_pulumi(pulumi_json: dict) -> dict[str, dict]:
             if addr:
                 extracted = ResourceRegistry.extract(
                     addr, {**resource, SERVICE_PLANS_KEY: plans,
-                           COGNITIVE_ACCOUNTS_KEY: accounts}, "pulumi")
+                           COGNITIVE_ACCOUNTS_KEY: accounts,
+                           COSMOS_THROUGHPUT_KEY: throughput}, "pulumi")
                 if extracted:
                     results[addr] = extracted
                 else:
@@ -491,10 +498,13 @@ def extract_resources_from_arm(arm_json: dict) -> dict[str, dict]:
     plans = service_plans_from_arm(resources)
     # OpenAI deployments run in their account's region (#371).
     accounts = cognitive_accounts_from_arm(resources)
+    # Cosmos DB accounts bill the throughput of their databases (#399).
+    throughput = cosmos_throughput_from_arm(resources)
 
     for addr, resource in resources:
         resource_data = {**resource, SERVICE_PLANS_KEY: plans,
-                         COGNITIVE_ACCOUNTS_KEY: accounts}
+                         COGNITIVE_ACCOUNTS_KEY: accounts,
+                         COSMOS_THROUGHPUT_KEY: throughput}
         extracted = ResourceRegistry.extract(addr, resource_data, "arm")
         if extracted:
             results[addr] = extracted

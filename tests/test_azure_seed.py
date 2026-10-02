@@ -84,12 +84,21 @@ def settings_metrics() -> set[tuple[str, str]]:
                 "BasicV2", "StandardV2", "PremiumV2")]),
         "CosmosDB": (CosmosDB, [
             {"capacityMode": "provisioned", "multiRegionWrites": multi}
-            for multi in (False, True)]),
+            for multi in (False, True)]
+            # Autoscale, whose throughput the databases set (#399).
+            + [{"capacityMode": "provisioned", "autoscaleMaxRuPerSecond": 4000}]),
     }
     return {(service, metric)
             for service, (handler, variants) in configs.items()
             for config in variants
-            for metric in handler().catalog_metrics_for(config).values()}
+            for metric in catalog_names(handler, config)}
+
+
+def catalog_names(handler, config) -> list[str]:
+    """The catalog metrics a config selects, from a name or a units mapping."""
+    return [name
+            for value in handler().catalog_metrics_for(config).values()
+            for name in (value if isinstance(value, dict) else [value])]
 
 
 def test_every_azure_row_belongs_to_a_handler_metric():
