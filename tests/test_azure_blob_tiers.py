@@ -15,7 +15,7 @@ import pytest
 from infra_cost_model.engine.engine import CostEngine
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
 from infra_cost_model.pricing.sources import infracost as ic
-from infra_cost_model.resources.azure import AzureBlobStorage
+from infra_cost_model.resources.azure import AzureBlobStorage, _BLOB_COOL_TIERS
 from infra_cost_model.resources.registry import extract_resources_from_tf
 
 REGION = "eastus"
@@ -101,7 +101,18 @@ def test_hot_tier_has_no_retrieval_metric():
 
 
 @pytest.mark.parametrize("tier,window", [("Cool", 30), ("Cold", 90), ("Archive", 180)])
+def test_the_minimum_retention_windows_are_azure_s(tier, window):
+    """Azure charges a Cool blob deleted under 30 days, a Cold one under 90
+    and an Archive one under 180
+    (https://azure.microsoft.com/en-us/pricing/details/storage/blobs/)."""
+    assert _BLOB_COOL_TIERS == {"Cool": 30, "Cold": 90, "Archive": 180}
+    assert _BLOB_COOL_TIERS[tier] == window
+
+
+@pytest.mark.parametrize("tier,window", [("Cool", 30), ("Cold", 90), ("Archive", 180)])
 def test_early_deletion_costs_the_tier_s_whole_window(seed_catalog, tier, window):
+    """Azure prices an early deletion at the tier's storage price for the
+    whole minimum-retention window."""
     """Azure prices an early deletion at the tier's storage price for the
     whole minimum-retention window."""
     address = "azurerm_storage_account.cold_blobs"
