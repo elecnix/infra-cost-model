@@ -26,7 +26,7 @@ from .ecs import ECSFargateService
 from .alb import ApplicationLoadBalancer
 from .gcp import CloudFunction, CloudFunctionGen2, CloudStorage, CloudRun, Firestore
 from .azure import (
-    AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureOpenAIDeployment,
+    AppServicePlan, AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureOpenAIDeployment,
     AzureBlobStorage, ARM_ADDRESS_KEY, ARM_PARAMETERS_KEY, COGNITIVE_ACCOUNTS_KEY,
     SERVICE_PLANS_KEY, cognitive_accounts_from_arm, cognitive_accounts_from_pulumi,
     cognitive_accounts_from_tf, resolve_arm_value, service_plans_from_arm,
@@ -264,6 +264,7 @@ ResourceRegistry.register(Firestore)
 # Azure handlers (DP#6: multi-cloud support)
 ResourceRegistry.register(APIManagement)
 ResourceRegistry.register(AzureFunction)
+ResourceRegistry.register(AppServicePlan)
 ResourceRegistry.register(CosmosDB)
 ResourceRegistry.register(AzureOpenAI)
 ResourceRegistry.register(AzureOpenAIDeployment)

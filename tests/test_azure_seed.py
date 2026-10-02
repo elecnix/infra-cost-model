@@ -6,6 +6,8 @@ Prices API (https://prices.azure.com/api/retail/prices), which the row's
 `source` names with the meter ID.
 """
 import json
+
+from infra_cost_model.pricing.sources import infracost as ic
 import warnings
 
 import pytest
@@ -94,6 +96,8 @@ def test_every_azure_row_belongs_to_a_handler_metric():
     known = {(handler().catalog_services.get(m, service), m)
              for handler, service, metrics in HANDLER_METRICS for m in metrics}
     known |= settings_metrics()
+    # App Service plans and Function App plans (#383).
+    known |= {(service, metric) for metric, (_, service, *_) in ic._PLAN_METERS.items()}
     for row in azure_rows():
         if row.service == "AzureOpenAI":
             # Each model and deployment type has rows of its own (#371).

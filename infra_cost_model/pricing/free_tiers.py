@@ -61,6 +61,10 @@ ACCOUNT_WIDE_FREE_TIERS: frozenset[tuple[str, str, str]] = frozenset({
     ("gcp", "CloudRun", "CloudRun-Request"),
     ("gcp", "CloudRun", "CloudRun-vCPU-Second"),
     ("gcp", "CloudRun", "CloudRun-GiB-Second"),
+    # Flex Consumption's on-demand grant of 250,000 executions and 100,000
+    # GB-s is also per subscription (#383).
+    ("azure", "AzureFunctionsFlexConsumption", "AzureFunctionsFlex-Execution"),
+    ("azure", "AzureFunctionsFlexConsumption", "AzureFunctionsFlex-GB-Second"),
 })
 
 
@@ -158,6 +162,8 @@ FREE_ALLOWANCES: dict[tuple[str, str, str], float] = {
     # Azure Retail Prices API (#363): the first tier of each meter is $0.
     ("azure", "AzureFunctions", "AzureFunctions-Execution"): 1_000_000,
     ("azure", "AzureFunctions", "AzureFunctions-GB-Second"): 400_000,
+    ("azure", "AzureFunctionsFlexConsumption", "AzureFunctionsFlex-Execution"): 250_000,
+    ("azure", "AzureFunctionsFlexConsumption", "AzureFunctionsFlex-GB-Second"): 100_000,
     ("azure", "APIManagement", "APIM-Consumption-Call"): 1_000_000,
     # The v2 tiers include calls each month (#375). Azure counts them for
     # each instance, and the catalog for the region.

@@ -500,7 +500,8 @@ def test_every_azure_and_gcp_descriptor_is_covered():
     # test_azure_openai_models.py covers the Azure OpenAI descriptors (#371).
     new = {m for m, d in ic.METRIC_DESCRIPTORS.items() if d.get("vendor") in ("azure", "gcp")
            and d.get("store_service") != "AzureOpenAI" and m not in ic._SETTINGS_METERS
-           and not m.startswith(("GCS-Nearline-", "GCS-Coldline-", "GCS-Archive-"))}
+           and not m.startswith(("GCS-Nearline-", "GCS-Coldline-", "GCS-Archive-"))
+           and m not in ic._PLAN_METERS}
     # test_azure_resource_settings.py and test_gcp_resource_settings.py cover
     # the descriptors of #375.
     assert new == covered
