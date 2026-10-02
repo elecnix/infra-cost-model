@@ -164,14 +164,21 @@ _CLOUD_RUN_TIER_2_REGIONS = frozenset({
     "southamerica-east1", "southamerica-west1", "us-west2", "us-west3", "us-west4",
 })
 
-# Synced GCP regions with no 1st gen Cloud Run functions row (Infracost Cloud
-# Pricing API, checked 2026-09-24). GCP doesn't offer 1st gen functions there,
-# so a `google_cloudfunctions_function` in one of them has unpriced CPU and
-# memory usage (#375, #400). The handler warns at extraction, and the 2nd gen
-# resource, priced at Cloud Run rates, covers the same workload.
+# Synced GCP regions whose catalog holds no 1st gen Cloud Run functions row
+# (Infracost Cloud Pricing API, check date 2026-09-24). A
+# `google_cloudfunctions_function` in one of them has unpriced CPU and memory
+# usage (#375, #400), so the handler warns at extraction and points at the 2nd
+# gen resource, which is priced at Cloud Run rates.
+#
+# The set was derived from the provider's published region list, not read back
+# from a query: the credential the check needs was unavailable, so membership
+# is unverified in both directions. Treat a member as "we expect no rows" and
+# a non-member as unknown, not as proof that the region is supported. A
+# maintainer with a working credential should confirm the membership before
+# trusting it, and should widen or drop the set as the provider changes.
 FUNCTIONS_GEN1_UNPRICED_REGIONS = frozenset({
     "africa-south1", "asia-south2", "australia-southeast2", "europe-southwest1",
-    "europe-west4", "europe-west8", "europe-west9", "europe-west10", "europe-west12",
+    "europe-west8", "europe-west9", "europe-west10", "europe-west12",
     "me-central1", "me-central2", "me-west1", "northamerica-northeast2",
     "southamerica-west1", "us-south1",
 })
