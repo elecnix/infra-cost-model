@@ -26,6 +26,19 @@ class SQSQueue(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["messagesSent", "messagesReceived"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # Sending and receiving are each one request, and both bill the same row.
+        return {"messagesSent": "SQS-Standard-Request",
+                "messagesReceived": "SQS-Standard-Request"}
+
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        """A FIFO queue prices its requests under the FIFO row."""
+        if not (config or {}).get("fifoQueue"):
+            return self.catalog_metrics
+        return {"messagesSent": "SQS-FIFO-Request",
+                "messagesReceived": "SQS-FIFO-Request"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["SQSQueue"]:
         if (resource_address.startswith("aws_sqs_queue.") or

@@ -23,7 +23,7 @@ nodes:
     region: us-east-1
     service: AmazonAPIGatewayHTTP
     usageMetrics:
-      APIGateway-HTTP-Request: { unit: requests, value: 1 }
+      requests: { unit: requests, value: 1 }
 
   # An HTTP API has no egress price of its own. AWS bills the response bytes
   # as data transfer out to the internet.
@@ -99,7 +99,7 @@ nodes:
     service: AmazonDynamoDB
     usageMetrics:
       # One read per call. The edge from get_products carries rate 3.
-      Dynamo-ReadRequest: { unit: requests, value: 1 }
+      readRequests: { unit: requests, value: 1 }
 
   aws_dynamodb_table.orders:
     nodeType: storage
@@ -108,7 +108,7 @@ nodes:
     region: us-east-1
     service: AmazonDynamoDB
     usageMetrics:
-      Dynamo-WriteRequest: { unit: requests, value: 1 }
+      writeRequests: { unit: requests, value: 1 }
 
   aws_sqs_queue.order_queue:
     nodeType: routing
@@ -117,7 +117,7 @@ nodes:
     region: us-east-1
     service: AmazonSQS
     usageMetrics:
-      SQS-Standard-Request: { unit: requests, value: 1 }
+      messagesSent: { unit: requests, value: 1 }
 
   external_api.stripe:
     nodeType: external
@@ -142,7 +142,7 @@ nodes:
     region: us-east-1
     service: AmazonSNS
     usageMetrics:
-      SNS-Publish: { unit: requests, value: 1 }
+      publishes: { unit: requests, value: 1 }
 
 edges:
   # Every response leaves AWS as data transfer out

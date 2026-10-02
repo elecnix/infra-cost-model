@@ -15,6 +15,16 @@ class APIGatewayHTTP(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["requests", "dataOutGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # AWS bills the response body as data transfer out, like S3 egress (#332).
+        return {"requests": "APIGateway-HTTP-Request",
+                "dataOutGb": "DataTransfer-Internet-Out-GB"}
+
+    @property
+    def catalog_services(self) -> dict[str, str]:
+        return {"DataTransfer-Internet-Out-GB": "AWSDataTransfer"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> ResourceExtract | None:
         """Parse resource address to determine if it's HTTP API v2."""
