@@ -14,6 +14,7 @@ broken live path can't masquerade as success.
 """
 
 import dataclasses
+import difflib
 import os
 import json
 import re
@@ -22,7 +23,7 @@ import warnings
 import requests
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from infra_cost_model.pricing.free_tiers import (
     FREE_ALLOWANCES, FREE_ALLOWANCE_REGIONS, SPEND_BASED_FREE_TIERS,
@@ -275,6 +276,320 @@ def _close_open_tiers(prices: list[dict]) -> list[dict]:
     return closed
 
 
+class DescriptorError(ValueError):
+    """A metric descriptor is not a valid Infracost product query.
+
+    Raised at import, when ``METRIC_DESCRIPTORS`` is validated, so a typo in a
+    field name fails the import instead of pricing the metric at $0.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class DescriptorField:
+    """One declared key of the descriptor DSL: what it accepts and what it does.
+
+    ``types`` are the types the value may have, ``check`` states a rule a type
+    alone cannot (``unit_scale`` must be positive, an ``attribute_patterns``
+    value must compile), and ``required`` marks a key every descriptor needs.
+    """
+    types: tuple
+    required: bool = False
+    check: Optional[Callable[[object], Optional[str]]] = None
+    doc: str = ""
+
+
+_VENDORS = ("aws", "azure", "gcp")
+
+
+def _non_empty_str(value) -> Optional[str]:
+    return None if isinstance(value, str) and value else "expected a non-empty str"
+
+
+def _filters(value) -> Optional[str]:
+    """Every filter names the attribute and the value it must equal."""
+    if not isinstance(value, list) or not value:
+        return "expected a non-empty list of {'key': ..., 'value': ...} filters"
+    for f in value:
+        if not isinstance(f, dict) or set(f) != {"key", "value"}:
+            return f"expected a dict with exactly 'key' and 'value', got {f!r}"
+        for k in ("key", "value"):
+            if not isinstance(f[k], str) or not f[k]:
+                return f"expected a non-empty str for {k!r}, got {f[k]!r}"
+    return None
+
+
+def _patterns(value) -> Optional[str]:
+    """Every pattern is a regex matched against one attribute with ``fullmatch``."""
+    if not isinstance(value, dict) or not value:
+        return "expected a non-empty dict of attribute name -> regex"
+    for key, pattern in value.items():
+        if not isinstance(key, str) or not key:
+            return f"expected a non-empty str attribute name, got {key!r}"
+        if not isinstance(pattern, str) or not pattern:
+            return f"expected a non-empty str regex for {key!r}, got {pattern!r}"
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            return f"regex for {key!r} does not compile: {exc}"
+    return None
+
+
+def _unit(value) -> Optional[str]:
+    """One unit, or the spellings of it in preference order."""
+    if isinstance(value, str):
+        return _non_empty_str(value)
+    if isinstance(value, list) and value:
+        return None if all(isinstance(v, str) and v for v in value) \
+            else "expected a list of non-empty str"
+    return "expected a non-empty str, or a list of them"
+
+
+def _positive_number(value) -> Optional[str]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "expected a number"
+    return None if value > 0 else "expected a number greater than 0"
+
+
+def _vendor(value) -> Optional[str]:
+    return None if value in _VENDORS else f"expected one of {', '.join(_VENDORS)}"
+
+
+def _str_list(value) -> Optional[str]:
+    if not isinstance(value, list) or not value:
+        return "expected a non-empty list of str"
+    return None if all(isinstance(v, str) and v for v in value) \
+        else "expected a list of non-empty str"
+
+
+# The field set of the descriptor DSL. A descriptor is a plain dict read by
+# string literal in ``sync_to_cache`` and the three selectors, so without this
+# declaration nothing says which keys exist: a misspelled one is dropped, the
+# query goes out without the filter it meant, and the metric stores nothing and
+# prices $0. `validate_descriptors` checks every descriptor against these keys,
+# at import.
+DESCRIPTOR_FIELDS: dict[str, DescriptorField] = {
+    # Which product to ask for
+    "service": DescriptorField((str,), required=True, check=_non_empty_str,
+                               doc="Infracost service to query (required)"),
+    "vendor": DescriptorField((str,), check=_vendor,
+                              doc="Cloud the product belongs to; defaults to the caller's"),
+    "product_family": DescriptorField((str,), check=_non_empty_str,
+                                      doc="Infracost product family, when the service holds many"),
+    "purchase_option": DescriptorField((str,), check=_non_empty_str,
+                                       doc="purchaseOption filter, e.g. on_demand"),
+    "attribute_filters": DescriptorField((list,), check=_filters,
+                                         doc="attributeFilters; REGION_PREFIX and GCP_LOCATION resolve at query time"),
+    "attribute_patterns": DescriptorField((dict,), check=_patterns,
+                                          doc="attributes a regex must fullmatch, for values only a pattern can select"),
+    # Which catalogue to read
+    "query_region": DescriptorField((str,),
+                                    doc="region to query; '' for the global catalogue"),
+    "global_scope": DescriptorField((bool,),
+                                    doc="the products sit in the global (region=\"\") catalogue"),
+    "unprefixed_in_us_east_1": DescriptorField((bool,),
+                                               doc="us-east-1 names its usagetype without the region prefix"),
+    "region_pair_source": DescriptorField((bool,),
+                                          doc="one rate per region pair; store the modal price"),
+    "regionless_usagetype": DescriptorField((bool,),
+                                            doc="one usagetype per source region in the global catalogue"),
+    "usagetype_base": DescriptorField((str,), check=_non_empty_str,
+                                      doc="the usagetype without its region prefix, for regionless_usagetype"),
+    "usagetype_suffix": DescriptorField((str,), check=_non_empty_str,
+                                        doc="the usagetype tail a region pair must end in, for region_pair_source"),
+    "usagetype_exclude": DescriptorField((list,), check=_str_list,
+                                         doc="sibling usagetypes to drop, e.g. a $0 provisioned row"),
+    # What to store
+    "store_service": DescriptorField((str,), check=_non_empty_str,
+                                     doc="service the engine queries, when the provider bills under another"),
+    "store_unit": DescriptorField((str,), check=_non_empty_str,
+                                  doc="unit of the stored rows, when the API spells it differently"),
+    "unit": DescriptorField((str, list), check=_unit,
+                            doc="the product's unit, or its spellings in preference order"),
+    "unit_scale": DescriptorField((int, float), check=_positive_number,
+                                  doc="units per price: 10,000 for a meter priced per 10K block"),
+    "azure_retail": DescriptorField((bool,),
+                                    doc="read the meter from the Azure Retail Prices API instead"),
+}
+
+
+def validate_descriptors(descriptors: Optional[dict] = None) -> int:
+    """Check every descriptor against ``DESCRIPTOR_FIELDS``; return how many.
+
+    Called at import with no argument, so a descriptor that names a field the
+    DSL does not declare, omits a required one, or holds a value the wrong type
+    stops the import. Without it the bad key is dropped and the metric stores
+    no rows, which the engine reads as a $0 price.
+
+    Raises ``DescriptorError`` naming every offending descriptor at once, so
+    one import error lists all of them.
+    """
+    if descriptors is None:
+        descriptors = METRIC_DESCRIPTORS
+    known = set(DESCRIPTOR_FIELDS)
+    problems: list[str] = []
+    for metric, descriptor in descriptors.items():
+        if not isinstance(descriptor, dict):
+            problems.append(f"{metric}: expected a dict, got {descriptor!r}")
+            continue
+        here = len(problems)
+        for name, value in descriptor.items():
+            field = DESCRIPTOR_FIELDS.get(name)
+            if field is None:
+                near = difflib.get_close_matches(name, sorted(known), n=1)
+                hint = f"; did you mean '{near[0]}'" if near else ""
+                problems.append(
+                    f"{metric}: '{name}' is not a descriptor field{hint}. "
+                    f"Declared fields: {', '.join(sorted(known))}")
+                continue
+            if not isinstance(value, field.types):
+                types = " or ".join(t.__name__ for t in field.types)
+                problems.append(
+                    f"{metric}: '{name}' must be {types}, got {type(value).__name__}")
+                continue
+            if field.check is not None:
+                problem = field.check(value)
+                if problem and not problem.endswith(f", got {value!r}"):
+                    problem = f"{problem}, got {value!r}"
+                if problem:
+                    problems.append(f"{metric}: '{name}' {problem}")
+        for name, field in DESCRIPTOR_FIELDS.items():
+            if field.required and name not in descriptor:
+                problems.append(f"{metric}: '{name}' is required ({field.doc})")
+        if len(problems) == here:
+            # A field already reported wrong says nothing about the pairs it
+            # takes part in; reporting both buries the first, real problem.
+            problems.extend(_cross_field_problems(metric, descriptor))
+    if problems:
+        raise DescriptorError(
+            f"{len(problems)} problem(s) in METRIC_DESCRIPTORS:\n  "
+            + "\n  ".join(problems))
+    return len(descriptors)
+
+
+def _cross_field_problems(metric: str, descriptor: dict) -> list[str]:
+    """Rules that hold between two fields of the same descriptor."""
+    problems = []
+    if descriptor.get("unit_scale", 1) != 1 and not descriptor.get("store_unit"):
+        problems.append(
+            f"{metric}: 'unit_scale' without 'store_unit' would store a row priced "
+            f"per unit of the API's block unit")
+    if descriptor.get("regionless_usagetype") and not descriptor.get("usagetype_base"):
+        problems.append(f"{metric}: 'regionless_usagetype' needs 'usagetype_base'")
+    if descriptor.get("region_pair_source") and descriptor.get("regionless_usagetype"):
+        problems.append(
+            f"{metric}: 'region_pair_source' and 'regionless_usagetype' select "
+            f"different rows; a descriptor may name only one")
+    return problems
+
+
+@dataclasses.dataclass(frozen=True)
+class PriceQuery:
+    """A metric descriptor resolved for one region: the parse step's output.
+
+    Everything ``sync_to_cache`` needs, with the descriptor's per-region
+    choices already made: the catalogue to read, the filters to send, which
+    selector keeps the rows, and the service and unit to store them under.
+    Building it touches no network, so a test can inspect a query without one.
+    """
+    usage_metric: str
+    vendor: str
+    region: str
+    service: str
+    query_region: str
+    store_service: str
+    mode: str
+    unit: object = None
+    store_unit: Optional[str] = None
+    unit_scale: float = 1
+    product_family: Optional[str] = None
+    purchase_option: Optional[str] = None
+    attribute_filters: Optional[list] = None
+    attribute_patterns: Optional[dict] = None
+    usagetype_base: Optional[str] = None
+    usagetype_suffix: str = "-AWS-Out-Bytes"
+    usagetype_exclude: tuple = ()
+    azure_retail: bool = False
+
+
+def parse_descriptor(usage_metric: str, region: str, vendor: str = "aws") -> PriceQuery:
+    """Resolve the descriptor of *usage_metric* for *region*.
+
+    The parse step of a sync: it reads ``METRIC_DESCRIPTORS`` and settles every
+    choice that depends on the region, so that the transport and the selectors
+    below take one value each instead of re-deriving it. ``REGION_PREFIX`` and
+    ``GCP_LOCATION`` still resolve at query time, in ``query_prices``.
+
+    Raises ``KeyError`` when the metric has no descriptor, or when the region is
+    the global one and the descriptor has no global product.
+    """
+    descriptor = METRIC_DESCRIPTORS.get(usage_metric)
+    if descriptor is None:
+        raise KeyError(f"No Infracost descriptor for usage_metric '{usage_metric}'")
+    # Azure and GCP descriptors name their vendor (#226).
+    vendor = descriptor.get("vendor", vendor)
+
+    # Some services (notably AWSDataTransfer) catalogue their products
+    # globally, with region="". `query_region` lets a descriptor query that
+    # global catalogue while the price is still stored under the caller's
+    # `region`.
+    query_region = descriptor.get("query_region", region)
+    attribute_filters = descriptor.get("attribute_filters")
+    if region == GLOBAL_REGION:
+        # The global products, such as those of a web ACL with the scope
+        # CLOUDFRONT, are in the global catalogue with the usagetype
+        # prefix "Global-" (#385).
+        if not descriptor.get("global_scope"):
+            raise KeyError(f"The descriptor for '{usage_metric}' has no global product")
+        query_region = ""
+        attribute_filters = [
+            {"key": f["key"],
+             "value": f["value"].replace("REGION_PREFIX", _GLOBAL_USAGETYPE_PREFIX)}
+            for f in attribute_filters or []
+        ]
+    if (attribute_filters and descriptor.get("unprefixed_in_us_east_1")
+            and query_region == "us-east-1"):
+        # Some services name the us-east-1 product without a region prefix
+        # ("LoadBalancerUsage", not "USE1-LoadBalancerUsage").
+        attribute_filters = [
+            {"key": f["key"], "value": f["value"].replace("REGION_PREFIX-", "")}
+            for f in attribute_filters
+        ]
+
+    patterns = descriptor.get("attribute_patterns")
+    if patterns:
+        patterns = _resolve_cloud_run_tier(patterns, region)
+    if descriptor.get("region_pair_source"):
+        mode = "region_pair"
+    elif descriptor.get("regionless_usagetype"):
+        mode = "regionless"
+    else:
+        mode = "one_product"
+    return PriceQuery(
+        usage_metric=usage_metric,
+        vendor=vendor,
+        region=region,
+        service=descriptor["service"],
+        query_region=query_region,
+        # Some products are priced by Infracost under a different service than
+        # the handler/seed model them (e.g. NAT Gateway is priced under
+        # AmazonEC2 but modeled under AmazonVPC). `store_service` stores them
+        # under the service the engine queries.
+        store_service=descriptor.get("store_service") or descriptor["service"],
+        mode=mode,
+        unit=descriptor.get("unit"),
+        store_unit=descriptor.get("store_unit"),
+        unit_scale=descriptor.get("unit_scale", 1),
+        product_family=descriptor.get("product_family"),
+        purchase_option=descriptor.get("purchase_option"),
+        attribute_filters=attribute_filters,
+        attribute_patterns=patterns,
+        usagetype_base=descriptor.get("usagetype_base"),
+        usagetype_suffix=descriptor.get("usagetype_suffix", "-AWS-Out-Bytes"),
+        usagetype_exclude=tuple(descriptor.get("usagetype_exclude") or ()),
+        azure_retail=bool(descriptor.get("azure_retail")),
+    )
+
+
 class InfracostClient:
     """GraphQL client for the Infracost Cloud Pricing API."""
 
@@ -416,6 +731,11 @@ class InfracostClient:
         attribute filters, purchase option, unit) and stores the matching prices
         under the catalog's ``usage_metric`` name.
 
+        The work is three steps: ``parse_descriptor`` resolves the descriptor
+        for *region* into a ``PriceQuery``, ``_fetch_prices`` reads them from the
+        API, and ``_store_rows`` writes them under the catalog's names. Tests
+        substitute the middle step by patching ``_fetch_prices``.
+
         The new rows replace the metric's Infracost rows for the region, in
         one transaction (#355). Rows from a product that the descriptor no
         longer selects go away, and rows from other sources stay. When the
@@ -424,116 +744,96 @@ class InfracostClient:
 
         Returns the number of rows stored.
         """
-        descriptor = METRIC_DESCRIPTORS.get(usage_metric)
-        if descriptor is None:
-            raise KeyError(f"No Infracost descriptor for usage_metric '{usage_metric}'")
-        # Azure and GCP descriptors name their vendor (#226).
-        vendor = descriptor.get("vendor", vendor)
+        query = parse_descriptor(usage_metric, region, vendor)
+        prices = self._fetch_prices(query)
+        return self._store_rows(cache, query, prices)
 
-        # Some services (notably AWSDataTransfer) catalogue their products
-        # globally, with region="". `query_region` lets a descriptor query that
-        # global catalogue while the price is still stored under the caller's
-        # `region` (see `region_pair_source` below).
-        query_region = descriptor.get("query_region", region)
-        attribute_filters = descriptor.get("attribute_filters")
-        if region == GLOBAL_REGION:
-            # The global products, such as those of a web ACL with the scope
-            # CLOUDFRONT, are in the global catalogue with the usagetype
-            # prefix "Global-" (#385).
-            if not descriptor.get("global_scope"):
-                raise KeyError(f"The descriptor for '{usage_metric}' has no global product")
-            query_region = ""
-            attribute_filters = [
-                {"key": f["key"],
-                 "value": f["value"].replace("REGION_PREFIX", _GLOBAL_USAGETYPE_PREFIX)}
-                for f in attribute_filters or []
-            ]
-        if (attribute_filters and descriptor.get("unprefixed_in_us_east_1")
-                and query_region == "us-east-1"):
-            # Some services name the us-east-1 product without a region prefix
-            # ("LoadBalancerUsage", not "USE1-LoadBalancerUsage").
-            attribute_filters = [
-                {"key": f["key"], "value": f["value"].replace("REGION_PREFIX-", "")}
-                for f in attribute_filters
-            ]
-        if descriptor.get("azure_retail"):
+    def _fetch_prices(self, query: PriceQuery) -> list[dict]:
+        """Read the prices that *query* selects, from Infracost or Azure Retail.
+
+        The transport step of a sync. Substituting it substitutes the network:
+        a test returns its own price list and exercises the selectors and the
+        store without one.
+        """
+        if query.azure_retail:
             # Infracost's copy of this meter has stale tiers (#372).
             prices = []
         else:
             prices = self.query_prices(
-                service=descriptor["service"],
-                region=query_region,
-                product_family=descriptor.get("product_family"),
-                attribute_filters=_resolve_gcp_location(attribute_filters, region),
-                purchase_option=descriptor.get("purchase_option"),
-                vendor=vendor,
+                service=query.service,
+                region=query.query_region,
+                product_family=query.product_family,
+                attribute_filters=_resolve_gcp_location(
+                    query.attribute_filters, query.region),
+                purchase_option=query.purchase_option,
+                vendor=query.vendor,
             )
-        unit_match = descriptor.get("unit")
-        if vendor == "azure" and not _with_unit(prices, unit_match):
+        if query.vendor == "azure" and not _with_unit(prices, query.unit):
             # Infracost lacks some Azure meters in some regions (#376). The
             # public Azure Retail Prices API, which Infracost copies, has them.
             prices = azure_retail.query_azure_retail_prices(
-                descriptor["service"], region, attribute_filters)
-            fallback = AZURE_EGRESS_METER_FALLBACK.get(region)
-            if (not _with_unit(prices, unit_match) and fallback
-                    and descriptor["service"] == "Bandwidth"):
+                query.service, query.region, query.attribute_filters)
+            fallback = AZURE_EGRESS_METER_FALLBACK.get(query.region)
+            if (not _with_unit(prices, query.unit) and fallback
+                    and query.service == "Bandwidth"):
                 prices = azure_retail.query_azure_retail_prices(
-                    descriptor["service"], fallback, attribute_filters)
-        if descriptor.get("attribute_patterns"):
-            descriptor = {**descriptor, "attribute_patterns": _resolve_cloud_run_tier(
-                descriptor["attribute_patterns"], region)}
-        now = datetime.now().isoformat()
-        # Some products are priced by Infracost under a different service than the
-        # handler/seed model them (e.g. NAT Gateway is priced under AmazonEC2 but
-        # modeled under AmazonVPC). `store_service` stores them under the service
-        # the engine queries.
-        store_service = descriptor.get("store_service") or descriptor["service"]
+                    query.service, fallback, query.attribute_filters)
+        return prices
 
-        if descriptor.get("region_pair_source"):
-            rows = self._region_pair_representative(
-                prices, usage_metric, region, unit_match, descriptor, now)
-        elif descriptor.get("regionless_usagetype"):
-            rows = self._regionless_usagetype(
-                prices, usage_metric, region, unit_match, descriptor, now)
+    def _store_rows(self, cache, query: PriceQuery, prices: list[dict]) -> int:
+        """Keep the rows *query* selects and write them under the catalog's names.
+
+        The store step of a sync: the selector the query names keeps the tiers
+        of the one product, the service and unit are the catalog's, and the free
+        allowance and the published tier bounds are applied before the rows are
+        written in one transaction.
+        """
+        now = datetime.now().isoformat()
+        if query.mode == "region_pair":
+            rows = self._region_pair_representative(prices, query, now)
+        elif query.mode == "regionless":
+            rows = self._regionless_usagetype(prices, query, now)
         else:
-            rows = self._one_product(prices, usage_metric, unit_match, descriptor, now)
+            rows = self._one_product(prices, query, now)
 
         # Rows from the global catalogue (query_region "") are stored under the
         # sync region too, where the engine looks for them. `store_unit` gives
         # the rows the unit that the seed file states (#367).
-        changes = {"service": store_service, "region": region}
-        if descriptor.get("store_unit"):
-            changes["unit"] = descriptor["store_unit"]
+        changes = {"service": query.store_service, "region": query.region}
+        if query.store_unit:
+            changes["unit"] = query.store_unit
         rows = [dataclasses.replace(r, **changes) for r in rows]
-        key = (vendor, store_service, usage_metric)
+        key = (query.vendor, query.store_service, query.usage_metric)
         rows = _with_published_bounds(rows, TIER_BOUND_OVERRIDES.get(key))
         free_regions = FREE_ALLOWANCE_REGIONS.get(key)
-        if free_regions is not None and region not in free_regions:
+        if free_regions is not None and query.region not in free_regions:
             # The product states a free tier that GCP gives in a few regions.
             rows = _without_free_tier(rows)
         rows = _with_free_tier(rows, FREE_ALLOWANCES.get(key),
                                SPEND_BASED_FREE_TIERS.get(key))
         # Rows from the Azure Retail Prices API replace Infracost rows too.
-        with cache.replacing(vendor, store_service, region, usage_metric,
+        with cache.replacing(query.vendor, query.store_service, query.region,
+                             query.usage_metric,
                              ("infracost", azure_retail.SOURCE)):
             for row in rows:
                 cache.upsert(row)
         return len(rows)
 
     @staticmethod
-    def _one_product(prices, usage_metric, unit_match, descriptor, now) -> list:
-        """Keep the rows of the one product that the descriptor selects.
+    def _one_product(prices, query: PriceQuery, now: str) -> list:
+        """Keep the rows of the one product that the query selects.
 
         `usagetype_exclude` drops sibling usagetypes that share the same unit
         (e.g. NAT Gateway's $0 "Prvd" provisioned rows).
         """
-        excludes = descriptor.get("usagetype_exclude") or []
+        usage_metric = query.usage_metric
+        excludes = query.usagetype_exclude
         # `attribute_patterns` keeps the rows whose attributes match a regular
         # expression, for values the API can only match exactly. GCP names a
         # region's price tier in the description ("Services CPU Tier 2 ...").
-        patterns = descriptor.get("attribute_patterns") or {}
+        patterns = query.attribute_patterns or {}
         kept = []
-        for p in _with_unit(prices, unit_match):
+        for p in _with_unit(prices, query.unit):
             attributes = p.get("attributes") or {}
             usagetype = attributes.get("usagetype", "")
             if any(x in usagetype for x in excludes):
@@ -548,7 +848,7 @@ class InfracostClient:
         # API calls. `unit_scale` is the block size: the stored row prices one
         # unit, and its tier bounds count units. A scale below 1 does the
         # opposite: 1e-6 turns a price per query into a price per million.
-        scale = descriptor.get("unit_scale", 1)
+        scale = query.unit_scale
         return [
             _price_row({**p, "price_usd": p["price_usd"] / scale,
                         "start_usage_amount": _scaled(p.get("start_usage_amount"), scale),
@@ -558,8 +858,7 @@ class InfracostClient:
         ]
 
     @staticmethod
-    def _region_pair_representative(prices, usage_metric, region, unit_match,
-                                    descriptor, now) -> list:
+    def _region_pair_representative(prices, query: PriceQuery, now: str) -> list:
         """Collapse per-region-pair prices to one representative rate.
 
         Data-transfer products are priced per source/destination region pair, with
@@ -577,10 +876,11 @@ class InfracostClient:
         """
         from collections import Counter
 
+        region = query.region
         prefix = _region_usagetype_prefix(region)
-        suffix = descriptor.get("usagetype_suffix", "-AWS-Out-Bytes")
+        suffix = query.usagetype_suffix
         candidates = []
-        for p in _with_unit(prices, unit_match):
+        for p in _with_unit(prices, query.unit):
             usagetype = (p.get("attributes") or {}).get("usagetype", "")
             if not usagetype.startswith(f"{prefix}-") or not usagetype.endswith(suffix):
                 continue
@@ -595,12 +895,11 @@ class InfracostClient:
         counts = Counter(round(p["price_usd"], 6) for p in candidates)
         modal = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
         rep = next(p for p in candidates if round(p["price_usd"], 6) == modal)
-        return [dataclasses.replace(_price_row(rep, usage_metric, now),
+        return [dataclasses.replace(_price_row(rep, query.usage_metric, now),
                                     start_usage_amount=None, end_usage_amount=None)]
 
     @staticmethod
-    def _regionless_usagetype(prices, usage_metric, region, unit_match,
-                              descriptor, now) -> list:
+    def _regionless_usagetype(prices, query: PriceQuery, now: str) -> list:
         """Store a globally-catalogued, single-usagetype metric under the region.
 
         Unlike inter-region transfer, internet egress and inter-AZ transfer have
@@ -614,11 +913,12 @@ class InfracostClient:
 
         Returns the rows to store.
         """
-        base = descriptor["usagetype_base"]
-        prefix = _region_usagetype_prefix(region)
-        target = base if region == "us-east-1" else f"{prefix}-{base}"
+        base = query.usagetype_base
+        prefix = _region_usagetype_prefix(query.region)
+        target = base if query.region == "us-east-1" else f"{prefix}-{base}"
         return [
-            _price_row(p, usage_metric, now) for p in _with_unit(prices, unit_match)
+            _price_row(p, query.usage_metric, now)
+            for p in _with_unit(prices, query.unit)
             if (p.get("attributes") or {}).get("usagetype") == target
         ]
 
@@ -1525,6 +1825,14 @@ def _plan_descriptor(service: str, store_service: str, product: str, sku: str, m
 METRIC_DESCRIPTORS.update({
     metric: _plan_descriptor(*product) for metric, product in _PLAN_METERS.items()
 })
+
+
+# Every descriptor is checked against DESCRIPTOR_FIELDS once, here, at import
+# (#422). Until this call a misspelled field name was dropped by the
+# interpreter: the query went out without the filter it meant, the metric
+# stored no rows, and the engine read those absent rows as a $0 price. The
+# import is the only place the failure is cheap to see.
+validate_descriptors()
 
 
 def _live_auth_intended(client: "InfracostClient") -> bool:
