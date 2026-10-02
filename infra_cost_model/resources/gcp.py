@@ -11,6 +11,8 @@ import re
 import warnings
 from typing import Any, Optional
 
+from infra_cost_model.pricing.sources.infracost import GCS_LOCATIONS, GCS_MULTI_REGIONS
+
 from .types import (
     ComputeResource, DerivedCatalogUsage, StorageResource, RoutingResource, ResourceExtract,
 )
@@ -240,7 +242,6 @@ class CloudFunctionGen2(ComputeResource):
 # MULTI_REGIONAL are the legacy names of Standard.
 _GCS_CLASSES = {"standard": "Standard", "regional": "Standard", "multi_regional": "Standard",
                 "nearline": "Nearline", "coldline": "Coldline", "archive": "Archive"}
-_GCS_MULTI_REGIONS = {"us", "eu", "asia"}
 _GCS_REGION = re.compile(r"^[a-z]+-[a-z]+\d+$")
 
 
@@ -254,7 +255,7 @@ def gcs_location_type(location: Any) -> str:
     if not isinstance(location, str) or not location.strip():
         return "region"
     location = location.strip().lower()
-    if location in _GCS_MULTI_REGIONS:
+    if location in GCS_MULTI_REGIONS:
         return "multi-region"
     return "region" if _GCS_REGION.match(location) else "dual-region"
 
@@ -275,9 +276,10 @@ class CloudStorage(StorageResource):
     """GCP Cloud Storage bucket - storage node (equivalent to AWS S3).
 
     The storage class and the location type select the rows (#375). The
-    catalog has the rows of regional buckets. A dual-region or multi-region
-    bucket gets metrics of its own, which have no rows yet, so the engine
-    reports its usage as unpriced.
+    catalog prices a region, a multi-region and a dual-region, each of the
+    storage classes (#397). A location the catalog doesn't hold, such as a
+    configurable dual-region naming its own pair of regions, gets a warning
+    at extraction and the engine reports its usage as unpriced.
     """
 
     @property
@@ -319,12 +321,13 @@ class CloudStorage(StorageResource):
 
     @staticmethod
     def _extract(address: str, config: dict) -> ResourceExtract:
-        location_type = gcs_location_type(config.get("location"))
+        location = _lower(config.get("location"))
+        location_type = gcs_location_type(location)
         storage_class = gcs_storage_class(config)
-        if location_type != "region":
+        if location_type != "region" and location not in GCS_LOCATIONS:
             warnings.warn(
-                f"{address}: a {location_type} bucket ({config.get('location')}) has no "
-                f"catalog rows yet, so the engine reports its usage as unpriced."
+                f"{address}: a {location_type} bucket ({config.get('location')}) has "
+                f"no catalog rows, so the engine reports its usage as unpriced."
             )
         if storage_class not in _GCS_CLASSES.values():
             warnings.warn(
@@ -337,7 +340,7 @@ class CloudStorage(StorageResource):
             provider="gcp",
             service="CloudStorage",
             # The API gives a location in capitals, such as US-CENTRAL1.
-            region=_lower(config.get("location")),
+            region=location,
             config=config,
         )
 
