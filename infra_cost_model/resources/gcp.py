@@ -268,18 +268,20 @@ def gcs_storage_class(config: dict) -> str:
     return _GCS_CLASSES.get(storage_class.strip().lower(), storage_class.strip())
 
 
-def _lower(value: Any) -> Any:
-    return value.lower() if isinstance(value, str) else value
-
-
 class CloudStorage(StorageResource):
     """GCP Cloud Storage bucket - storage node (equivalent to AWS S3).
 
     The storage class and the location type select the rows (#375). The
-    catalog prices a region, a multi-region and a dual-region, each of the
-    storage classes (#397). A location the catalog doesn't hold, such as a
-    configurable dual-region naming its own pair of regions, gets a warning
-    at extraction and the engine reports its usage as unpriced.
+    catalog prices a region, a multi-region and a predefined dual-region,
+    each of the storage classes (#397). A location the catalog doesn't
+    hold, such as a dual-region code GCP doesn't define, gets a warning at
+    extraction and the engine reports its usage as unpriced.
+
+    A configurable dual-region shares its location code with a multi-region
+    (``US``, ``EU`` or ``ASIA``) and bills against the dual-region rows, but
+    a bucket's ``location`` alone can't tell the two apart
+    (https://cloud.google.com/storage/docs/locations), so it is priced as
+    the multi-region of that code.
     """
 
     @property
@@ -321,7 +323,10 @@ class CloudStorage(StorageResource):
 
     @staticmethod
     def _extract(address: str, config: dict) -> ResourceExtract:
-        location = _lower(config.get("location"))
+        # The catalog names a region in lower case without padding, and the
+        # membership tests below compare the value as it is looked up.
+        location = config.get("location")
+        location = location.strip().lower() if isinstance(location, str) else location
         location_type = gcs_location_type(location)
         storage_class = gcs_storage_class(config)
         if location_type != "region" and location not in GCS_LOCATIONS:
