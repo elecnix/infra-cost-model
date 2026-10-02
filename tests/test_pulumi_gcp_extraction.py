@@ -168,8 +168,9 @@ def test_the_registry_prices_a_function_at_its_own_generation(
     and a 2nd gen one matched by `CloudFunction` loses its generation.
     """
     urn = f"urn:pulumi:prod::shop::{token}::api"
-    assert ResourceRegistry.from_address(urn) is handler
-    assert ResourceRegistry.from_address(urn) is not other_generation
+    handler_for_urn = ResourceRegistry.from_address(urn)
+    assert handler_for_urn is handler
+    assert handler_for_urn is not other_generation
 
 
 def test_the_id_alone_names_no_type():
