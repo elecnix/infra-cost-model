@@ -76,7 +76,8 @@ class TestExtract:
         assert nodes[COSMOS]["config"]["offerType"] == "Standard"
         assert nodes[COSMOS]["config"]["consistencyLevel"] == "Session"
         assert nodes[BLOB]["config"] == {
-            "accountTier": "Standard", "replicationType": "LRS", "accessTier": "Hot"}
+            "accountTier": "Standard", "accountKind": "StorageV2",
+            "replicationType": "LRS", "accessTier": "Hot"}
         assert nodes[OPENAI]["config"] == {"kind": "OpenAI", "skuName": "S0"}
         # The Function App's plan is a node of its own since #383.
         assert nodes[PLAN]["config"]["hostingPlan"] == "consumption"
