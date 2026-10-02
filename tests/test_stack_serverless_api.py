@@ -12,6 +12,7 @@ import pytest
 import yaml
 from pathlib import Path
 from infra_cost_model.engine.engine import CostEngine
+from infra_cost_model.resources.registry import ResourceRegistry
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -67,10 +68,12 @@ class TestServerlessModel:
 
         def price(metric):
             assert metric in ddb["usageMetrics"]
-            return seed_catalog.query("aws", ddb["service"], ddb["region"], metric).price_usd
+            # The model names the logical metric; the handler owns the row (#427).
+            row = ResourceRegistry.resolve_catalog_metric(ddb["resourceAddress"], metric)
+            return seed_catalog.query("aws", ddb["service"], ddb["region"], row).price_usd
 
         # Writes are 5× more expensive than reads
-        ratio = price("Dynamo-WriteRequest") / price("Dynamo-ReadRequest")
+        ratio = price("writeRequests") / price("readRequests")
         assert ratio == pytest.approx(5.0)
 
     def test_all_nodes_defined(self):

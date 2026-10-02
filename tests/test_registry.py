@@ -380,3 +380,96 @@ def test_resolve_catalog_metric_storedgb_disambiguation():
     from infra_cost_model.resources.registry import ResourceRegistry as R
     assert R.resolve_catalog_metric("aws_ecr_repository.r", "storedGb") == "ECR-Storage"
     assert R.resolve_catalog_metric("aws_cloudwatch_log_group.g", "storedGb") == "CloudWatch-Log-Storage"
+
+
+# --- Issue #427: the registry owns a Node type's metric vocabulary ---
+
+AWS_LOGICAL_METRIC_RESOLUTIONS = [
+    ("aws_s3_bucket.uploads", "putRequests", "S3-PutRequest"),
+    ("aws_s3_bucket.uploads", "getRequests", "S3-GetRequest"),
+    ("aws_s3_bucket.uploads", "storageGb", "S3-Storage"),
+    ("aws_apigatewayv2_api.a", "requests", "APIGateway-HTTP-Request"),
+    ("aws_dynamodb_table.t", "readRequests", "Dynamo-ReadRequest"),
+    ("aws_dynamodb_table.t", "writeRequests", "Dynamo-WriteRequest"),
+    ("aws_dynamodb_table.t", "storageGb", "Dynamo-Storage"),
+    ("aws_sqs_queue.q", "messagesSent", "SQS-Standard-Request"),
+    ("aws_sqs_queue.q", "messagesReceived", "SQS-Standard-Request"),
+    ("aws_sns_topic.t", "publishes", "SNS-Publish"),
+    ("aws_sns_topic.t", "sqsDeliveries", "SNS-Delivery-SQS"),
+    ("aws_sns_topic.t", "lambdaDeliveries", "SNS-Delivery-Lambda"),
+    ("aws_sns_topic.t", "httpDeliveries", "SNS-Delivery-HTTP"),
+    ("aws_eventbridge_rule.r", "eventsPublished", "EventBridge-CustomEvent"),
+    ("aws_eventbridge_rule.r", "scheduledInvocations", "EventBridge-Schedule"),
+    ("aws_cloudfront_distribution.d", "requests", "CloudFront-HTTPS-Request"),
+    ("aws_cloudfront_distribution.d", "dataOutGb", "CloudFront-DataTransfer"),
+    ("aws_db_instance.db", "storageGb", "RDS-Storage-gp3"),
+    ("aws_db_instance.db", "backupStorageGb", "RDS-Backup-Storage"),
+    ("aws_ecs_service.svc", "vCpuHours", "ECS-Fargate-vCPU-Hour"),
+    ("aws_ecs_service.svc", "gbHours", "ECS-Fargate-GB-Hour"),
+    ("aws_ecs_service.svc", "ephemeralStorageGb", "ECS-Fargate-Ephemeral-Storage"),
+    ("aws_lb.lb", "albHours", "ALB-Hour"),
+    ("aws_lb.lb", "processedGb", "ALB-LCU-ProcessedBytes"),
+    ("aws_lb.lb", "newConnections", "ALB-LCU-NewConnections"),
+    ("aws_lb.lb", "activeConnections", "ALB-LCU-ActiveConnections"),
+    ("aws_lb.lb", "ruleEvaluations", "ALB-LCU-RuleEvaluations"),
+]
+
+
+@pytest.mark.parametrize("address,logical,catalog", AWS_LOGICAL_METRIC_RESOLUTIONS)
+def test_aws_logical_metric_resolves_to_catalog_row(address, logical, catalog):
+    """#427: an AWS model writes the handler's logical name, never the row name."""
+    assert ResourceRegistry.resolve_catalog_metric(address, logical) == catalog
+
+
+def test_registry_exposes_the_metric_vocabulary():
+    """The registry reports the logical names the handler that owns an address accepts."""
+    assert ResourceRegistry.valid_metrics_for("aws_s3_bucket.uploads") == [
+        "putRequests", "getRequests", "storageGb", "dataOutGb"]
+    assert "requests" in ResourceRegistry.valid_metrics_for("aws_apigatewayv2_api.a")
+    # No handler, no vocabulary to report.
+    assert ResourceRegistry.valid_metrics_for("not.a.resource") is None
+
+
+def test_registry_rejects_a_catalog_row_name():
+    """A name outside the vocabulary is reported, including one that prices today."""
+    assert ResourceRegistry.unknown_metrics(
+        "aws_s3_bucket.uploads", ["putRequests", "S3-PutRequest"]) == ["S3-PutRequest"]
+    assert ResourceRegistry.unknown_metrics(
+        "aws_s3_bucket.uploads", ["putRequests", "storageGb"]) == []
+    # No handler means no vocabulary, so nothing to reject.
+    assert ResourceRegistry.unknown_metrics("not.a.resource", ["whatever"]) == []
+
+
+def test_every_mapped_metric_is_in_the_vocabulary():
+    """No handler maps a logical name it does not declare.
+
+    A mapping for a name outside ``valid_metrics`` would let the pricing source
+    grow a vocabulary the handler never advertised.
+    """
+    from infra_cost_model.resources.types import LEGACY_CATALOG_METRICS
+
+    for handler in ResourceRegistry._handlers:
+        instance = handler()
+        allowed = set(instance.valid_metrics) | LEGACY_CATALOG_METRICS
+        maps = set(instance.catalog_metrics) | set(instance.catalog_metrics_for({}))
+        assert maps <= allowed, f"{handler.__name__}: {maps - allowed}"
+
+
+def test_bundled_examples_use_only_logical_metric_names():
+    """#427: no bundled model writes a pricing-catalog row name as a metric."""
+    import glob
+    import yaml
+
+    offenders = []
+    for path in sorted(glob.glob("examples/*.yaml")):
+        model = yaml.safe_load(open(path)) or {}
+        for address, node in (model.get("nodes") or {}).items():
+            if not isinstance(node, dict):
+                continue
+            resource_address = node.get("resourceAddress")
+            if not resource_address:
+                continue
+            for name in (node.get("usageMetrics") or {}):
+                offenders += ResourceRegistry.unknown_metrics(resource_address, [name]) and [
+                    f"{path}:{address}: {name}"]
+    assert offenders == []
