@@ -1641,15 +1641,16 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
                 continue
             if region == GLOBAL_REGION and not METRIC_DESCRIPTORS[metric].get("global_scope"):
                 continue
-            if region in GCS_LOCATIONS:
-                # A Cloud Storage location is not a GCP region, so only the
-                # Cloud Storage products have a row for one (#397).
-                if METRIC_DESCRIPTORS[metric].get("store_service") != "CloudStorage":
+            if vendor == "gcp":
+                # A Cloud Storage location is not a GCP region (#397). Only the
+                # Cloud Storage products have a row for one, and the rows of a
+                # multi-region or a dual-region belong to the location itself,
+                # which no GCP region stands in for.
+                if region in GCS_LOCATIONS:
+                    if METRIC_DESCRIPTORS[metric].get("store_service") != "CloudStorage":
+                        continue
+                elif METRIC_DESCRIPTORS[metric].get("location_scope"):
                     continue
-            elif METRIC_DESCRIPTORS[metric].get("location_scope"):
-                # The rows of a multi-region or a dual-region belong to the
-                # location itself, and no GCP region has them (#397).
-                continue
             try:
                 total += client.sync_to_cache(cache, metric, region, vendor)
             except (RuntimeError, requests.RequestException, KeyError) as exc:
