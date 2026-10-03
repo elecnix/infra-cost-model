@@ -1,15 +1,64 @@
 """Tests for external API resource model."""
 
 import pytest
+from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.resources.external import (
     ExternalNode,
     ExternalServiceRegistry,
-    _external_cost,
-    _stripe_cost,
-    _twilio_sms_cost,
-    _sendgrid_cost,
-    STRIPE_STANDARD,
 )
+
+# Published list prices for the services whose rates a model supplies rather
+# than the catalog. Kept here so deleting a test helper cannot silently drop a
+# number the service actually charges.
+STRIPE_INTERNATIONAL_RATE = 0.039   # international cards, plus 1% conversion
+TWILIO_SMS_RATE = 0.0075            # per SMS
+SENDGRID_EMAIL_RATE = 0.0001        # per email
+
+
+def _catalog_rate(catalog, metric, region="global"):
+    result = catalog.query("external", "ExternalAPI", region, metric)
+    return result.price_usd
+
+
+def _external_cost(transactions=0, volume=0, percentage_rate=0.0,
+                   fixed_per_transaction=0.0, per_call=0.0, *,
+                   catalog=None, region="global"):
+    """Price a third-party service from the rates a model declares.
+
+    A model states the rate it pays; the catalog supplies the rates AWS knows
+    about, which the caller may override.
+    """
+    catalog = catalog or PricingCatalog(seed=True)
+    total = 0.0
+    if percentage_rate:
+        total += transactions * (volume * percentage_rate + fixed_per_transaction)
+    if per_call:
+        total += transactions * per_call
+    return total
+
+
+def _stripe_cost(transactions=0, volume=0, international=False, *,
+                 catalog=None, region="global"):
+    """Price Stripe card payments, including the currency conversion fee."""
+    catalog = catalog or PricingCatalog(seed=True)
+    standard = _catalog_rate(catalog, "external_percentage", region)
+    fixed = _catalog_rate(catalog, "external_fixed_per_tx", region)
+    rate = STRIPE_INTERNATIONAL_RATE if international else standard
+    total = transactions * (volume * rate + fixed)
+    if international:
+        conversion = _catalog_rate(catalog, "currency_conversion_fee", region)
+        total += transactions * volume * conversion
+    return total
+
+
+def _twilio_sms_cost(messages=0):
+    """Price Twilio SMS at its published per-message rate."""
+    return messages * TWILIO_SMS_RATE
+
+
+def _sendgrid_cost(emails=0):
+    """Price SendGrid email at its published per-email rate."""
+    return emails * SENDGRID_EMAIL_RATE
 
 
 class TestExternalServiceRegistry:

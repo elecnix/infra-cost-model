@@ -87,6 +87,7 @@ class ResourceRegistry:
                 "cloudwatch": "aws",
                 "misc_services": "aws",
                 "kms": "aws",
+                "waf": "aws",
                 "data_transfer": "aws",
                 "gcp": "gcp", "azure": "azure",
             }

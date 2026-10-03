@@ -16,7 +16,6 @@ Ingress is free and has no paid metric.
 
 from typing import Optional
 
-from infra_cost_model.pricing.catalog import PricingCatalog
 
 from .types import ExternalResource, ResourceExtract
 
@@ -90,35 +89,3 @@ class DataTransferNode(ExternalResource):
                 "interAzGb": properties.get("InterAzGb", 0),
             },
         )
-
-
-def _data_transfer_cost(inter_region_gb=0, internet_out_gb=0, inter_az_gb=0, *,
-                        catalog=None, provider: str = "aws",
-                        region: str) -> float:
-    """Calculate monthly data transfer cost in USD.
-
-    Args:
-        inter_region_gb: GB transferred between regions (North America).
-        internet_out_gb: GB egress to the internet (standard tier).
-        inter_az_gb: GB transferred between AZs within a region.
-        catalog: Optional PricingCatalog; created if not provided.
-        provider: Cloud provider (default "aws").
-        region: Region for the pricing lookup, from the node metadata.
-
-    Returns:
-        Total monthly data transfer cost in USD. Ingress is free.
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    dimensions = (
-        (inter_region_gb, "DataTransfer-InterRegion-GB"),
-        (internet_out_gb, "DataTransfer-Internet-Out-GB"),
-        (inter_az_gb, "DataTransfer-InterAZ-GB"),
-    )
-    for quantity, metric in dimensions:
-        if quantity > 0:
-            r = catalog.query(provider, "AWSDataTransfer", region, metric, quantity)
-            if r and hasattr(r, "total_cost"):
-                total += r.total_cost
-    return total

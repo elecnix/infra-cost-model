@@ -17,7 +17,6 @@ matched.
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import RoutingResource, ResourceExtract
 
 # A web ACL with the scope CLOUDFRONT bills from the AWS "Global-" products
@@ -170,23 +169,3 @@ class WAFv2WebACL(RoutingResource):
                 **_managed_rule_groups(properties.get("Rules"), _KEYS["cdk"]),
             },
         )
-
-
-def _waf_cost(web_acls=1, rules=0, requests=0, *,
-              catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if web_acls > 0:
-        r = catalog.query(provider, "AWSWAF", region, "WAF-WebACL-Month", web_acls)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if rules > 0:
-        r = catalog.query(provider, "AWSWAF", region, "WAF-Rule-Month", rules)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if requests > 0:
-        r = catalog.query(provider, "AWSWAF", region, "WAF-Request", requests)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total

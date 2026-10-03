@@ -1,6 +1,5 @@
 """API Gateway HTTP API v2 resource model implementation."""
 
-from infra_cost_model.pricing.catalog import PricingCatalog
 
 from .types import RoutingResource, ResourceExtract
 
@@ -86,60 +85,3 @@ class APIGatewayHTTP(RoutingResource):
             region=None,
             config={"protocolType": protocol_type}
         )
-
-
-def _apigw_total_cost(requests: float, data_out_gb: float = 0.0, *,
-                      catalog=None,
-                      provider: str = "aws",
-                      region: str) -> float:
-    """Calculate total API Gateway HTTP API cost including egress.
-
-    Args:
-        requests: Monthly API requests
-        data_out_gb: Monthly data transfer out in GB
-        catalog: Optional PricingCatalog (uses default if None, auto-loads seed)
-        region: AWS region for pricing lookup
-
-    Returns:
-        Total monthly cost in USD (requests + egress).
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-
-    request_cost = _request_cost(requests, catalog=catalog, provider=provider, region=region)
-    egress_cost = _egress_cost(data_out_gb, catalog=catalog, provider=provider, region=region)
-    return request_cost + egress_cost
-
-
-def _request_cost(requests: float, *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Calculate API Gateway request cost using catalog."""
-    if catalog is None:
-        catalog = PricingCatalog()
-    result = catalog.query(provider, "AmazonAPIGatewayHTTP", region,
-                           "APIGateway-HTTP-Request", requests)
-    return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
-
-
-def _egress_cost(data_out_gb: float, *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Calculate the cost of an HTTP API's response bytes.
-
-    API Gateway has no egress price of its own. AWS bills the bytes as data
-    transfer out to the internet, so this reads the tiered
-    ``DataTransfer-Internet-Out-GB`` rows of ``AWSDataTransfer`` (#311).
-    """
-    if data_out_gb <= 0:
-        return 0.0
-
-    if catalog is None:
-        catalog = PricingCatalog()
-
-    result = catalog.query(provider, "AWSDataTransfer", region,
-                           "DataTransfer-Internet-Out-GB", data_out_gb)
-    return result.total_cost if result and hasattr(result, 'total_cost') else 0.0
-
-
-def _apigw_egress_cost(data_out_gb: float, *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Alias for egress cost calculation."""
-    if catalog is None:
-        catalog = PricingCatalog()
-    return _egress_cost(data_out_gb, catalog=catalog, provider=provider, region=region)

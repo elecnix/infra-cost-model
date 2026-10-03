@@ -1,9 +1,9 @@
 """Resource types package.
 
 Public API surface is limited to resource classes and computation utilities.
-Standalone cost functions (lambda_cost, dynamodb_cost, apigw_total_cost,
-bedrock_cost, stripe_cost, etc.) are private per DP#1 — usage must be derived
-through the DAG, not specified as free variables.
+Each handler declares the catalog row that prices each of its logical usage
+metrics, and the engine resolves those rows through the DAG, so usage is
+derived from the graph rather than specified as free variables (DP#1).
 
 Multi-cloud support (DP#6): AWS, GCP, and Azure resource handlers are
 registered through the ResourceRegistry with provider-based dispatch.
