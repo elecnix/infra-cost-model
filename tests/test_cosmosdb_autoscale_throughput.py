@@ -14,7 +14,8 @@ import pytest
 from infra_cost_model.engine.engine import CostEngine
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
 from infra_cost_model.pricing.sources import infracost as ic
-from infra_cost_model.resources.azure import CosmosDB, cosmos_throughput_from_tf
+from infra_cost_model.resources.azure import (
+    CosmosDB, cosmos_throughput_from_tf, cosmos_units)
 from infra_cost_model.resources.registry import (
     extract_resources_from_arm, extract_resources_from_pulumi, extract_resources_from_tf,
 )
@@ -292,6 +293,31 @@ def test_the_autoscale_descriptor_reads_the_autoscale_product():
     assert {f["key"]: f["value"] for f in descriptor["attribute_filters"]} == {
         "productName": "Azure Cosmos DB autoscale", "skuName": "AP1",
         "meterName": "AP1 100 RUs"}
+
+
+def test_the_autoscale_descriptor_names_both_spellings_of_its_unit():
+    """The retail API and Infracost spell this meter's unit differently.
+
+    Naming one spelling leaves the sync matching no price, so it stores no
+    autoscale rows at all and the seed row prices the metric offline alone.
+    """
+    descriptor = ic.METRIC_DESCRIPTORS[AUTOSCALE]
+    assert descriptor["unit"] == ["1/Hour", "1 Hour"]
+    assert descriptor["store_unit"] == "hours"
+
+
+def test_a_declared_autoscale_maximum_of_zero_wins_over_manual_throughput():
+    """0 is a maximum the input declares, not the absence of one."""
+    metrics = CosmosDB().catalog_metrics_for(
+        {"capacityMode": "provisioned", "autoscaleMaxRuPerSecond": 0,
+         "throughputRuPerSecond": 400})
+    assert metrics["throughputHours"] == AUTOSCALE
+
+
+def test_the_units_of_a_declared_autoscale_maximum_of_zero_are_zero():
+    assert cosmos_units({"capacityMode": "provisioned",
+                         "autoscaleMaxRuPerSecond": 0,
+                         "throughputRuPerSecond": 400}) == 0
 
 
 def test_every_throughput_metric_the_handler_names_is_priced():

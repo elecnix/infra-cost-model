@@ -1081,7 +1081,11 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "attribute_filters": [{"key": "productName", "value": "Azure Cosmos DB autoscale"},
                               {"key": "skuName", "value": "AP1"},
                               {"key": "meterName", "value": "AP1 100 RUs"}],
-        "unit": "1/Hour", "store_unit": "hours",
+        # The Retail Prices API spells this meter's unit "1 Hour", the same as the
+        # provisioned Cosmos meters; Infracost's copy spells it "1/Hour". `_with_unit`
+        # takes the spellings in preference order and keeps the first that prices
+        # have, so name both rather than matching one and silently storing no rows.
+        "unit": ["1/Hour", "1 Hour"], "store_unit": "hours",
     },
     # API Management consumption tier: $3.50 per million calls after a monthly
     # free 1M. The other tiers bill per unit-hour, which no handler metric models.

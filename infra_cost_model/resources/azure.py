@@ -537,8 +537,12 @@ def cosmos_units(config: dict) -> Optional[float]:
     Autoscale bills the highest RU/s of the hour, so its maximum is the
     throughput of the account (#399). Gives ``None`` when the ``config``
     gives no throughput, so the node counts the hours of 100 RU/s itself.
+    An autoscale maximum of 0 is a setting the input declares, so it wins
+    over a manual throughput; only an absent one falls back.
     """
-    ru = config.get("autoscaleMaxRuPerSecond") or config.get("throughputRuPerSecond")
+    ru = config.get("autoscaleMaxRuPerSecond")
+    if ru is None:
+        ru = config.get("throughputRuPerSecond")
     return float(ru) / 100 if isinstance(ru, (int, float)) else None
 
 
@@ -703,7 +707,7 @@ class CosmosDB(StorageResource):
         if (config.get("capacityMode") or "serverless") == "serverless":
             return self.catalog_metrics
         autoscale = config.get("autoscaleMaxRuPerSecond")
-        if autoscale:
+        if autoscale is not None:
             # Autoscale bills 1.5 times the manual rate, at its maximum RU/s.
             throughput = "CosmosDB-Autoscale-100RU-Hour"
         elif config.get("multiRegionWrites"):
