@@ -537,8 +537,14 @@ def cosmos_units(config: dict) -> Optional[float]:
     Autoscale bills the highest RU/s of the hour, so its maximum is the
     throughput of the account (#399). Gives ``None`` when the ``config``
     gives no throughput, so the node counts the hours of 100 RU/s itself.
+    An autoscale maximum of 0 is a setting the input declares, so it wins
+    over a manual throughput; only an absent one falls back. An account
+    that sets both prices each on its own meter in
+    ``CosmosDB.catalog_metrics_for``.
     """
-    ru = config.get("autoscaleMaxRuPerSecond") or config.get("throughputRuPerSecond")
+    ru = config.get("autoscaleMaxRuPerSecond")
+    if ru is None:
+        ru = config.get("throughputRuPerSecond")
     return float(ru) / 100 if isinstance(ru, (int, float)) else None
 
 
@@ -550,8 +556,8 @@ def cosmos_throughput(entries: list, account: Any) -> dict:
     database and container of an account, and a database shares its
     throughput with its containers, so a container of a database that sets
     a throughput is left out. Autoscale bills the highest RU/s of the
-    hour, so it contributes ``autoscaleMaxRuPerSecond``, and an account
-    with an autoscale database prices the autoscale rows.
+    hour, so it contributes ``autoscaleMaxRuPerSecond``, which the
+    autoscale rows price beside the manual ``throughputRuPerSecond``.
 
     Gives ``None`` for both keys when nothing sets a throughput, as on a
     serverless account and on a database that shares another account's.
@@ -703,13 +709,19 @@ class CosmosDB(StorageResource):
         if (config.get("capacityMode") or "serverless") == "serverless":
             return self.catalog_metrics
         autoscale = config.get("autoscaleMaxRuPerSecond")
-        if autoscale:
-            # Autoscale bills 1.5 times the manual rate, at its maximum RU/s.
-            throughput = "CosmosDB-Autoscale-100RU-Hour"
-        elif config.get("multiRegionWrites"):
-            throughput = "CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour"
-        else:
-            throughput = "CosmosDB-Provisioned-100RU-Hour"
+        manual = config.get("throughputRuPerSecond")
+        manual_row = ("CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour"
+                      if config.get("multiRegionWrites")
+                      else "CosmosDB-Provisioned-100RU-Hour")
+        # Autoscale bills 1.5 times the manual rate, at its maximum RU/s.
+        autoscale_row = "CosmosDB-Autoscale-100RU-Hour"
+        if isinstance(autoscale, (int, float)) and isinstance(manual, (int, float)):
+            # An account whose databases mix autoscale and manual throughput
+            # bills each on its own meter, so both are priced.
+            return {"storageGb": "CosmosDB-Storage-GB-Month",
+                    "throughputHours": {autoscale_row: autoscale / 100,
+                                        manual_row: manual / 100}}
+        throughput = autoscale_row if autoscale is not None else manual_row
         units = cosmos_units(config)
         return {"storageGb": "CosmosDB-Storage-GB-Month",
                 "throughputHours": {throughput: units} if units else throughput}
