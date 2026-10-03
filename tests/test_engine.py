@@ -594,6 +594,32 @@ class TestCostAggregator:
         # Expected: 100 × ($100 × 0.029 + $0.30) = 100 × $3.20 = $320
         assert costs["stripe"] == pytest.approx(320.0)
 
+    def test_percentage_pricing_reads_per_call_off_the_node(self):
+        """The node's escape hatch carries perCall like the other two rates.
+
+        ``percentage_rate`` and ``fixed_per_transaction`` both fall back to
+        ``pricingRates``; ``per_call`` did not, so a node stating only the
+        per-call fee on the node contributed nothing.
+        """
+        nodes = {
+            "twilio": {
+                "nodeType": "external",
+                "resourceAddress": "external.twilio_sms",
+                "pricingModel": "percentage",
+                "pricingRates": {"perCall": 0.0075},
+                "usageMetrics": {"transactionVolume": {"value": 10}},
+            }
+        }
+
+        derived = {"twilio": DerivedUsage("twilio", 1000.0)}
+
+        aggregator = CostAggregator(nodes, derived, [])
+        costs = aggregator.aggregate()
+
+        # 1,000 calls × $0.0075. The 10.0 volume is present but a per-call fee
+        # is not charged on it.
+        assert costs["twilio"] == pytest.approx(7.5)
+
     def test_percentage_pricing_scales_with_transactions(self):
         """Twice the transactions cost twice as much, for both fee parts."""
         nodes = {
