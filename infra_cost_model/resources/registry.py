@@ -44,80 +44,33 @@ class ResourceRegistry:
 
     Auto-registers known resource types and provides:
     - Mapping from resource addresses to handlers
-    - Provider-based dispatch (aws, gcp, azure)
     - Validation of usage metrics per resource
     - Node type classification
 
-    Per DP#6, handlers can be registered for any cloud provider. The registry
-    supports provider-qualified lookups and can list handlers by provider.
+    Per DP#6, handlers can be registered for any cloud provider. Each handler
+    owns the addresses it claims, so lookup asks every registered handler and
+    the first match wins; registration order is most-specific first.
     """
 
     _handlers: list[Type[ResourceType]] = []
-    _provider_index: dict[str, list[Type[ResourceType]]] = {}
 
     @classmethod
     def register(cls, resource_type: Type[ResourceType]) -> Type[ResourceType]:
-        """Register a resource type handler.
-
-        Automatically indexes the handler by provider for fast provider-qualified
-        lookups.
-        """
+        """Register a resource type handler."""
         cls._handlers.append(resource_type)
-        # Index by provider: derive from class module path
-        provider = cls._infer_provider(resource_type)
-        if provider:
-            cls._provider_index.setdefault(provider, []).append(resource_type)
         return resource_type
 
     @classmethod
-    def _infer_provider(cls, resource_type: Type[ResourceType]) -> Optional[str]:
-        """Infer provider from the handler class module path."""
-        module = resource_type.__module__
-        # Module paths: infra_cost_model.resources.<module>
-        parts = module.split(".")
-        if len(parts) >= 3 and parts[-2] == "resources":
-            leaf = parts[-1]
-            known_providers = {
-                "lambda_func": "aws", "dynamodb": "aws", "apigw": "aws",
-                "bedrock": "aws", "external": "external",
-                "s3": "aws", "sqs": "aws", "sns": "aws",
-                "eventbridge": "aws", "cloudfront": "aws",
-                "rds": "aws", "ecs": "aws",
-                "alb": "aws",
-                "networking": "aws",
-                "cloudwatch": "aws",
-                "misc_services": "aws",
-                "kms": "aws",
-                "waf": "aws",
-                "data_transfer": "aws",
-                "gcp": "gcp", "azure": "azure",
-            }
-            return known_providers.get(leaf)
-        return None
-
-    @classmethod
-    def from_address(cls, resource_address: str,
-                     provider: Optional[str] = None) -> Optional[Type[ResourceType]]:
+    def from_address(cls, resource_address: str) -> Optional[Type[ResourceType]]:
         """Find the appropriate handler class for a resource address.
 
         Args:
             resource_address: Resource address from IaC export
-            provider: Optional provider hint ("aws", "gcp", "azure") to narrow
-                      the search scope. When provided, provider-specific handlers
-                      are tried first.
 
         Returns:
             Matching handler class or None.
         """
-        handlers = cls._handlers
-        if provider and provider in cls._provider_index:
-            # Try provider-specific handlers first, then all handlers as fallback
-            handlers = cls._provider_index[provider] + [
-                h for h in cls._handlers
-                if h not in cls._provider_index.get(provider, [])
-            ]
-
-        for handler in handlers:
+        for handler in cls._handlers:
             result = handler.from_address(resource_address)
             if result is not None:
                 return handler
@@ -207,28 +160,6 @@ class ResourceRegistry:
         if handler is None:
             return None
         return handler().derive_catalog_usage(usage, config or {})
-
-    @classmethod
-    def known_prefixes(cls) -> set[str]:
-        """Return set of handler class names registered."""
-        return {handler.__name__ for handler in cls._handlers}
-
-    @classmethod
-    def handlers_by_provider(cls, provider: str) -> list[Type[ResourceType]]:
-        """Return handlers registered for a specific cloud provider.
-
-        Args:
-            provider: Cloud provider identifier ("aws", "gcp", "azure")
-
-        Returns:
-            List of handler classes for the provider (empty list if none).
-        """
-        return list(cls._provider_index.get(provider, []))
-
-    @classmethod
-    def supported_providers(cls) -> set[str]:
-        """Return the set of cloud providers with registered handlers."""
-        return set(cls._provider_index.keys())
 
     @classmethod
     def extract(cls, resource_address: str, resource_data: dict,

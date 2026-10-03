@@ -8,12 +8,12 @@ from .types import ExternalResource, ResourceExtract
 
 
 class ExternalServiceRegistry:
-    """Data-driven registry of known external service prefixes.
+    """The set of vendor address prefixes that count as external services.
 
-    Replaces the hardcoded if/elif prefix chain with a registration
-    mechanism comparable to ResourceRegistry. New external vendors
-    (Auth0, OpenAI, Datadog, etc.) can be added without editing the
-    from_address() conditional.
+    A third-party vendor is external when its address starts with one of these
+    prefixes. ``ExternalNode.from_address`` is the only caller: the resource
+    registry dispatches an address here, and this decides whether a Node with no
+    infrastructure belongs to the vendor or to a cloud provider.
     """
 
     _prefixes: set[str] = set()

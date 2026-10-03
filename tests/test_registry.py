@@ -230,14 +230,6 @@ def test_extract_resources_from_pulumi_unsupported_warns():
     assert "aws:eks:Cluster:main" not in results
 
 
-def test_known_prefixes():
-    """Test that known_prefixes returns handler names."""
-    prefixes = ResourceRegistry.known_prefixes()
-    assert len(prefixes) >= 5  # We have at least 5 registered handlers
-    assert "LambdaFunction" in prefixes
-    assert "DynamoDBTable" in prefixes
-
-
 def test_extract_resources_from_pulumi():
     """Test extracting multiple resources from Pulumi JSON."""
     pulumi_json = {
