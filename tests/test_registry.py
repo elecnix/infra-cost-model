@@ -462,7 +462,8 @@ def test_bundled_examples_use_only_logical_metric_names():
 
     offenders = []
     for path in sorted(glob.glob("examples/*.yaml")):
-        model = yaml.safe_load(open(path)) or {}
+        with open(path) as handle:
+            model = yaml.safe_load(handle) or {}
         for address, node in (model.get("nodes") or {}).items():
             if not isinstance(node, dict):
                 continue
