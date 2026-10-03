@@ -1,8 +1,10 @@
 """Tests for Amazon SQS Queue resource model (Issue #16)."""
 import json
+
 import pytest
-from infra_cost_model.resources.sqs import SQSQueue, _sqs_cost
+from infra_cost_model.resources.sqs import SQSQueue
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
 
 class TestSQSQueueAddressParsing:
     def test_from_address_terraform(self):
@@ -46,31 +48,44 @@ class TestSQSQueueExtraction:
         assert result.config["name"] == "my-dlq" and result.config["fifoQueue"] is False
 
 class TestSQSPricing:
-    def setup_method(self): self.catalog = PricingCatalog(seed=True)
+    def setup_method(self):
+        self.catalog = PricingCatalog(seed=True)
+        def price(requests, config):
+            # SQS bills one request price for the queue, so sending and
+            # receiving share a single monthly 1M free tier.
+            return resource_cost("aws_sqs_queue.q", "AmazonSQS", "us-east-1",
+                                 catalog=self.catalog, config=config,
+                                 messagesSent=requests)
+
+        self.standard = lambda **usage: price(
+            usage.get("messagesSent", 0) + usage.get("messagesReceived", 0), None)
+        self.fifo = lambda **usage: price(
+            usage.get("messagesSent", 0) + usage.get("messagesReceived", 0),
+            {"fifoQueue": True})
     def test_standard_pricing(self):
-        cost = _sqs_cost(messages_sent=5_000_000, fifo=False, catalog=self.catalog, region="us-east-1")
+        cost = self.standard(messagesSent=5_000_000)
         assert cost == pytest.approx(1.60, rel=0.01)
     def test_fifo_pricing(self):
-        cost = _sqs_cost(messages_sent=5_000_000, fifo=True, catalog=self.catalog, region="us-east-1")
+        cost = self.fifo(messagesSent=5_000_000)
         assert cost == pytest.approx(2.00, rel=0.01)
     def test_standard_vs_fifo_difference(self):
-        std = _sqs_cost(messages_sent=5_000_000, fifo=False, catalog=self.catalog, region="us-east-1")
-        fifo = _sqs_cost(messages_sent=5_000_000, fifo=True, catalog=self.catalog, region="us-east-1")
+        std = self.standard(messagesSent=5_000_000)
+        fifo = self.fifo(messagesSent=5_000_000)
         assert fifo > std
     def test_dlq_separate_cost(self):
-        main = _sqs_cost(messages_sent=3_000_000, messages_received=3_000_000, fifo=False, catalog=self.catalog, region="us-east-1")
-        dlq = _sqs_cost(messages_sent=100_000, fifo=False, catalog=self.catalog, region="us-east-1")
+        main = self.standard(messagesSent=3_000_000, messagesReceived=3_000_000)
+        dlq = self.standard(messagesSent=100_000)
         assert main == pytest.approx(2.00, rel=0.01)
         assert dlq == 0.0
     def test_fifo_with_send_and_receive(self):
-        cost = _sqs_cost(messages_sent=2_000_000, messages_received=2_000_000, fifo=True, catalog=self.catalog, region="us-east-1")
+        cost = self.fifo(messagesSent=2_000_000, messagesReceived=2_000_000)
         assert cost == pytest.approx(1.50, rel=0.01)
     def test_within_free_tier(self):
-        assert _sqs_cost(messages_sent=500_000, messages_received=400_000, fifo=False, catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.standard(messagesSent=500_000, messagesReceived=400_000) == 0.0
     def test_within_free_tier_send_only(self):
-        assert _sqs_cost(messages_sent=1_000_000, fifo=True, catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.fifo(messagesSent=1_000_000) == 0.0
     def test_zero_usage(self):
-        assert _sqs_cost(catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.standard() == 0.0
 
 class TestSQSRoutingNode:
     def test_sqs_is_routing_node(self):

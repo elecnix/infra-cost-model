@@ -6,7 +6,6 @@ SQS (/bin/bash.50/1M), Lambda (/bin/bash.60/1M), HTTP (/bin/bash.65/1M).
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import RoutingResource, ResourceExtract
 
 
@@ -62,21 +61,3 @@ class SNSTopic(RoutingResource):
             region=None,
             config={"name": properties.get("TopicName"), "fifoTopic": properties.get("FifoTopic", False)},
         )
-
-
-def _sns_cost(publishes=0, sqs_deliveries=0, lambda_deliveries=0, http_deliveries=0,
-              *, catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    for quantity, metric in [
-        (publishes, "SNS-Publish"),
-        (sqs_deliveries, "SNS-Delivery-SQS"),
-        (lambda_deliveries, "SNS-Delivery-Lambda"),
-        (http_deliveries, "SNS-Delivery-HTTP"),
-    ]:
-        if quantity > 0:
-            r = catalog.query(provider, "AmazonSNS", region, metric, quantity)
-            if r and hasattr(r, "total_cost"):
-                total += r.total_cost
-    return total

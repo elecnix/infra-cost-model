@@ -1,10 +1,42 @@
 """Tests for Bedrock/LLM Model resource model."""
 
 import pytest
-from infra_cost_model.resources.bedrock import (
-    BedrockModel, _bedrock_cost, _cached_prompt_bedrock_cost,
-    _streaming_bedrock_cost, _model_cost_comparison
-)
+from infra_cost_model.pricing.catalog import PricingCatalog
+from infra_cost_model.resources.bedrock import BedrockModel
+from live_pricing import resource_cost
+
+
+def _bedrock_cost(input_tokens=0, output_tokens=0, model="claude-3-5-sonnet",
+                  *, catalog=None, region="us-east-1"):
+    """Price Bedrock tokens through the handler's declared catalog metrics.
+
+    The seed carries one rate set for the models a handler recognises, so the
+    model a node names does not yet change the rows it prices.
+    """
+    return resource_cost("aws_bedrock_model.claude", "AmazonBedrock", region,
+                         catalog=catalog or PricingCatalog(seed=True),
+                         config={"modelId": model},
+                         inputTokens=input_tokens, outputTokens=output_tokens)
+
+
+def _cached_prompt_bedrock_cost(input_tokens=0, cached_input_tokens=0,
+                                output_tokens=0, model="claude-3-5-sonnet",
+                                *, catalog=None, region="us-east-1"):
+    """Price a prompt whose cached prefix is billed at its own rate."""
+    return resource_cost("aws_bedrock_model.claude", "AmazonBedrock", region,
+                         catalog=catalog or PricingCatalog(seed=True),
+                         config={"modelId": model},
+                         inputTokens=input_tokens - cached_input_tokens,
+                         cachedReadTokens=cached_input_tokens,
+                         outputTokens=output_tokens)
+
+
+def _streaming_bedrock_cost(input_tokens=0, output_tokens=0,
+                            model="claude-3-5-sonnet", *,
+                            catalog=None, region="us-east-1"):
+    """Streaming changes delivery, not total token cost."""
+    return _bedrock_cost(input_tokens, output_tokens, model,
+                         catalog=catalog, region=region)
 
 
 def test_bedrock_from_address_terraform():
@@ -26,8 +58,7 @@ def test_bedrock_cost_calculation(seed_catalog):
     """Test Bedrock cost calculation using catalog prices."""
     # Using seed prices: input $0.003/1K, output $0.015/1K
     # 2.16B input + 4.32B output
-    cost = _bedrock_cost(2_160_000_000, 4_320_000_000, "claude-3-5-sonnet",
-                         catalog=seed_catalog, region="us-east-1")
+    cost = _bedrock_cost(2_160_000_000, 4_320_000_000, "claude-3-5-sonnet")
 
     expected = 2_160_000_000 * 0.003 / 1000 + 4_320_000_000 * 0.015 / 1000
     # = 6480 + 64800 = $71,280
@@ -41,8 +72,8 @@ def test_bedrock_model_switching():
     input_tokens = 1_000_000_000
     output_tokens = 2_000_000_000
 
-    sonnet_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet", region="us-east-1")
-    haiku_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-haiku", region="us-east-1")
+    sonnet_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
+    haiku_cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-haiku")
 
     # All models currently use the same seed prices, so costs are equal
     # In a real implementation, models would have different pricing
@@ -55,25 +86,12 @@ def test_bedrock_asymmetric_pricing(seed_catalog):
     input_tokens = 1_000_000
     output_tokens = 1_000_000
 
-    cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet",
-                         catalog=seed_catalog, region="us-east-1")
+    cost = _bedrock_cost(input_tokens, output_tokens, "claude-3-5-sonnet")
     input_cost = input_tokens * 0.003 / 1000
     output_cost = output_tokens * 0.015 / 1000
 
     assert output_cost == 5 * input_cost
     assert cost == pytest.approx(input_cost + output_cost)
-
-
-def test_model_cost_comparison():
-    """Test comparing costs across models."""
-    results = _model_cost_comparison(1_000_000, 2_000_000, region="us-east-1")
-
-    assert "claude-3-5-sonnet" in results
-    assert "claude-3-5-haiku" in results
-    assert "claude-3-opus" in results
-
-    # All models currently use the same seed prices
-    assert results["claude-3-5-haiku"] == results["claude-3-5-sonnet"]
 
 
 def test_cached_prompt_cost_discount(seed_catalog):
@@ -83,8 +101,6 @@ def test_cached_prompt_cost_discount(seed_catalog):
         cached_input_tokens=500_000,
         output_tokens=1_000_000,
         model="claude-3-5-sonnet",
-        catalog=seed_catalog,
-        region="us-east-1",
     )
 
     expected = (
@@ -98,7 +114,7 @@ def test_cached_prompt_cost_discount(seed_catalog):
 
 def test_streaming_cost_matches_total_tokens():
     """Streaming changes delivery, not total token cost."""
-    assert _streaming_bedrock_cost(1_000_000, 2_000_000, region="us-east-1") == _bedrock_cost(1_000_000, 2_000_000, region="us-east-1")
+    assert _streaming_bedrock_cost(1_000_000, 2_000_000) == _bedrock_cost(1_000_000, 2_000_000)
 
 
 def test_bedrock_handler_owns_the_terraform_style_address():

@@ -7,11 +7,11 @@ GB/month usage estimates, analogous to the external/LLM-token nodes.
 
 import pytest
 
-from infra_cost_model.resources.data_transfer import (
-    DataTransferNode,
-    _data_transfer_cost,
-)
+from functools import partial
+
+from infra_cost_model.resources.data_transfer import DataTransferNode
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
 
 
 class TestDataTransferAddressParsing:
@@ -94,31 +94,28 @@ class TestDataTransferExtraction:
 class TestDataTransferPricing:
     def setup_method(self):
         self.catalog = PricingCatalog(seed=True)
+        self.cost = partial(resource_cost, "data_transfer.egress",
+                            "AWSDataTransfer", "us-east-1", catalog=self.catalog)
 
     def test_inter_region_gb(self):
-        cost = _data_transfer_cost(inter_region_gb=100, catalog=self.catalog,
-                                   region="us-east-1")
+        cost = self.cost(interRegionGb=100)
         assert cost == pytest.approx(2.0, rel=0.01)  # 100 * $0.02
 
     def test_internet_out_gb(self):
-        cost = _data_transfer_cost(internet_out_gb=200, catalog=self.catalog,
-                                   region="us-east-1")
+        cost = self.cost(internetOutGb=200)
         assert cost == pytest.approx(9.0, rel=0.01)  # 100 GB free, 100 * $0.09
 
     def test_inter_az_gb(self):
-        cost = _data_transfer_cost(inter_az_gb=100, catalog=self.catalog,
-                                   region="us-east-1")
+        cost = self.cost(interAzGb=100)
         assert cost == pytest.approx(1.0, rel=0.01)  # 100 * $0.01
 
     def test_combined(self):
-        cost = _data_transfer_cost(inter_region_gb=100, internet_out_gb=200,
-                                   inter_az_gb=100, catalog=self.catalog,
-                                   region="us-east-1")
+        cost = self.cost(interRegionGb=100, internetOutGb=200, interAzGb=100)
         # 2.0 + 9.0 + 1.0
         assert cost == pytest.approx(12.0, rel=0.01)
 
     def test_zero_usage(self):
-        assert _data_transfer_cost(catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.cost() == 0.0
 
 
 class TestDataTransferNodeType:

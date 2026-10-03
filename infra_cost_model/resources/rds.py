@@ -7,7 +7,6 @@ Multi-AZ (one standby) doubles the Single-AZ instance cost.
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import StorageResource, ResourceExtract
 
 
@@ -98,28 +97,3 @@ class RDSInstance(StorageResource):
                 "backupRetentionPeriod": properties.get("BackupRetentionPeriod", 7),
             },
         )
-
-
-def _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20,
-              backup_storage_gb=0, multi_az=False, *, catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    metric = f"RDS-Instance-Hour-{instance_class}"
-    r = catalog.query(provider, "AmazonRDS", region, metric, instance_hours)
-    if r and hasattr(r, "total_cost"):
-        instance_cost = r.total_cost
-        if multi_az:
-            mult_result = catalog.query("aws", "AmazonRDS", region, "RDS-Multi-AZ-Multiplier")
-            multi_az_rate = 2.0
-            if mult_result is not None and hasattr(mult_result, "price_usd"):
-                multi_az_rate = mult_result.price_usd
-            instance_cost *= multi_az_rate
-        total += instance_cost
-    if storage_gb > 0:
-        r = catalog.query(provider, "AmazonRDS", region, "RDS-Storage-gp3", storage_gb)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    if backup_storage_gb > 0:
-        r = catalog.query(provider, "AmazonRDS", region, "RDS-Backup-Storage", backup_storage_gb)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    return total
