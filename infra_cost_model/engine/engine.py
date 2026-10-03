@@ -286,6 +286,17 @@ def silent_zero_error(address: str, node: dict) -> Optional[str]:
                 f"stated. Declare 'volume' (or 'value') on usage metric "
                 f"'{name}'."
             )
+        if metric is None and "percentageRate" in rates:
+            # A variable rate with no transaction value to charge it on bills
+            # the whole model at zero, so refuse it the way the metric-without-
+            # volume case above is refused. A node with only the fixed fees
+            # needs no volume and is left alone.
+            return (
+                f"Node '{address}' states a percentage rate but names no usage "
+                f"metric carrying the value of a transaction. Name the metric "
+                f"'volume' or 'transaction', or declare 'percentage_rate' on "
+                f"it."
+            )
         return None
 
     if pricing_model == "token_based":
@@ -1526,7 +1537,8 @@ class CostAggregator:
         fixed_per_tx = self._resolve_param(
             metric.get("fixed_per_transaction",
                        pricing_rates.get("fixedPerTransaction", 0.0)))
-        per_call = self._resolve_param(metric.get("per_call", 0.0))
+        per_call = self._resolve_param(
+            metric.get("per_call", pricing_rates.get("perCall", 0.0)))
 
         # Value of one transaction, from usageMetrics
         volume = self._resolve_param(metric.get("volume", metric.get("value", 0)))
