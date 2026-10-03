@@ -66,6 +66,27 @@ class TestRDSPricing:
     def test_zero_usage(self):
         assert _rds_cost(instance_hours=0, storage_gb=0, catalog=self.catalog, region="us-east-1") == 0.0
 
+    def test_an_absent_instance_class_keeps_the_default_row(self):
+        assert (RDSInstance().catalog_metrics_for({})["instanceHours"]
+                == "RDS-Instance-Hour-db.t3.micro")
+
+    def test_an_empty_instance_class_selects_its_own_row(self):
+        """An empty class is a class the input declared, not an absent one.
+
+        Falling back to the default map would bill it at db.t3.micro, which is
+        the silent mispricing #427 removed. The row it selects prices nothing,
+        so the engine reports it unpriced.
+        """
+        assert (RDSInstance().catalog_metrics_for({"instanceClass": ""})["instanceHours"]
+                == "RDS-Instance-Hour-")
+
+    def test_an_empty_instance_class_has_no_priced_row(self):
+        """The row an empty class selects is unpriced, not the micro rate."""
+        assert self.catalog.query("aws", "AmazonRDS", "us-east-1",
+                                  "RDS-Instance-Hour-db.t3.micro")
+        assert not self.catalog.query("aws", "AmazonRDS", "us-east-1",
+                                      "RDS-Instance-Hour-")
+
 class TestRDSLeafNode:
     def test_rds_is_storage_leaf_node(self):
         result = RDSInstance.from_address("aws_db_instance.test")

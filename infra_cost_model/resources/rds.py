@@ -27,7 +27,11 @@ class RDSInstance(StorageResource):
     def catalog_metrics_for(self, config: dict) -> dict[str, str]:
         """The instance class the resource settings select prices its own row."""
         instance_class = (config or {}).get("instanceClass")
-        if not instance_class:
+        if instance_class is None:
+            # Only an absent class falls back to the default map. An empty
+            # string is a class the input declared and no row prices, so it
+            # selects its own row and is reported unpriced rather than
+            # silently billed at the db.t3.micro rate.
             return self.catalog_metrics
         return {**self.catalog_metrics,
                 "instanceHours": f"RDS-Instance-Hour-{instance_class}"}
