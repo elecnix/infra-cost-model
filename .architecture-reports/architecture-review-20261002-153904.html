@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture Review — infra-cost-model @ 3afb548</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  // 'antiscript', not 'strict': these diagrams put <br/> and <b> in their
+  // labels, and 'strict' encodes label HTML, which would print the tags as
+  // literal text. 'antiscript' keeps that formatting while stripping <script>
+  // and inline event handlers, which is the actual risk in label content.
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'antiscript' });
+</script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .tight li { margin-bottom: .3rem; }
+  .shallow-box { background: #fef2f2; border: 1px solid #fecaca; border-radius: .5rem; }
+  .deep-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: .5rem; }
+  .churn-bar { height: .5rem; border-radius: 9999px; background: #e5e7eb; overflow: hidden; }
+  .churn-fill { height: 100%; border-radius: 9999px; background: linear-gradient(90deg,#f97316,#dc2626); }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased">
+
+<header class="bg-slate-900 text-slate-100">
+  <div class="max-w-6xl mx-auto px-6 py-12">
+    <p class="text-xs uppercase tracking-widest text-slate-400 mb-3">Architecture review</p>
+    <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">infra-cost-model</h1>
+    <p class="mt-2 text-slate-300">Deepening opportunities in the DAG cost engine — <span class="font-mono text-sm">@ 3afb548</span></p>
+    <div class="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-400">
+      <span>2 Oct 2026</span><span>·</span><span>Scope: last 60 commits, by churn</span><span>·</span>
+      <span>14,247 LOC production / 23,715 LOC tests</span><span>·</span><span>9 candidates</span>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-6 py-10 space-y-10">
+
+  <!-- ===================== METHOD ===================== -->
+  <section>
+    <h2 class="text-xl font-semibold mb-3">How this was scoped</h2>
+    <p class="text-slate-700 leading-relaxed">
+      Deepening a module pays off by making <em>future</em> changes easier, so scope came from churn before
+      code was read. Across the last 60 commits the hot files are unambiguous:
+      <code class="text-sm bg-slate-200 px-1 rounded">engine/engine.py</code> (22 commits),
+      <code class="text-sm bg-slate-200 px-1 rounded">pricing/sources/infracost.py</code> (17),
+      <code class="text-sm bg-slate-200 px-1 rounded">pricing/free_tiers.py</code> (11),
+      <code class="text-sm bg-slate-200 px-1 rounded">resources/registry.py</code> (7),
+      <code class="text-sm bg-slate-200 px-1 rounded">resources/azure.py</code> (7).
+    </p>
+
+    <div class="mt-6 bg-white rounded-xl border border-slate-200 p-6">
+      <h3 class="text-sm font-semibold text-slate-700 mb-4">Where <code class="text-xs">engine.py</code> churn actually lands</h3>
+      <p class="text-xs text-slate-500 mb-1"><strong>Method:</strong> 2,824 lines <em>added</em> to <code class="text-xs">engine.py</code> across the 57 commits that touch it. A further 585 deleted lines are not attributable to a new-side region and are excluded. Each added line is bucketed by its position in the file.</p>
+      <p class="text-xs text-slate-500 mb-4">Cross-checked against <code class="text-xs">git blame</code>: the six bug-fix commits that introduced the pool algorithms own 296 of that block's 395 surviving lines (74.9%).</p>
+      <div class="space-y-3">
+        <div>
+          <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L529–923 · pool / billing-scope block</span><span class="font-semibold">36.5%</span></div>
+          <div class="churn-bar"><div class="churn-fill" style="width:36.5%"></div></div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L35–347 · validation predicates</span><span class="font-semibold">31.8%</span></div>
+          <div class="churn-bar"><div class="churn-fill" style="width:31.8%"></div></div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L348–527 · workload derivation</span><span class="font-semibold">17.5%</span></div>
+          <div class="churn-bar"><div class="churn-fill" style="width:17.5%"></div></div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L924–1538 · cost aggregator</span><span class="font-semibold">11.4%</span></div>
+          <div class="churn-bar"><div class="churn-fill" style="width:11.4%"></div></div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs mb-1"><span class="font-mono text-slate-700">L1539–2238 · engine facade + sensitivity</span><span class="font-semibold text-emerald-700">0.0%</span></div>
+          <div class="churn-bar"><div class="bg-emerald-500" style="width:2%"></div></div>
+        </div>
+      </div>
+      <p class="mt-5 text-sm text-slate-600 border-t border-slate-100 pt-4">
+        <strong>The read:</strong> the DAG walk and the pricing arithmetic are stable — not a single added line
+        in 57 commits for the facade and the sensitivity analyzers, 11% on the aggregator. Essentially all the
+        volatility is in <em>“what gets counted once, and in which region”</em>. That is the module to deepen.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===================== CANDIDATES ===================== -->
+  <section>
+    <h2 class="text-xl font-semibold mb-1">Candidates</h2>
+    <p class="text-slate-600 mb-6 text-sm">Ordered by leverage. Each was checked against the deletion test and, where cheap, reproduced.</p>
+
+    <!-- ---------- C1 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C1 · One billing-scope resolver, not five pool algorithms</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200">Strong</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">engine/engine.py L529–923 · pricing/{free_tiers,global_services,price_pools}.py</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Five parallel functions each answer the same question — <em>which pools share one bill?</em> —
+              each with its own guard condition and its own lookup table in the engine:
+              <code class="text-xs">_price_account_wide_pools</code>, <code class="text-xs">_price_shared_allowance_pools</code>,
+              <code class="text-xs">_price_global_pools</code>, <code class="text-xs">_price_region_group_pools</code>,
+              <code class="text-xs">_price_free_region_pools</code>. Each was added by a separate bug fix
+              (#294, #336, #338, #378, #389, #402). They call five different pricing predicates
+              (<code class="text-xs">free_tier_scope</code>, <code class="text-xs">shared_free_allowance</code>,
+              <code class="text-xs">is_global_metric</code>, <code class="text-xs">price_pool</code>,
+              <code class="text-xs">FREE_ALLOWANCE_REGIONS</code>) to make overlapping decisions, and the
+              precedence between them is encoded in the order of five <code class="text-xs">pool_costs.update(...)</code> calls.
+            </p>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              The tables themselves are pure data and unified — all keyed
+              <code class="text-xs">(vendor, service, metric)</code>. The <em>application</em> logic is not unified,
+              and that is where 36.5% of the lines added to engine.py land.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Move the question into the pricing layer as one resolver:
+              <code class="text-xs">billing_scope(provider, service, metric, region) → group of regions sharing one bill</code>.
+              The five algorithms collapse into one walk that asks the resolver once per pool instead of asking five
+              predicates and reconciling the answers. Precedence becomes data in the pricing tables rather than
+              control flow in the engine.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Locality:</strong> “does this region share a bill?” lives in one function with one table, instead of five that must agree.</li>
+              <li><strong>Leverage:</strong> the next overlapping-billing bugfix becomes a row in a table, not a sixth algorithm.</li>
+              <li><strong>Tests:</strong> the five algorithms currently need full engine fixtures to reach; the resolver is testable as pure data→group.</li>
+              <li>The engine stops importing GCS-only <code class="text-xs">FREE_ALLOWANCE_REGIONS</code> for ~80 LOC of provider-specific branching.</li>
+            </ul>
+            <p class="text-xs text-slate-500 mt-3"><strong>Deletion test:</strong> deleting the five algorithms and re-expressing them as one resolver <em>concentrates</em> the precedence rule. This is the signal we want.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 p-6 bg-slate-50 border-t border-slate-100">
+        <div class="shallow-box p-4">
+          <p class="text-xs font-semibold text-red-900 mb-3 uppercase tracking-wide">Before — shallow</p>
+          <div class="space-y-1.5 text-xs font-mono text-red-900">
+            <div class="bg-white rounded px-2 py-1.5 border border-red-200">_price_account_wide_pools <span class="text-red-400">→ free_tier_scope()</span></div>
+            <div class="bg-white rounded px-2 py-1.5 border border-red-200">_price_shared_allowance_pools <span class="text-red-400">→ shared_free_allowance()</span></div>
+            <div class="bg-white rounded px-2 py-1.5 border border-red-200">_price_global_pools <span class="text-red-400">→ is_global_metric()</span></div>
+            <div class="bg-white rounded px-2 py-1.5 border border-red-200">_price_region_group_pools <span class="text-red-400">→ price_pool()</span></div>
+            <div class="bg-white rounded px-2 py-1.5 border border-red-200">_price_free_region_pools <span class="text-red-400">→ FREE_ALLOWANCE_REGIONS</span></div>
+            <p class="text-red-600 pt-2 leading-relaxed font-sans">5 overlapping guards. Precedence = call order. A table edit can silently reprice.</p>
+          </div>
+        </div>
+        <div class="deep-box p-4">
+          <p class="text-xs font-semibold text-green-900 mb-3 uppercase tracking-wide">After — deep</p>
+          <div class="space-y-1.5 text-xs font-mono text-green-900">
+            <div class="bg-white rounded px-2 py-1.5 border border-green-200 font-sans font-semibold">engine: price one pool, split by quantity</div>
+            <div class="bg-white rounded px-2 py-1.5 border border-green-300">billing_scope(vendor, service, metric, region)</div>
+            <div class="text-green-600 pl-3 leading-relaxed font-sans">← 5 tables, one precedence rule</div>
+            <p class="text-green-700 pt-2 leading-relaxed font-sans">One question, one owner. The engine never learns which regions share a bill.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C2 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C2 · The engine never validates the Cost model representation</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200">Strong</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">engine/engine.py <code class="text-slate-600">CostEngine.compute</code> · schema/cost_model_schema.py · resources/types.py</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              <code class="text-xs">validate_cost_model()</code> exists and is correct, but its only callers are
+              <code class="text-xs">cmd_validate</code> and the Python Surface. <code class="text-xs">compute()</code>
+              checks the engine-version pin (Principle 14) and DAG acyclicity — and nothing else.
+              Six paths produce <code class="text-xs">$0.000000</code>, exit 0, with no
+              <code class="text-xs">unpriced_metrics</code> and no warning:
+            </p>
+            <ul class="tight text-slate-600 list-disc list-inside mt-2 text-xs font-mono">
+              <li>usage metric with <code>unit</code> but no <code>value</code></li>
+              <li><code>fixed: true</code> metric with no <code>value</code></li>
+              <li><code>frequency: {value: 0}</code></li>
+              <li>edge <code>rate: 0</code></li>
+              <li><code>pricingModel: percentage</code> — reads the wrong key namespace (schema puts it on the metric, engine reads it off the node, default <code>0.0</code>)</li>
+              <li><code>nodeType</code> — schema-required, documented as decisive, read by nothing</li>
+            </ul>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              Two nodes differ by 8 orders of magnitude on one field:
+              <code class="text-xs">shape: transactional, percentage_rate: 0.029, volume: 50</code> yields
+              <strong>$7,670,250,000</strong> without <code class="text-xs">pricingModel</code> and
+              <strong>$0</strong> with it.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Give the engine the same gate the CLI already has: call
+              <code class="text-xs">validate_cost_model()</code> once in <code class="text-xs">compute()</code> and
+              refuse rather than guess. Then consult the Resource representation for
+              <code class="text-xs">nodeType</code> ↔ <code class="text-xs">valid_metrics</code>, which the registry
+              already knows and the engine never asks.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Leverage:</strong> one existing call converts an entire class of silent mispricing into a refusal. Principle 14 already set the precedent — the pattern exists, it is just not wired at the top.</li>
+              <li><strong>Locality:</strong> every model invariant is enforced in one place, so “why did this price $0” stops needing three answers.</li>
+              <li><strong>Tests:</strong> the six silent paths become six cheap negative tests at the seam, instead of end-to-end fixture tests asserting a zero total.</li>
+            </ul>
+            <p class="text-xs text-slate-500 mt-3"><strong>Deletion test:</strong> the complexity already exists in the schema and the handlers. Wiring the engine to it <em>concentrates</em> the check rather than moving it.</p>
+            <div class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+              <strong>Touches Principle 14.</strong> That principle was written to make exactly this class of silent
+              mispricing visible; today it only covers engine-version drift. Extending it is completing the principle,
+              not contradicting it.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-6 bg-slate-50 border-t border-slate-100">
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <p class="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Before</p>
+            <pre class="mermaid text-xs">
+flowchart LR
+  M[Cost model representation] --> V{{cmd_validate only}}
+  M --> C[CostEngine.compute]
+  C --> R["require_engine ✓"]
+  C --> D["DAGValidator ✓"]
+  C --> N["nodeType — ignored"]
+  C --> Z["$0.000000, exit 0"]
+  classDef bad fill:#fee2e2,stroke:#dc2626
+  class Z,N bad
+            </pre>
+          </div>
+          <div>
+            <p class="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">After</p>
+            <pre class="mermaid text-xs">
+flowchart LR
+  M[Cost model representation] --> C[CostEngine.compute]
+  C --> S{{validate_cost_model}}
+  C --> R["require_engine ✓"]
+  C --> D["DAGValidator ✓"]
+  C --> T["nodeType ↔ valid_metrics"]
+  S -->|errors| X["refuse loudly"]
+  classDef good fill:#dcfce7,stroke:#16a34a
+  class X,T good
+            </pre>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C3 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C3 · Stop catalog row names leaking into the Cost model representation</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200">Strong</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">resources/*.py · examples/*.yaml · schema/cost-model.schema.json</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              <code class="text-xs">valid_metrics</code> is declared by all 36 handlers and read by nothing in the
+              engine, the schema, the CLI or either Surface. Meanwhile AWS handlers lack a
+              <code class="text-xs">catalog_metrics</code> mapping, so users are forced to write raw catalog row
+              names into their Cost model representation:
+            </p>
+            <div class="mt-2 bg-slate-900 text-slate-100 rounded p-3 text-xs font-mono overflow-x-auto">
+              <span class="text-slate-500"># examples/data-pipeline.yaml:30</span><br>
+              usageMetrics:<br>
+              &nbsp;&nbsp;<span class="text-red-400">S3-PutRequest</span>: { unit: requests, value: 1 }<br>
+              <span class="text-slate-500"># but S3Bucket.valid_metrics advertises:</span><br>
+              &nbsp;&nbsp;<span class="text-emerald-400">putRequests</span> · getRequests · storageGb
+            </div>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              Three bundled examples do this. Azure and GCP were given proper logical names in
+              <code class="text-xs">f8c86ca</code>; AWS was not. The pricing source's
+              product-family naming has become the canonical Usage metric vocabulary, and it has reached the user's YAML.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Every handler declares a complete logical→catalog mapping; the registry resolves it. The schema
+              validates metric names against <code class="text-xs">valid_metrics</code>. Catalog row names become
+              private to the pricing layer.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Locality:</strong> a pricing-source rename stops rippling into every Cost model representation in the wild.</li>
+              <li><strong>Leverage:</strong> it makes the registry the single place that knows a Node type's metric vocabulary — the depth that already exists, finished.</li>
+              <li><strong>Tests:</strong> descriptor-coverage tests can assert “every handler metric resolves to a row” instead of hand-listing Azure/GCP handlers (today AWS is uncovered — Bedrock and Secrets Manager metrics are unpriceable live).</li>
+            </ul>
+            <div class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+              <strong>This one is not a pure refactor.</strong> Existing models using
+              <code class="text-xs">S3-PutRequest</code> would need migrating. The three bundled examples and the
+              test suite are the migration surface; external models need a deprecation window.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-6 bg-slate-50 border-t border-slate-100">
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="shallow-box p-4">
+            <p class="text-xs font-semibold text-red-900 mb-2 uppercase tracking-wide">Before — shallow: vocabulary leaks both ways</p>
+            <pre class="mermaid text-xs">
+flowchart TB
+  Y["User YAML<br/><b>S3-PutRequest</b>"] --> E[engine]
+  H[handler.valid_metrics<br/><b>putRequests</b>] -.->|read by nobody| X(( ))
+  E --> C[pricing catalog]
+  C --> I["Infracost<br/>S3-PutRequest"]
+  classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  class Y,I bad
+            </pre>
+          </div>
+          <div class="deep-box p-4">
+            <p class="text-xs font-semibold text-green-900 mb-2 uppercase tracking-wide">After — deep: registry owns the vocabulary</p>
+            <pre class="mermaid text-xs">
+flowchart TB
+  Y["User YAML<br/><b>putRequests</b>"] --> R[ResourceRegistry]
+  R --> C[pricing catalog]
+  C --> I["Infracost<br/>S3-PutRequest"]
+  H[handler.valid_metrics<br/><b>putRequests</b>] --> R
+  R -->|validates| Y
+  classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+  class R,H good
+            </pre>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C4 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C4 · One adapter from argv, not six written separately</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200">Strong</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">cli.py (1092 LOC) — L61 vs L126/139/156 · L283…1001 · L614 vs L1041</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              The <code class="text-xs">--catalog</code> flag is inverted between command groups. Reproduced:
+            </p>
+            <div class="mt-2 bg-slate-900 text-slate-100 rounded p-3 text-xs font-mono overflow-x-auto">
+              <span class="text-slate-500">$ compute examples/serverless-api.yaml</span><br>
+              Total Monthly Cost: <span class="text-emerald-400">$274.324502</span><br>
+              <span class="text-slate-500">$ whatif examples/serverless-api.yaml …</span><br>
+              Baseline cost: <span class="text-red-400">$0.000000</span>   <span class="text-slate-500"># exit 0</span><br>
+              <span class="text-slate-500">$ whatif … --catalog</span><br>
+              Baseline cost: <span class="text-emerald-400">$0.000104</span> <span class="text-slate-500"># ≈ $274/mo</span>
+            </div>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              Same Cost model representation, same Cost engine, two answers differing by 100%. A budget gate built on
+              <code class="text-xs">whatif</code> gets $0 and passes. Separately, the
+              <code class="text-xs">Path→exists→open→parse→except</code> preamble is copy-pasted 8 times (~129 LOC)
+              and the 4-way IaC format dispatch is duplicated verbatim twice.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              One <code class="text-xs">_load_model(path) → dict | _CLIError</code> and one
+              <code class="text-xs">--catalog/--no-catalog</code> pair with a single default, matching Principle 13
+              (“prices are queried”). One <code class="text-xs">extract_for_format(data, fmt)</code> in the registry,
+              called twice instead of reimplemented twice.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Locality:</strong> load errors and error wording are decided once; today each of the 8 sites can drift.</li>
+              <li><strong>Leverage:</strong> removes an entire class of wrong answer for ~100 lines deleted.</li>
+              <li><strong>Tests:</strong> ~24% of <code class="text-xs">test_cli.py</code> (412 of 1728 lines) is tempfile plumbing and near-duplicate YAML literals; a <code class="text-xs">tmp_path</code> fixture plus a <code class="text-xs">_write_model()</code> helper deletes essentially all of it.</li>
+            </ul>
+            <p class="text-xs text-slate-500 mt-3"><strong>Deletion test:</strong> pure repetition — deleting it <em>concentrates</em> the error-handling policy in one function. Highest leverage per line in the repo.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-6 bg-slate-50 border-t border-slate-100">
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="shallow-box p-4">
+            <p class="text-xs font-semibold text-red-900 mb-2 uppercase tracking-wide">Before</p>
+            <div class="text-xs font-mono text-red-900 space-y-1">
+              <div class="bg-white rounded px-2 py-1 border border-red-200">compute → <code>--no-catalog</code> (catalog ON)</div>
+              <div class="bg-white rounded px-2 py-1 border border-red-200">whatif → <code>--catalog</code> (catalog OFF)</div>
+              <div class="bg-white rounded px-2 py-1 border border-red-200">sensitivity → <code>--catalog</code></div>
+              <div class="bg-white rounded px-2 py-1 border border-red-200">what-if → <code>--catalog</code></div>
+              <p class="pt-2 font-sans text-red-600">+ 8× load preamble · 2× format dispatch</p>
+            </div>
+          </div>
+          <div class="deep-box p-4">
+            <p class="text-xs font-semibold text-green-900 mb-2 uppercase tracking-wide">After</p>
+            <div class="text-xs font-mono text-green-900 space-y-1">
+              <div class="bg-white rounded px-2 py-1 border border-green-300 font-semibold">every command → _load_model(path)</div>
+              <div class="bg-white rounded px-2 py-1 border border-green-300">catalog default = on (Principle 13)</div>
+              <div class="bg-white rounded px-2 py-1 border border-green-300">extract_for_format(data, fmt)</div>
+              <p class="pt-2 font-sans text-green-700">One surface. “Learn one, know all three” starts to hold.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C5 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C5 · Give the descriptor DSL a schema</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200">Strong</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">pricing/sources/infracost.py — METRIC_DESCRIPTORS L727–1249 · sync_to_cache L411–521</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              243 descriptors (182 azure / 38 aws / 23 gcp) across <strong>19 distinct field names</strong>, all
+              interpreted by string literal inside one 110-line function. No schema, no validation, no type — an
+              untyped mini-language whose interpreter is the most branch-heavy function in the pricing layer.
+              A misspelled field is silently ignored.
+            </p>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              The same module also owns the GraphQL client, session discovery, region mapping tables, free-tier
+              injection and the Azure Retail fallback. Seven responsibilities, one file.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Split <code class="text-xs">sync_to_cache</code> into <em>parse → select → store</em>, and validate
+              every descriptor against a declared field set at import time. Split the transport from the descriptor
+              knowledge so tests can supply <code class="text-xs">Price</code> rows directly.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Leverage:</strong> a descriptor typo today surfaces as <code class="text-xs">$0</code> — the exact failure mode Principle 14 exists to prevent. Validation turns it into a startup error.</li>
+              <li><strong>Locality:</strong> 243 entries of pricing knowledge stop sharing a module with an HTTP client and an auth path.</li>
+              <li><strong>Tests:</strong> 7 test files hand-roll a ~20-line GraphQL catalogue matcher; injecting a transport lets them supply rows directly and deletes ~250 lines of duplicated wire-format plumbing.</li>
+            </ul>
+            <p class="text-xs text-slate-500 mt-3"><strong>Deletion test:</strong> extracting the descriptor knowledge into its own module <em>moves</em> code but <em>concentrates</em> the validation rule that currently has no owner. Worth it for the validation, not the file split.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C6 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C6 · Two adapters, no interface — decide whether there is a seam</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-200">Worth exploring</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">pricing/sources/{__init__,infracost,aws_pricing,azure_retail}.py</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              <code class="text-xs">sources/__init__.py</code> exports two sources side by side, implying a peer
+              relationship that does not exist. There is no <code class="text-xs">Protocol</code>, no ABC, no shared
+              signature — they disagree on arguments and return type, and agree only in that both write into a cache.
+            </p>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              <code class="text-xs">aws_pricing</code> is not a peer but a <em>callee</em> of the Infracost adapter
+              (called from <code class="text-xs">seed_pricing_catalog</code> and <code class="text-xs">_sync_fallback</code>),
+              and <code class="text-xs">azure_retail</code> is nested <em>inside</em> it. This is the textbook
+              “one adapter = hypothetical seam” case: two adapters, zero of the interface.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Decide, then commit in code. Either a real <code class="text-xs">PriceSource</code> protocol both
+              satisfy — or drop the parallel exports and name the dependency honestly.
+              <code class="text-xs">aws_pricing.SERVICE_CODES</code> covers only 4 services, so it is not a genuine
+              second source.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Locality:</strong> a reader stops inferring a pluggable architecture that is not there.</li>
+              <li><strong>Leverage:</strong> if a second real provider ever arrives, the interface already exists — or is honestly absent.</li>
+            </ul>
+            <div class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+              <strong>Touches Principle 13:</strong> “A provider plugin architecture is premature. Use a normalized
+              multi-cloud source until it doesn't cover a needed provider.” Half of that is implemented — the
+              <em>names</em> are abstracted, the <em>interface</em> is not. Worth reopening only because the naming
+              currently misleads.
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C7 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C7 · 876 LOC of dead parallel pricing implementations</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-200">Worth exploring</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">resources/*.py — 38 <code class="text-slate-600">_*_cost</code> functions across 13 test files</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              38 <code class="text-xs">_*_cost</code> helpers totalling 876 lines have zero production callers — every
+              reference is in a test file. The engine prices exclusively through
+              <code class="text-xs">PricingCatalog</code>. Two implementations of the same domain logic exist; one is live.
+            </p>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              The risk is divergence, not size: <code class="text-xs">s3.py:146</code> prices storage at
+              <code class="text-xs">$0.023/GB</code> while <code class="text-xs">s3.py:36</code> documents the same number
+              in prose — two copies of one fact.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Delete them and retarget the 13 test files at the live path. Or, if they are deliberate executable
+              documentation of the pricing model, say so in the module docstring — otherwise they are a trap.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Leverage:</strong> removes a silent-drift surface between prose, seed rows and live pricing.</li>
+              <li><strong>Locality:</strong> one price per fact, in the pricing layer.</li>
+            </ul>
+            <p class="text-xs text-slate-500 mt-3"><strong>Deletion test:</strong> deleting them <em>concentrates nothing</em> — a judgement call, not a mechanical win. Needs a deliberate decision on intent.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C8 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C8 · Code generation is a printer nobody consumes</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-200">Worth exploring</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">codegen/generator.py (362) + schema_reader.py (176) · cli.py L960–975</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <p class="text-slate-600 leading-relaxed">
+              <code class="text-xs">generate_handler</code> returns a string that the CLI prints to stdout. No file is
+              written, nothing is checked in, no CI job invokes it. All 25 handler modules are hand-written. Its 19
+              tests assert the string <em>compiles</em> — correct scope for a printer, but it is tested as a printer
+              and used as nothing.
+            </p>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              It is also wrong where it runs: <code class="text-xs">_derive_metrics</code> turns Terraform
+              <em>attributes</em> into usage metrics — a category error (<code class="text-xs">memorySize</code>,
+              <code class="text-xs">runtime</code> are config, not consumption), and it emits no
+              <code class="text-xs">catalog_metrics</code>, so a generated handler would find no rows and silently
+              fall back to embedded rates.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Wire it up properly, or delete it. Leaving it is the one option that buys nothing.
+            </p>
+            <p class="text-slate-600 leading-relaxed mt-2">
+              For contrast, the <em>one</em> generated artifact that does work is
+              <code class="text-xs">sdk/ts/src/types.generated.ts</code> — regenerated and drift-checked in CI
+              (<code class="text-xs">npm run build:types && git diff --exit-code</code>). That is a real seam. It is
+              generated from the Cost model representation schema, not from <code class="text-xs">.tf</code> files.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Leverage:</strong> a dead module that looks load-bearing misleads every reader of the resources layer.</li>
+            </ul>
+            <div class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+              <strong>Touches Principle 10.</strong> Type generation from infrastructure-as-code is unimplemented;
+              the <code class="text-xs">ResourceAddress</code> union type it promises does not exist on either Surface.
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ---------- C9 ---------- -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="border-b border-slate-100 p-6">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <h3 class="text-lg font-semibold">C9 · Scaffolding that exists only for tests</h3>
+          <span class="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-200">Worth exploring</span>
+        </div>
+        <p class="text-xs font-mono text-slate-500 mb-4">loop.py · resources/external.py · resources/registry.py L72–97</p>
+
+        <div class="grid md:grid-cols-2 gap-5 text-sm">
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Problem</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><code class="text-xs">loop.py</code> (127 LOC) — a personal agent-loop harness at the repo root. Not packaged, not in CI, not documented, untested, and <strong>22 ruff errors</strong> while the repo has no lint config.</li>
+              <li><code class="text-xs">ExternalServiceRegistry</code> — wholly test-only; its stated purpose is already served by <code class="text-xs">ExternalNode</code> in the main registry.</li>
+              <li><code class="text-xs">_infer_provider</code> + <code class="text-xs">_provider_index</code> — a hardcoded 20-entry dict serving a <code class="text-xs">from_address(provider=…)</code> parameter with <strong>zero callers</strong>; the four accessors around it are test-only.</li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-1">Solution</h4>
+            <p class="text-slate-600 leading-relaxed">
+              Delete or relocate <code class="text-xs">loop.py</code>; delete the test-only registry and provider index.
+            </p>
+            <h4 class="font-semibold text-slate-700 mt-4 mb-1">Benefits</h4>
+            <ul class="tight text-slate-600 list-disc list-inside">
+              <li><strong>Locality:</strong> the repo root stops making readers distrust everything else in it.</li>
+              <li>Removes ~200 LOC with no behaviour change.</li>
+            </ul>
+            <p class="text-xs text-slate-500 mt-3"><strong>Deletion test:</strong> concentrates nothing, loses nothing documented or depended upon. Pure subtraction — do it first, it makes the rest of the stack cheaper to review.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+  </section>
+
+  <!-- ===================== TOP RECOMMENDATION ===================== -->
+  <section class="bg-slate-900 text-slate-100 rounded-xl p-8">
+    <p class="text-xs uppercase tracking-widest text-slate-400 mb-2">Top recommendation</p>
+    <h2 class="text-2xl font-semibold mb-4">C1 · One billing-scope resolver</h2>
+    <p class="text-slate-300 leading-relaxed mb-5">
+      It is the only candidate where the churn data, the seam analysis and the bug history all point at the same
+      395 lines. Five algorithms, five guard conditions, five lookup tables, six bug fixes — and 36.5% of the lines
+      added to <code>engine.py</code> across 57 commits. Every other candidate is either cheap (C4, C9), gated
+      behind a decision (C6, C7, C8), or a behaviour change with migration cost (C2, C3).
+    </p>
+    <p class="text-slate-300 leading-relaxed mb-5">
+      C1 also improves the <em>next</em> thing that will happen, which is the point. The repo has six open PRs
+      (#414–#419) pricing new Azure and GCP resources. Several of them add free-allowance and billing-scope rows —
+      the exact tables C1 would consolidate. Doing C1 first means those land against one resolver instead of
+      appending a sixth guard to five algorithms.
+    </p>
+    <div class="grid md:grid-cols-3 gap-4 text-sm">
+      <div class="bg-slate-800 rounded-lg p-4">
+        <p class="text-slate-400 text-xs mb-1">Churn</p>
+        <p class="text-2xl font-semibold text-orange-400">36.5%</p>
+        <p class="text-slate-400 text-xs mt-1">of lines added to engine.py, in 17% of the file</p>
+      </div>
+      <div class="bg-slate-800 rounded-lg p-4">
+        <p class="text-slate-400 text-xs mb-1">Algorithms merged</p>
+        <p class="text-2xl font-semibold text-orange-400">5 → 1</p>
+        <p class="text-slate-400 text-xs mt-1">each added by a separate bug fix</p>
+      </div>
+      <div class="bg-slate-800 rounded-lg p-4">
+        <p class="text-slate-400 text-xs mb-1">Precedence</p>
+        <p class="text-2xl font-semibold text-orange-400">data</p>
+        <p class="text-slate-400 text-xs mt-1">instead of control-flow call order</p>
+      </div>
+    </div>
+    <p class="text-slate-400 text-xs mt-6 border-t border-slate-700 pt-4">
+      Sequencing note: C1 and C2 both own <code class="text-slate-300">engine.py</code>, so C2 stacks on C1.
+      C5 and C6 both own <code class="text-slate-300">pricing/sources/</code>; C3, C7 and C9 all own
+      <code class="text-slate-300">resources/</code>. C4 (<code class="text-slate-300">cli.py</code>) and C8
+      (<code class="text-slate-300">codegen/</code>) are independent and can land in parallel with everything.
+    </p>
+  </section>
+
+  <footer class="text-xs text-slate-400 pt-4">
+    Generated by an architecture review pass. Churn figures measured directly from git history over 57 commits touching
+    <code>engine.py</code>; structural claims verified by reading the sources. No repository source file was modified.
+  </footer>
+</main>
+</body>
+</html>
