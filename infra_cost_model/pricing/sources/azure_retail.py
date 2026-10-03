@@ -9,6 +9,11 @@ from this API.
 
 The prices come back in the same form as ``InfracostClient.query_prices``,
 so the Infracost descriptors select and store them the same way.
+
+This module is therefore not a source beside ``infracost``: it is nested in
+``InfracostClient._fetch_prices``, which calls it only for the meters that
+Infracost's own copy lacks, and feeds what it returns to the Infracost
+selector and store.
 """
 
 import os
