@@ -1,4 +1,12 @@
-"""AWS Pricing API client for fallback pricing."""
+"""AWS Price List API client: the offline fallback of the Infracost source.
+
+This is not a second source beside ``infracost``. It is what the Infracost
+adapter calls when there is no credential: ``seed_pricing_catalog`` loads the
+bundled seed file through ``aws_fallback_prices``, and ``_sync_fallback``
+additionally reads the live Price List for the services in ``SERVICE_CODES``
+that the seed file did not cover. That handful of services is why this is a
+fallback rather than a provider of its own.
+"""
 
 import warnings
 from datetime import datetime
