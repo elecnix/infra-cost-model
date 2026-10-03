@@ -238,6 +238,19 @@ class TestPercentageWithoutARateRefuses:
             "w": {"nodeType": "external", "pricingModel": "percentage"},
         }))
 
+    def test_a_percentage_rate_with_no_transaction_value_is_reported(self):
+        """A variable rate with nothing to charge it on bills the model at 0."""
+        errors = silent_zero_errors(model({
+            "w": {
+                "nodeType": "external",
+                "pricingModel": "percentage",
+                "pricingRates": {"percentageRate": 0.029},
+                "usageMetrics": {"requests": {"unit": "requests", "value": 10}},
+            },
+        }))
+        assert len(errors) == 1
+        assert "'w'" in errors[0]
+
 
 class TestModelWithNoNodes:
     def test_silent_zero_errors_tolerates_a_model_without_nodes(self):
