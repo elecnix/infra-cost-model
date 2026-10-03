@@ -12,7 +12,6 @@ Pricing covers 4 dimensions with tiered rates:
 
 from typing import Optional
 
-from infra_cost_model.pricing.catalog import PricingCatalog
 
 from .types import StorageResource, ResourceExtract
 
@@ -145,63 +144,3 @@ class S3Bucket(StorageResource):
                 entry["transitions"] = transitions
             parsed.append(entry)
         return parsed
-
-
-def _s3_cost(
-    put_requests: float = 0,
-    get_requests: float = 0,
-    storage_gb: float = 0,
-    data_out_gb: float = 0,
-    *,
-    catalog=None,
-    provider: str = "aws",
-    region: str,
-) -> float:
-    """Calculate S3 cost using catalog pricing.
-
-    Args:
-        put_requests: Monthly PUT/COPY/POST/LIST requests
-        get_requests: Monthly GET requests
-        storage_gb: Data stored in GB-month
-        data_out_gb: Monthly data transferred out to internet
-        catalog: Optional PricingCatalog (uses default if None)
-        region: AWS region for pricing lookup
-
-    Returns:
-        Total monthly cost in USD.
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-
-    total = 0.0
-
-    # PUT requests: $0.005/1K
-    if put_requests > 0:
-        result = catalog.query(provider, "AmazonS3", region,
-                               "S3-PutRequest", put_requests)
-        if result and hasattr(result, "total_cost"):
-            total += result.total_cost
-
-    # GET requests: $0.0004/1K
-    if get_requests > 0:
-        result = catalog.query(provider, "AmazonS3", region,
-                               "S3-GetRequest", get_requests)
-        if result and hasattr(result, "total_cost"):
-            total += result.total_cost
-
-    # Storage: tiered pricing (first 50TB at $0.023/GB)
-    if storage_gb > 0:
-        result = catalog.query(provider, "AmazonS3", region,
-                               "S3-Storage", storage_gb)
-        if result and hasattr(result, "total_cost"):
-            total += result.total_cost
-
-    # Data transfer out: the account-wide data transfer rows, with the
-    # first 100 GB a month free (#332)
-    if data_out_gb > 0:
-        result = catalog.query(provider, _EGRESS_SERVICE, region,
-                               _EGRESS_METRIC, data_out_gb)
-        if result and hasattr(result, "total_cost"):
-            total += result.total_cost
-
-    return total

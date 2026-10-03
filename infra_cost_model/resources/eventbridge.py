@@ -6,7 +6,6 @@ A scheduled rule on the default event bus costs nothing to run (#326).
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import RoutingResource, ResourceExtract
 
 
@@ -83,27 +82,3 @@ class EventBridgeRule(RoutingResource):
                 "eventBusName": properties.get("EventBusName", "default"),
             },
         )
-
-
-def _eventbridge_cost(events_published=0, events_matched=0, schedule_invocations=0,
-                      archive_replay_events=0, *, catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if events_published > 0:
-        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-CustomEvent", events_published)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if schedule_invocations > 0:
-        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-Schedule", schedule_invocations)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if archive_replay_events > 0:
-        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-ArchiveReplay", archive_replay_events)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if events_matched > 0:
-        r = catalog.query(provider, "AmazonEventBridge", region, "EventBridge-CustomEvent", events_matched)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total

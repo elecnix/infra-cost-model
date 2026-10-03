@@ -1,7 +1,31 @@
 """Tests for Amazon ECS Fargate Service resource model (Issue #182)."""
 import pytest
-from infra_cost_model.resources.ecs import ECSFargateService, _ecs_fargate_cost
+from infra_cost_model.resources.ecs import ECSFargateService
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
+
+# Ephemeral storage included with a task, free of charge.
+_FREE_EPHEMERAL_GB = 20
+
+
+def _fargate_cost(task_count=1, hours=730, cpu="256", memory="512",
+                  cpu_architecture="X86_64", ephemeral_storage_gb=20,
+                  catalog=None):
+    """Price Fargate tasks, which bill vCPU-hours and GB-hours.
+
+    A task states CPU units and memory in MB; Fargate bills the hours those
+    amounts stay reserved.
+    """
+    config = {"cpuArchitecture": cpu_architecture}
+    excess = max(0, ephemeral_storage_gb * task_count
+                 - _FREE_EPHEMERAL_GB * task_count)
+    return resource_cost(
+        "aws_ecs_service.svc", "AmazonECS", "us-east-1", catalog=catalog,
+        config=config,
+        vCpuHours=task_count * hours * float(cpu) / 1024.0,
+        gbHours=task_count * hours * float(memory) / 1024.0,
+        ephemeralStorageGb=excess,
+    )
 
 
 class TestECSAddressParsing:
@@ -121,18 +145,18 @@ class TestECSPricing:
     def test_vcpu_cost_x86_one_task(self):
         # 1 task * 730 hours * 0.25 vCPU = 182.5 vCPU-hours
         # 182.5 * $0.04048 = $7.3876
-        cost = _ecs_fargate_cost(
+        cost = _fargate_cost(
             task_count=1, hours=730, cpu="256", memory="0",
-            ephemeral_storage_gb=0, catalog=self.catalog, region="us-east-1",
+            ephemeral_storage_gb=0, catalog=self.catalog,
         )
         assert cost == pytest.approx(7.3876, rel=0.01)
 
     def test_memory_cost_x86_one_task(self):
         # 1 task * 730 hours * 0.5 GB = 365 GB-hours
         # 365 * $0.004445 = $1.6224
-        cost = _ecs_fargate_cost(
+        cost = _fargate_cost(
             task_count=1, hours=730, cpu="0", memory="512",
-            ephemeral_storage_gb=0, catalog=self.catalog, region="us-east-1",
+            ephemeral_storage_gb=0, catalog=self.catalog,
         )
         assert cost == pytest.approx(1.6224, rel=0.01)
 
@@ -140,24 +164,24 @@ class TestECSPricing:
         # vCPU: 1 * 730 * 0.5 = 365 vCPU-hours * 0.04048 = $14.7752
         # mem:  1 * 730 * 1.0 = 730 GB-hours * 0.004445 = $3.24485
         # total = $18.02
-        cost = _ecs_fargate_cost(
+        cost = _fargate_cost(
             task_count=1, hours=730, cpu="512", memory="1024",
-            ephemeral_storage_gb=0, catalog=self.catalog, region="us-east-1",
+            ephemeral_storage_gb=0, catalog=self.catalog,
         )
         assert cost == pytest.approx(18.02, rel=0.01)
 
     def test_arm_is_cheaper_than_x86(self):
         # ARM vCPU-hour is $0.03238 vs $0.04048 for X86 (~20% cheaper)
         # Same GB-hour comparison
-        cost_arm = _ecs_fargate_cost(
+        cost_arm = _fargate_cost(
             task_count=1, hours=730, cpu="1024", memory="2048",
             cpu_architecture="ARM64", ephemeral_storage_gb=0,
-            catalog=self.catalog, region="us-east-1",
+            catalog=self.catalog,
         )
-        cost_x86 = _ecs_fargate_cost(
+        cost_x86 = _fargate_cost(
             task_count=1, hours=730, cpu="1024", memory="2048",
             cpu_architecture="X86_64", ephemeral_storage_gb=0,
-            catalog=self.catalog, region="us-east-1",
+            catalog=self.catalog,
         )
         assert cost_x86 > cost_arm
         assert cost_arm == pytest.approx(cost_x86 * 0.8, rel=0.02)
@@ -165,17 +189,17 @@ class TestECSPricing:
     def test_ephemeral_storage_beyond_free_tier(self):
         # 2 tasks * 25 GB each = 50 GB total, free tier = 40 GB, excess = 10 GB
         # 10 GB * $0.081 = $0.81
-        cost = _ecs_fargate_cost(
+        cost = _fargate_cost(
             task_count=2, hours=730, cpu="0", memory="0",
-            ephemeral_storage_gb=25, catalog=self.catalog, region="us-east-1",
+            ephemeral_storage_gb=25, catalog=self.catalog,
         )
         assert cost == pytest.approx(0.81, rel=0.01)
 
     def test_ephemeral_storage_within_free_tier(self):
         # 1 task * 20 GB = within free tier, $0
-        cost = _ecs_fargate_cost(
+        cost = _fargate_cost(
             task_count=1, hours=730, cpu="0", memory="0",
-            ephemeral_storage_gb=20, catalog=self.catalog, region="us-east-1",
+            ephemeral_storage_gb=20, catalog=self.catalog,
         )
         assert cost == 0.0
 
@@ -183,16 +207,16 @@ class TestECSPricing:
         # 3 tasks * 730h * 0.25 vCPU = 547.5 vCPU-hours * 0.04048 = $22.1628
         # 3 tasks * 730h * 0.5 GB = 1095 GB-hours * 0.004445 = $4.8673
         # total = $27.03
-        cost = _ecs_fargate_cost(
+        cost = _fargate_cost(
             task_count=3, hours=730, cpu="256", memory="512",
-            ephemeral_storage_gb=0, catalog=self.catalog, region="us-east-1",
+            ephemeral_storage_gb=0, catalog=self.catalog,
         )
         assert cost == pytest.approx(27.03, rel=0.01)
 
     def test_zero_usage(self):
-        assert _ecs_fargate_cost(
+        assert _fargate_cost(
             task_count=0, hours=730, cpu="0", memory="0",
-            ephemeral_storage_gb=0, catalog=self.catalog, region="us-east-1",
+            ephemeral_storage_gb=0, catalog=self.catalog,
         ) == 0.0
 
 

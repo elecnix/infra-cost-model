@@ -9,7 +9,6 @@ month, once across all regions (#342). The seed rows state both allowances.
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import StorageResource, ResourceExtract
 
 
@@ -152,56 +151,3 @@ class CloudWatchMetricAlarm(StorageResource):
                 "period": properties.get("Period", 0),
             },
         )
-
-
-def _cloudwatch_log_cost(ingested_gb=0.0, stored_gb=0.0, *,
-                         catalog=None, provider: str = "aws",
-                         region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if ingested_gb > 0:
-        r = catalog.query(provider, "AmazonCloudWatch", region,
-                          "CloudWatch-Log-Ingestion", ingested_gb)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if stored_gb > 0:
-        r = catalog.query(provider, "AmazonCloudWatch", region,
-                          "CloudWatch-Log-Storage", stored_gb)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total
-
-
-def _cloudwatch_metric_cost(custom_metrics_count=0, alarms_count=0,
-                            get_metric_data_requests=0, *,
-                            catalog=None, provider: str = "aws",
-                            region: str) -> float:
-    """Monthly cost for CloudWatch custom metrics, alarms, and GetMetricData.
-
-    - custom_metrics_count: number of custom metrics ($0.30 per metric-month
-      after 10 free)
-    - alarms_count: number of standard-resolution alarms ($0.10 per
-      alarm-month after 10 free)
-    - get_metric_data_requests: metrics requested via GetMetricData
-      ($0.00001 each, with no free tier)
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if custom_metrics_count > 0:
-        r = catalog.query(provider, "AmazonCloudWatch", region,
-                          "CloudWatch-Metric-Month", custom_metrics_count)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if alarms_count > 0:
-        r = catalog.query(provider, "AmazonCloudWatch", region,
-                          "CloudWatch-Alarm-Month", alarms_count)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if get_metric_data_requests > 0:
-        r = catalog.query(provider, "AmazonCloudWatch", region,
-                          "CloudWatch-GetMetricData", get_metric_data_requests)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total
