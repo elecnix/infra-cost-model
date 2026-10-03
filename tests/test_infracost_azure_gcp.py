@@ -603,8 +603,8 @@ _SERVICE = {
 # Every registered handler, not a hand-picked Azure+GCP list: a handler that
 # names a catalog metric the table cannot price is a gap a live sync silently
 # cannot fill, and a list written by hand stops noticing new handlers.
-REGISTRY_HANDLERS = [h for provider in ("aws", "azure", "gcp")
-                     for h in ResourceRegistry.handlers_by_provider(provider)]
+REGISTRY_HANDLERS = [h for h in ResourceRegistry._handlers
+                     if not h.__module__.endswith(".external")]
 
 
 def _handler_vendor(handler) -> str:

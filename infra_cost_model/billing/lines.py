@@ -399,7 +399,7 @@ def _catalog_metrics(node: dict) -> dict[str, list[str]]:
     address = node.get("resourceAddress")
     if not isinstance(address, str):
         return {}
-    handler = ResourceRegistry.from_address(address, node.get("provider"))
+    handler = ResourceRegistry.from_address(address)
     if handler is None:
         return {}
     mapping = handler().catalog_metrics_for(node.get("config") or {})
