@@ -9,7 +9,6 @@ origin is free (#325).
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import RoutingResource, ResourceExtract
 
 
@@ -22,8 +21,8 @@ class CloudFrontDistribution(RoutingResource):
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
-        # A distribution serves HTTPS by default, which is the split
-        # ``_cloudfront_cost`` takes when the model says nothing.
+        # A distribution serves HTTPS by default, so a model that states
+        # only ``requests`` is priced on the HTTPS row.
         return {"requests": "CloudFront-HTTPS-Request",
                 "dataOutGb": "CloudFront-DataTransfer"}
 
@@ -99,21 +98,3 @@ class CloudFrontDistribution(RoutingResource):
         return [{"id": o.get("Id", ""), "domain": o.get("DomainName", ""),
                  "protocol": o.get("OriginProtocolPolicy", "")}
                 for o in origins if isinstance(o, dict)]
-
-
-def _cloudfront_cost(requests=0, https_ratio=1.0, data_out_gb=0, *, catalog=None,
-                     provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    # The free 10 million requests cover HTTP and HTTPS together (#333), so
-    # each protocol pays its share of the price of all the requests.
-    for metric, share in (("CloudFront-HTTP-Request", 1.0 - https_ratio),
-                          ("CloudFront-HTTPS-Request", https_ratio)):
-        if requests > 0 and share > 0:
-            r = catalog.query(provider, "AmazonCloudFront", region, metric, requests)
-            if r and hasattr(r, "total_cost"): total += r.total_cost * share
-    if data_out_gb > 0:
-        r = catalog.query(provider, "AmazonCloudFront", region, "CloudFront-DataTransfer", data_out_gb)
-        if r and hasattr(r, "total_cost"): total += r.total_cost
-    return total

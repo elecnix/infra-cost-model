@@ -7,7 +7,6 @@ Three small recurring-cost AWS services grouped for minimal per-handler overhead
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import StorageResource, ResourceExtract
 
 
@@ -196,52 +195,3 @@ class Route53Zone(StorageResource):
                 "comment": properties.get("HostedZoneConfig", {}).get("Comment"),
             },
         )
-
-
-def _secretsmanager_cost(secrets_count=1, api_calls=0, *,
-                         catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if secrets_count > 0:
-        r = catalog.query(provider, "AWSSecretsManager", region,
-                          "SecretsManager-Secret", secrets_count)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if api_calls > 0:
-        r = catalog.query(provider, "AWSSecretsManager", region,
-                          "SecretsManager-API-Call", api_calls)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total
-
-
-def _ecr_cost(stored_gb=1, *, catalog=None,
-              provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if stored_gb > 0:
-        r = catalog.query(provider, "AmazonECR", region,
-                          "ECR-Storage", stored_gb)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total
-
-
-def _route53_cost(hosted_zones=1, queries=0, *,
-                  catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if hosted_zones > 0:
-        r = catalog.query(provider, "AmazonRoute53", region,
-                          "Route53-HostedZone", hosted_zones)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if queries > 0:
-        r = catalog.query(provider, "AmazonRoute53", region,
-                          "Route53-Query", queries)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total

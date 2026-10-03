@@ -8,7 +8,6 @@ ECS Fargate is always-on container compute. Pricing dimensions:
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import ComputeResource, ResourceExtract
 
 
@@ -104,55 +103,3 @@ class ECSFargateService(ComputeResource):
                 if isinstance(ephemeral_storage, dict) else 20,
             },
         )
-
-
-def _ecs_fargate_cost(task_count=1, hours=730, cpu="256", memory="512",
-                       cpu_architecture="X86_64", ephemeral_storage_gb=20,
-                       *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Calculate ECS Fargate monthly cost.
-
-    Args:
-        task_count: Number of running tasks (from desired_count)
-        hours: Hours in billing period (default 730 for a month)
-        cpu: Task CPU units (1024 = 1 vCPU)
-        memory: Task memory in MB (1024 = 1 GB)
-        cpu_architecture: "X86_64" or "ARM64" (ARM ~20% cheaper)
-        ephemeral_storage_gb: Ephemeral storage per task, 20 GB free tier
-        catalog: PricingCatalog instance
-        provider: Cloud provider (default "aws")
-        region: AWS region
-
-    Returns:
-        Total monthly cost in USD
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-
-    is_arm = cpu_architecture == "ARM64"
-    vcpu_metric = "ECS-Fargate-vCPU-Hour-ARM" if is_arm else "ECS-Fargate-vCPU-Hour"
-    gb_metric = "ECS-Fargate-GB-Hour-ARM" if is_arm else "ECS-Fargate-GB-Hour"
-
-    # vCPU cost: task_count * hours * vCPU count
-    vcpu = float(cpu) / 1024.0
-    vcpu_hours = task_count * hours * vcpu
-    r = catalog.query(provider, "AmazonECS", region, vcpu_metric, vcpu_hours)
-    if r and hasattr(r, "total_cost"):
-        total += r.total_cost
-
-    # GB cost: task_count * hours * GB count
-    mem_gb = float(memory) / 1024.0
-    gb_hours = task_count * hours * mem_gb
-    r = catalog.query(provider, "AmazonECS", region, gb_metric, gb_hours)
-    if r and hasattr(r, "total_cost"):
-        total += r.total_cost
-
-    # Ephemeral storage: 20 GB free tier per task
-    free_tier_gb = 20 * task_count
-    excess_gb = max(0, ephemeral_storage_gb * task_count - free_tier_gb)
-    if excess_gb > 0:
-        r = catalog.query(provider, "AmazonECS", region, "ECS-Fargate-Ephemeral-Storage", excess_gb)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-
-    return total

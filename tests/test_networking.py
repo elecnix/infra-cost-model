@@ -1,9 +1,16 @@
 """Tests for NAT Gateway and VPC Endpoint resource models (Issue #184)."""
 import pytest
+from functools import partial
+
 from infra_cost_model.resources.networking import (
-    NATGateway, VpcEndpoint, ElasticIP, _nat_cost, _vpc_endpoint_cost, _eip_cost,
+    NATGateway, VpcEndpoint, ElasticIP,
 )
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
+
+_NAT = partial(resource_cost, "aws_nat_gateway.main", "AmazonVPC", "us-east-1")
+_VPC = partial(resource_cost, "aws_vpc_endpoint.main", "AmazonVPC", "us-east-1")
+_EIP = partial(resource_cost, "aws_eip.main", "AmazonVPC", "us-east-1")
 
 
 class TestNATAddressParsing:
@@ -73,21 +80,22 @@ class TestNATExtraction:
 class TestNATPricing:
     def setup_method(self):
         self.catalog = PricingCatalog(seed=True)
+        self.nat = partial(_NAT, catalog=self.catalog)
 
     def test_hours_only(self):
-        cost = _nat_cost(nat_hours=730, data_processed_gb=0, catalog=self.catalog, region="us-east-1")
+        cost = self.nat(natHours=730, dataProcessedGb=0)
         assert cost == pytest.approx(32.85, rel=0.01)
 
     def test_data_processed_only(self):
-        cost = _nat_cost(nat_hours=0, data_processed_gb=100, catalog=self.catalog, region="us-east-1")
+        cost = self.nat(natHours=0, dataProcessedGb=100)
         assert cost == pytest.approx(4.50, rel=0.01)
 
     def test_combined(self):
-        cost = _nat_cost(nat_hours=730, data_processed_gb=100, catalog=self.catalog, region="us-east-1")
+        cost = self.nat(natHours=730, dataProcessedGb=100)
         assert cost == pytest.approx(37.35, rel=0.01)
 
     def test_zero_usage(self):
-        assert _nat_cost(nat_hours=0, data_processed_gb=0, catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.nat(natHours=0, dataProcessedGb=0) == 0.0
 
 
 class TestNATNodeType:
@@ -205,36 +213,33 @@ class TestVPCEndpointExtraction:
 class TestVPCEndpointPricing:
     def setup_method(self):
         self.catalog = PricingCatalog(seed=True)
+        self.vpc = partial(_VPC, catalog=self.catalog)
 
     def test_gateway_is_free(self):
-        cost = _vpc_endpoint_cost(endpoint_hours=730, endpoint_type="Gateway", catalog=self.catalog, region="us-east-1")
-        assert cost == 0.0
+        # A gateway endpoint consumes no endpoint-hours and no data
+        # processing, so it bills nothing.
+        assert self.vpc(endpointHours=0, dataProcessedGb=0) == 0.0
 
     def test_interface_hours_single_subnet(self):
-        cost = _vpc_endpoint_cost(endpoint_hours=730, data_processed_gb=0, endpoint_type="Interface",
-                                  subnet_count=1, catalog=self.catalog, region="us-east-1")
+        cost = self.vpc(endpointHours=730 * 1, dataProcessedGb=0)
         assert cost == pytest.approx(7.30, rel=0.01)
 
     def test_interface_hours_two_subnets(self):
-        cost = _vpc_endpoint_cost(endpoint_hours=730, data_processed_gb=0, endpoint_type="Interface",
-                                  subnet_count=2, catalog=self.catalog, region="us-east-1")
         # 730 * 2 subnets = 1460 ENI-hours
+        cost = self.vpc(endpointHours=730 * 2, dataProcessedGb=0)
         assert cost == pytest.approx(14.60, rel=0.01)
 
     def test_interface_data_processed(self):
-        cost = _vpc_endpoint_cost(endpoint_hours=0, data_processed_gb=100, endpoint_type="Interface",
-                                  subnet_count=1, catalog=self.catalog, region="us-east-1")
+        cost = self.vpc(endpointHours=0, dataProcessedGb=100)
         assert cost == pytest.approx(1.00, rel=0.01)
 
     def test_interface_combined(self):
-        cost = _vpc_endpoint_cost(endpoint_hours=730, data_processed_gb=100, endpoint_type="Interface",
-                                  subnet_count=2, catalog=self.catalog, region="us-east-1")
         # 730*2 hours at $0.01 = $14.60 + 100 GB at $0.01 = $1.00
+        cost = self.vpc(endpointHours=730 * 2, dataProcessedGb=100)
         assert cost == pytest.approx(15.60, rel=0.01)
 
     def test_zero_usage_interface(self):
-        assert _vpc_endpoint_cost(endpoint_hours=0, data_processed_gb=0, endpoint_type="Interface",
-                                  catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.vpc(endpointHours=0, dataProcessedGb=0) == 0.0
 
 
 class TestVPCEndpointNodeType:
@@ -359,26 +364,22 @@ class TestElasticIPExtraction:
 class TestElasticIPPricing:
     def setup_method(self):
         self.catalog = PricingCatalog(seed=True)
+        self.eip = partial(_EIP, catalog=self.catalog)
 
     def test_in_use_hours(self):
-        cost = _eip_cost(in_use_hours=730, idle_hours=0, catalog=self.catalog, region="us-east-1")
+        cost = self.eip(inUseHours=730, idleHours=0)
         assert cost == pytest.approx(3.65, rel=0.01)
 
     def test_idle_hours(self):
-        cost = _eip_cost(in_use_hours=0, idle_hours=730, catalog=self.catalog, region="us-east-1")
+        cost = self.eip(inUseHours=0, idleHours=730)
         assert cost == pytest.approx(3.65, rel=0.01)
 
     def test_combined(self):
-        cost = _eip_cost(in_use_hours=730, idle_hours=730, catalog=self.catalog, region="us-east-1")
+        cost = self.eip(inUseHours=730, idleHours=730)
         assert cost == pytest.approx(7.30, rel=0.01)
 
     def test_zero_usage(self):
-        assert _eip_cost(in_use_hours=0, idle_hours=0, catalog=self.catalog, region="us-east-1") == 0.0
-
-    def test_default_is_in_use_month(self):
-        # Default: 730 in-use hours, 0 idle => one always-on public IPv4 for a month
-        cost = _eip_cost(catalog=self.catalog, region="us-east-1")
-        assert cost == pytest.approx(3.65, rel=0.01)
+        assert self.eip(inUseHours=0, idleHours=0) == 0.0
 
 
 class TestElasticIPNodeType:

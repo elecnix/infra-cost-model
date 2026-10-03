@@ -281,11 +281,14 @@ def test_cloudfront_http_and_https_share_one_allowance(seed_catalog):
     (8_000_000, 8_000_000), (2_000_000, 6_000_000), (0, 25_000_000),
     (3_000_000, 30_000_000),
 ])
-def test_engine_agrees_with_the_cloudfront_helper(seed_catalog, http, https):
-    from infra_cost_model.resources.cloudfront import _cloudfront_cost
-
+def test_engine_agrees_with_pricing_the_rows_directly(seed_catalog, http, https):
+    """The engine's split of the shared free tier matches the catalog rows."""
     requests = http + https
-    helper = _cloudfront_cost(requests=requests, https_ratio=https / requests,
-                              catalog=seed_catalog, region="global")
+    expected = 0.0
+    for metric, share in (("CloudFront-HTTP-Request", http / requests),
+                          ("CloudFront-HTTPS-Request", https / requests)):
+        result = seed_catalog.query("aws", "AmazonCloudFront", "global",
+                                    metric, requests)
+        expected += result.total_cost * share
     costs = compute(seed_catalog, {"cdn": distribution(http, https)})
-    assert costs["cdn"] == pytest.approx(helper, rel=1e-9)
+    assert costs["cdn"] == pytest.approx(expected, rel=1e-9)

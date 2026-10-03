@@ -1,11 +1,47 @@
 """Tests for AWS Lambda resource model."""
 
 import pytest
+from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.resources.lambda_func import (
     LambdaFunction, calculate_gb_seconds, apply_free_tier,
-    get_lambda_free_tier_limits, _lambda_cost,
-    _provisioned_concurrency_cost
+    get_lambda_free_tier_limits,
 )
+from live_pricing import derived_resource_cost
+
+
+def _lambda_cost(invocations=0, memory_mb=0, avg_duration_ms=0, *,
+                 catalog=None, region="us-east-1"):
+    """Price a Lambda invocation through the quantities the handler derives.
+
+    Lambda bills requests and GB-seconds, and duration and memory only feed the
+    GB-seconds formula, so the handler derives both catalog rows from the
+    usage a model states.
+    """
+    return derived_resource_cost(
+        "aws_lambda_function.fn", "AWSLambda", region,
+        {"invocations": invocations, "avgDurationMs": avg_duration_ms,
+         "memoryMb": memory_mb},
+        catalog=catalog or PricingCatalog(seed=True),
+    )
+
+
+def _provisioned_concurrency_cost(provisioned_concurrency=0, hours=0,
+                                  memory_mb=0, invocations=0, *,
+                                  catalog=None, region="us-east-1"):
+    """Price provisioned concurrency plus the requests it still bills for.
+
+    Provisioned concurrency has its own catalog row, which the handler declares
+    no logical metric for yet, so the row is named directly here.
+    """
+    catalog = catalog or PricingCatalog(seed=True)
+    rate = catalog.query(
+        "aws", "AWSLambda", region,
+        "Lambda-ProvisionedConcurrency-GB-Second").price_usd
+    gb = memory_mb / 1024
+    fixed = provisioned_concurrency * gb * hours * 3600 * rate
+    requests = catalog.query(
+        "aws", "AWSLambda", region, "Lambda-Request", invocations).total_cost
+    return fixed + requests
 
 
 def test_lambda_from_address_terraform():
@@ -129,7 +165,7 @@ def test_lambda_cost_calculation(seed_catalog):
 
     The seed data models the free tier as a $0 first tier for both
     Lambda-Request and Lambda-GB-Second (DP#4: limits are data, not code).
-    _lambda_cost passes full quantities; the catalog applies the free tier
+    The helper passes full quantities; the catalog applies the free tier
     automatically via tiered pricing.
     """
     cost = _lambda_cost(10_000_000, 256, 200, catalog=seed_catalog, region="us-east-1")

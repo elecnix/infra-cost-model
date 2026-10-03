@@ -11,7 +11,6 @@ Pricing:
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import RoutingResource, StorageResource, ResourceExtract
 
 
@@ -204,81 +203,3 @@ class ElasticIP(StorageResource):
                 "domain": properties.get("Domain", "vpc"),
             },
         )
-
-
-def _nat_cost(nat_hours=730, data_processed_gb=0, *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Calculate NAT Gateway cost.
-
-    Args:
-        nat_hours: Hours of NAT gateway runtime (default 730 = 1 month)
-        data_processed_gb: GB of data processed through the NAT gateway
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if nat_hours > 0:
-        r = catalog.query(provider, "AmazonVPC", region, "NAT-Gateway-Hour", nat_hours)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if data_processed_gb > 0:
-        r = catalog.query(provider, "AmazonVPC", region, "NAT-Gateway-DataProcessed", data_processed_gb)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total
-
-
-def _vpc_endpoint_cost(endpoint_hours=730, data_processed_gb=0, endpoint_type="Interface",
-                       subnet_count=1, *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Calculate VPC Endpoint cost.
-
-    Gateway endpoints (S3, DynamoDB) are free.
-    Interface endpoints cost per ENI-hour × subnet_count + per-GB processed.
-
-    Args:
-        endpoint_hours: Hours of endpoint runtime (default 730)
-        data_processed_gb: GB of data processed through the endpoint
-        endpoint_type: "Gateway" or "Interface"
-        subnet_count: Number of subnets/ENIs (for Interface endpoints)
-    """
-    if endpoint_type == "Gateway":
-        return 0.0
-
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if endpoint_hours > 0:
-        # Interface endpoint: hourly cost scales with ENI count (one per subnet)
-        total_hours = endpoint_hours * subnet_count
-        r = catalog.query(provider, "AmazonVPC", region, "VPC-Endpoint-Hour", total_hours)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if data_processed_gb > 0:
-        r = catalog.query(provider, "AmazonVPC", region, "VPC-Endpoint-DataProcessed", data_processed_gb)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total
-
-
-def _eip_cost(in_use_hours=730, idle_hours=0, *, catalog=None, provider: str = "aws", region: str) -> float:
-    """Calculate Elastic IP / public IPv4 address cost.
-
-    Since February 2024, AWS charges $0.005/hr for every public IPv4 address,
-    whether in-use (attached) or idle (unattached).
-
-    Args:
-        in_use_hours: Hours the address is attached to a running resource
-            (default 730 = 1 month always-on).
-        idle_hours: Hours the address is allocated but unattached.
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if in_use_hours > 0:
-        r = catalog.query(provider, "AmazonVPC", region, "IPv4-InUse-Hours", in_use_hours)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if idle_hours > 0:
-        r = catalog.query(provider, "AmazonVPC", region, "IPv4-Idle-Hours", idle_hours)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total

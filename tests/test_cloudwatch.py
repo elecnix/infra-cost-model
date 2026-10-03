@@ -1,12 +1,15 @@
 """Tests for CloudWatch Logs resource model (Issue #185)."""
+from functools import partial
+
+from functools import partial
+
 import pytest
 from infra_cost_model.resources.cloudwatch import (
     CloudWatchLogGroup,
     CloudWatchMetricAlarm,
-    _cloudwatch_log_cost,
-    _cloudwatch_metric_cost,
 )
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
 
 
 class TestCWAddressParsing:
@@ -89,26 +92,27 @@ class TestCWExtraction:
 class TestCWPricing:
     def setup_method(self):
         self.catalog = PricingCatalog(seed=True)
+        self.log = partial(resource_cost, "aws_cloudwatch_log_group.lg",
+                           "AmazonCloudWatch", "us-east-1", catalog=self.catalog)
+        self.metric = partial(resource_cost, "aws_cloudwatch_metric_alarm.a",
+                              "AmazonCloudWatch", "us-east-1", catalog=self.catalog)
 
     # The first 5 GB ingested and 5 GB-month stored are free once a month for
     # the account (#342), then $0.50 per GB and $0.03 per GB-month.
     @pytest.mark.parametrize("gb, cost", [(3, 0.0), (5, 0.0), (10, 2.50)])
     def test_ingestion_only(self, gb, cost):
-        assert _cloudwatch_log_cost(ingested_gb=gb, catalog=self.catalog,
-                                    region="us-east-1") == pytest.approx(cost, abs=1e-9)
+        assert self.log(ingestedGb=gb) == pytest.approx(cost, abs=1e-9)
 
     @pytest.mark.parametrize("gb, cost", [(3, 0.0), (5, 0.0), (50, 1.35)])
     def test_storage_only(self, gb, cost):
-        assert _cloudwatch_log_cost(stored_gb=gb, catalog=self.catalog,
-                                    region="us-east-1") == pytest.approx(cost, abs=1e-9)
+        assert self.log(storedGb=gb) == pytest.approx(cost, abs=1e-9)
 
     def test_combined(self):
-        cost = _cloudwatch_log_cost(ingested_gb=10, stored_gb=50,
-                                    catalog=self.catalog, region="us-east-1")
+        cost = self.log(ingestedGb=10, storedGb=50)
         assert cost == pytest.approx(3.85)
 
     def test_zero_usage(self):
-        assert _cloudwatch_log_cost(catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.log() == 0.0
 
 
 class TestCWNodeType:
@@ -257,37 +261,33 @@ class TestCWAlarmExtraction:
 class TestCWAlarmPricing:
     def setup_method(self):
         self.catalog = PricingCatalog(seed=True)
+        self.log = partial(resource_cost, "aws_cloudwatch_log_group.lg",
+                           "AmazonCloudWatch", "us-east-1", catalog=self.catalog)
+        self.metric = partial(resource_cost, "aws_cloudwatch_metric_alarm.a",
+                              "AmazonCloudWatch", "us-east-1", catalog=self.catalog)
 
     # The first 10 metrics and 10 alarm metrics are free once a month for
     # the account (#342), then $0.30 and $0.10 each.
     @pytest.mark.parametrize("count, cost", [(5, 0.0), (10, 0.0), (25, 4.50)])
     def test_custom_metrics_only(self, count, cost):
-        assert _cloudwatch_metric_cost(
-            custom_metrics_count=count, catalog=self.catalog,
-            region="us-east-1") == pytest.approx(cost, abs=1e-9)
+        assert self.metric(customMetricsCount=count) == pytest.approx(cost, abs=1e-9)
 
     @pytest.mark.parametrize("count, cost", [(5, 0.0), (10, 0.0), (15, 0.50)])
     def test_alarms_only(self, count, cost):
-        assert _cloudwatch_metric_cost(
-            alarms_count=count, catalog=self.catalog,
-            region="us-east-1") == pytest.approx(cost, abs=1e-9)
+        assert self.metric(alarmsCount=count) == pytest.approx(cost, abs=1e-9)
 
     # GetMetricData has no free tier: $0.00001 per metric from the first (#341).
     @pytest.mark.parametrize("metrics, cost", [(500_000, 5.00), (2_000_000, 20.00)])
     def test_get_metric_data_has_no_free_tier(self, metrics, cost):
-        assert _cloudwatch_metric_cost(
-            get_metric_data_requests=metrics, catalog=self.catalog,
-            region="us-east-1") == pytest.approx(cost)
+        assert self.metric(getMetricDataRequests=metrics) == pytest.approx(cost)
 
     def test_combined(self):
         # 15 paid metrics x $0.30 + 5 paid alarms x $0.10 + 2,000,000 x $0.00001
-        cost = _cloudwatch_metric_cost(
-            custom_metrics_count=25, alarms_count=15,
-            get_metric_data_requests=2_000_000, catalog=self.catalog, region="us-east-1")
+        cost = self.metric(customMetricsCount=25, alarmsCount=15, getMetricDataRequests=2_000_000)
         assert cost == pytest.approx(25.00)
 
     def test_zero_usage(self):
-        assert _cloudwatch_metric_cost(catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.metric() == 0.0
 
 
 class TestCWAlarmNodeType:
