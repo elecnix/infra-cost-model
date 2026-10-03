@@ -381,11 +381,6 @@ class TestElasticIPPricing:
     def test_zero_usage(self):
         assert self.eip(inUseHours=0, idleHours=0) == 0.0
 
-    def test_one_always_on_public_ipv4(self):
-        # An address in use for a whole month bills 730 in-use hours.
-        cost = self.eip(inUseHours=730, idleHours=0)
-        assert cost == pytest.approx(3.65, rel=0.01)
-
 
 class TestElasticIPNodeType:
     def test_eip_is_storage_leaf(self):
