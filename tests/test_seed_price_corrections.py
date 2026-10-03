@@ -40,11 +40,15 @@ def _price(node, region, catalog, **usage):
     return resource_cost(address, service, region, catalog=catalog, **usage)
 
 
+# The handler declares no logical metric for the HTTP request row.
+CLOUDFRONT_HTTP_REQUEST = "CloudFront-HTTP-Request"
+
+
 def _cloudfront_requests(requests, https_ratio, catalog, region="global"):
     """Split a distribution's requests across its HTTP and HTTPS rows."""
     https_metric = CloudFrontDistribution().catalog_metrics["requests"]
     total = 0.0
-    for metric, share in ((https_metric.replace("HTTPS", "HTTP"), 1.0 - https_ratio),
+    for metric, share in ((CLOUDFRONT_HTTP_REQUEST, 1.0 - https_ratio),
                           (https_metric, https_ratio)):
         if requests > 0 and share > 0:
             result = catalog.query("aws", "AmazonCloudFront", region, metric, requests)
