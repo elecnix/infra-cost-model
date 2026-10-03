@@ -7,7 +7,11 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script type="module">
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-  mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+  // 'antiscript', not 'strict': these diagrams put <br/> and <b> in their
+  // labels, and 'strict' encodes label HTML, which would print the tags as
+  // literal text. 'antiscript' keeps that formatting while stripping <script>
+  // and inline event handlers, which is the actual risk in label content.
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'antiscript' });
 </script>
 <style>
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
