@@ -19,6 +19,20 @@ class ECSFargateService(ComputeResource):
     def valid_metrics(self) -> list[str]:
         return ["vCpuHours", "gbHours", "ephemeralStorageGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"vCpuHours": "ECS-Fargate-vCPU-Hour",
+                "gbHours": "ECS-Fargate-GB-Hour",
+                "ephemeralStorageGb": "ECS-Fargate-Ephemeral-Storage"}
+
+    def catalog_metrics_for(self, config: dict) -> dict[str, str]:
+        """ARM/Graviton is a separate, cheaper row for both compute dimensions."""
+        if (config or {}).get("cpuArchitecture") != "ARM64":
+            return self.catalog_metrics
+        return {"vCpuHours": "ECS-Fargate-vCPU-Hour-ARM",
+                "gbHours": "ECS-Fargate-GB-Hour-ARM",
+                "ephemeralStorageGb": "ECS-Fargate-Ephemeral-Storage"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["ECSFargateService"]:
         if (resource_address.startswith("aws_ecs_service.") or

@@ -72,7 +72,7 @@ class TestDataPipelineModel:
         model = load_yaml_model("data-pipeline.yaml")
         rds = model["nodes"]["aws_db_instance.analytics"]
         assert rds["flatOverride"] is True
-        assert rds["usageMetrics"]["RDS-Instance-Hour-db.t3.micro"]["value"] == 730
+        assert rds["usageMetrics"]["instanceHours"]["value"] == 730
 
     def test_dag_no_cycles(self):
         """DAG is acyclic."""

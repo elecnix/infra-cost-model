@@ -15,7 +15,15 @@ class EventBridgeRule(RoutingResource):
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["eventsPublished", "eventsMatched"]
+        return ["eventsPublished", "eventsMatched", "scheduledInvocations"]
+
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # A pattern-matched event and a published custom event bill the same
+        # row; a scheduled rule on the default bus bills its own.
+        return {"eventsPublished": "EventBridge-CustomEvent",
+                "eventsMatched": "EventBridge-CustomEvent",
+                "scheduledInvocations": "EventBridge-Schedule"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["EventBridgeRule"]:

@@ -21,7 +21,7 @@ nodes:
     region: us-east-1
     service: AmazonAPIGatewayHTTP
     usageMetrics:
-      APIGateway-HTTP-Request: { unit: requests, value: 1 }
+      requests: { unit: requests, value: 1 }
 
   # An HTTP API has no egress price of its own. AWS bills the response bytes
   # as data transfer out to the internet.
@@ -65,8 +65,8 @@ nodes:
     usageMetrics:
       # Each metric counts only the calls over edges of its type, so a read
       # is not also charged as a write.
-      Dynamo-ReadRequest: { unit: requests, value: 1, edgeType: read }
-      Dynamo-WriteRequest: { unit: requests, value: 1, edgeType: write }
+      readRequests: { unit: requests, value: 1, edgeType: read }
+      writeRequests: { unit: requests, value: 1, edgeType: write }
 
 edges:
   # Every response leaves AWS as data transfer out

@@ -254,5 +254,5 @@ class TestSurfaces:
         path = Path(__file__).resolve().parent.parent / "examples" / "serverless-api.yaml"
         metrics = parse_yaml_dsl(path.read_text())["nodes"]["aws_dynamodb_table.items"][
             "usageMetrics"]
-        assert metrics["Dynamo-ReadRequest"]["edgeType"] == "read"
-        assert metrics["Dynamo-WriteRequest"]["edgeType"] == "write"
+        assert metrics["readRequests"]["edgeType"] == "read"
+        assert metrics["writeRequests"]["edgeType"] == "write"

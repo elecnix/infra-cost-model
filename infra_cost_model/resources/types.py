@@ -7,6 +7,12 @@ from typing import Optional
 from infra_cost_model.schema.cost_model_schema import validate_cost_model
 
 
+# Catalog row names that a handler still accepts as a Usage metric even though the
+# row itself is gone, so a model written against them keeps a price (#427).
+# Everything else a handler maps has to be a name from its ``valid_metrics``.
+LEGACY_CATALOG_METRICS: frozenset[str] = frozenset({"S3-DataTransfer"})
+
+
 @dataclass
 class ResourceExtract:
     """Extracted resource configuration."""
