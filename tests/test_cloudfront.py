@@ -4,20 +4,24 @@ from infra_cost_model.resources.cloudfront import CloudFrontDistribution
 from infra_cost_model.pricing.catalog import PricingCatalog
 from live_pricing import resource_cost
 
+# The handler declares no logical metric for the HTTP request row.
+HTTP_REQUEST_METRIC = "CloudFront-HTTP-Request"
+
 
 def _cost(requests=0, https_ratio=1.0, data_out_gb=0, catalog=None):
     """Price a distribution, splitting requests across the HTTP and HTTPS rows.
 
     The handler maps ``requests`` to the HTTPS row, the protocol a
-    distribution serves by default; the HTTP row is its counterpart. The 10
-    million free requests cover both together (#333), so each protocol pays
-    its share of the price of all the requests.
+    distribution serves by default, and declares no logical metric for the
+    HTTP row, so that row is named here. The 10 million free requests cover
+    both protocols together (#333), so each pays its share of the price of
+    all the requests.
     """
     catalog = catalog if catalog is not None else PricingCatalog(seed=True)
     https_metric = CloudFrontDistribution().catalog_metrics["requests"]
-    http_metric = https_metric.replace("HTTPS", "HTTP")
     total = 0.0
-    for metric, share in ((http_metric, 1.0 - https_ratio), (https_metric, https_ratio)):
+    for metric, share in ((HTTP_REQUEST_METRIC, 1.0 - https_ratio),
+                          (https_metric, https_ratio)):
         if requests > 0 and share > 0:
             result = catalog.query("aws", "AmazonCloudFront", "global", metric, requests)
             total += result.total_cost * share
