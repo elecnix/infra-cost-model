@@ -33,10 +33,8 @@ def _external_cost(transactions=0, volume=0, percentage_rate=0.0,
     """
     catalog = catalog or PricingCatalog(seed=True)
     total = 0.0
-    if percentage_rate:
-        total += transactions * (volume * percentage_rate + fixed_per_transaction)
-    if per_call:
-        total += transactions * per_call
+    total += transactions * (volume * percentage_rate + fixed_per_transaction)
+    total += transactions * per_call
     return total
 
 
@@ -258,3 +256,18 @@ def test_external_cost_with_per_call():
     )
 
     assert cost == pytest.approx(75.0)
+
+def test_a_fixed_fee_with_no_percentage_still_charges():
+    """A flat per-transaction fee is not conditional on a percentage rate.
+
+    The two used to share one `if percentage_rate:` guard, so a model that
+    charges only the fixed fee priced at 0.
+    """
+    cost = _external_cost(
+        transactions=1_000,
+        volume=0,
+        percentage_rate=0.0,
+        fixed_per_transaction=0.30,
+    )
+
+    assert cost == pytest.approx(300.0)
