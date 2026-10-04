@@ -52,7 +52,10 @@ class TestSNSPricing:
         sqs_only = self.cost(sqsDeliveries=2_000_000)
         lambda_only = self.cost(lambdaDeliveries=2_000_000)
         http_only = self.cost(httpDeliveries=2_000_000)
-        assert http_only > lambda_only == sqs_only == 0.0
+        assert http_only > lambda_only
+        # SQS and Lambda deliveries are free; only HTTP bills.
+        assert sqs_only == 0.0
+        assert lambda_only == 0.0
     def test_within_free_tier(self):
         assert self.cost(publishes=500_000, sqsDeliveries=500_000) == 0.0
     def test_filtered_deliveries(self):
