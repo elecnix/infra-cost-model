@@ -141,3 +141,18 @@ class TestRDSRegistryIntegration:
         resource = {"address": "aws_db_instance.main", "type": "aws_db_instance", "values": {"identifier": "main-db", "engine": "postgres", "instance_class": "db.t3.micro", "allocated_storage": 20, "region": "us-east-1"}}
         result = ResourceRegistry.extract("aws_db_instance.main", resource, "terraform")
         assert result is not None and result["provider"] == "aws" and result["service"] == "AmazonRDS" and result["nodeType"] == "storage"
+
+
+def test_a_regional_metric_missing_from_its_region_is_not_priced_from_us_east_1():
+    """The helper must fall back only for a global metric, as the engine does.
+
+    RDS is regional and the seed carries no eu-west-1 RDS rows. Before the
+    `is_global_metric` gate this helper walked GLOBAL_PRICE_REGIONS anyway and
+    priced the node from us-east-1, so a test could assert a non-zero total for
+    a node the engine leaves unpriced. Now it refuses, which is the whole point
+    of a helper that claims to resolve "the way the engine does".
+    """
+    catalog = PricingCatalog(seed=True)
+    with pytest.raises(AssertionError, match="no catalog rows"):
+        resource_cost("aws_db_instance.db", "AmazonRDS", "eu-west-1",
+                      catalog=catalog, instanceHours=100)
