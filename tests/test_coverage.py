@@ -5,7 +5,7 @@ carries the module path, and one node often stands for several resources on
 purpose, so a node lists the extra addresses it covers (#449).
 """
 
-from infra_cost_model.coverage import match_coverage
+from infra_cost_model.coverage import StalePattern, match_coverage
 from infra_cost_model.schema import validate_cost_model
 
 
@@ -174,6 +174,22 @@ def test_a_node_whose_address_the_export_has_is_not_orphaned():
     assert result.orphaned == set()
     assert result.uncosted == set()
     assert result.stale_patterns == []
+
+
+def test_stale_pattern_does_not_orphan_a_node_the_export_has():
+    """A node the export has stays matched when another covers entry is stale."""
+    nodes = {
+        "aws_lb.main": _node(
+            resourceAddress="aws_lb.public", covers=["aws_lb.gone"]
+        )
+    }
+    result = match_coverage(nodes, {"aws_lb.public"})
+    assert result.matched == {"aws_lb.public"}
+    assert result.orphaned == set()
+    assert result.uncosted == set()
+    assert result.stale_patterns == [
+        StalePattern(node="aws_lb.main", pattern="aws_lb.gone")
+    ]
 
 
 def test_glob_without_a_metacharacter_matches_one_exact_address():

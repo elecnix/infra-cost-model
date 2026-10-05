@@ -69,24 +69,22 @@ def match_coverage(nodes: dict, iac_addresses: Iterable[str]) -> CoverageResult:
             continue
 
         address = node_data.get("resourceAddress")
-        # A node is accounted for once any one of its claims reaches an
-        # address the export has. Its own address counts when the export has
-        # it; a stale `covers` entry alongside a live claim does not orphan the
-        # node. A `covers` pattern is never matched against the node's own
-        # resourceAddress, which is a model-side name the export need not have.
-        claimed = isinstance(address, str) and address in iac
-        if claimed:
+        own_address_found = isinstance(address, str) and address in iac
+        if own_address_found:
             matched.add(address)
 
+        any_cover_hit = False
         for pattern in _covers_patterns(node_data):
             hits = {addr for addr in iac if fnmatchcase(addr, pattern)}
             if hits:
                 matched |= hits
-                claimed = True
+                any_cover_hit = True
             else:
                 stale.append(StalePattern(node=str(node_name), pattern=pattern))
 
-        if isinstance(address, str) and not claimed:
+        # A node is orphaned only when the export lacks its own address and no
+        # `covers` pattern of that node reaches any address the export has.
+        if isinstance(address, str) and not own_address_found and not any_cover_hit:
             orphaned.add(address)
 
     return CoverageResult(
