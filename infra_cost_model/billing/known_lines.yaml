@@ -1,0 +1,133 @@
+# Cloud bill line names, carried with the package (#442).
+#
+# A model prices a NAT gateway from the catalog service code `AmazonVPC`, while
+# the bill calls the gateway's hours "Amazon Virtual Private Cloud" and its
+# bytes "EC2 - Other". Nothing in the model says so, so a user comparing the
+# two keeps a mapping file by hand. This file is the mapping, and `validate`
+# checks a model's own `billingLines` against it so a misspelled name fails
+# instead of matching zero bill rows and reading as $0.
+#
+# Each vendor names the bill provider its lines come from, the usage-type prefix
+# of each region the bill knows, and the lines themselves. A line lists the
+# catalog service codes that bill under it, and the usage types those codes
+# price. Both lists are partial on purpose: a line with no `usageTypes` resolves
+# to its service alone, and a node states the exact usage type in its own
+# `billingLines`.
+#
+# The usage-type suffixes and region prefixes are the names AWS Cost Explorer
+# publishes, not names this project invents. A name this file does not carry is
+# one a node has to state for itself.
+
+aws:
+  billProvider: aws-cost-explorer
+
+  # A usage type carries the region it was billed in. A resource with no region,
+  # such as a CloudFront distribution, bills under `Global-`.
+  regionPrefixes:
+    us-east-1: USE1
+    us-east-2: USE2
+    us-west-1: USW1
+    us-west-2: USW2
+    ca-central-1: CAN1
+    eu-west-1: EUW1
+    eu-west-2: EUW2
+    eu-west-3: EU
+    eu-central-1: EUC1
+    eu-north-1: EUN1
+    ap-northeast-1: APN1
+    ap-northeast-2: APN2
+    sa-east-1: SAE1
+    global: Global
+
+  lines:
+    # Several nodes share one line: every Lambda function in an account bills
+    # under `AWS Lambda`, and the usage type tells the dimensions apart.
+    - service: "AWS Lambda"
+      catalogServices: [AWSLambda]
+      usageTypes:
+        Lambda-Request: Lambda-Request
+        Lambda-GB-Second: Lambda-GB-Second
+        Lambda-ProvisionedConcurrency-GB-Second: Lambda-ProvisionedConcurrency-GB-Second
+
+    - service: "Amazon DynamoDB"
+      catalogServices: [AmazonDynamoDB]
+      usageTypes:
+        Dynamo-ReadRequest: Dynamo-ReadRequest
+        Dynamo-WriteRequest: Dynamo-WriteRequest
+        Dynamo-RCU-Hour: Dynamo-RCU-Hour
+        Dynamo-WCU-Hour: Dynamo-WCU-Hour
+        Dynamo-Storage: Dynamo-Storage
+
+    - service: "Amazon Simple Storage Service"
+      catalogServices: [AmazonS3]
+
+    - service: "Amazon Simple Notification Service"
+      catalogServices: [AmazonSNS]
+
+    - service: "Amazon Simple Queue Service"
+      catalogServices: [AmazonSQS]
+
+    # No space, unlike every other Amazon service name above.
+    - service: "AmazonCloudWatch"
+      catalogServices: [AmazonCloudWatch]
+
+    # With a space, and a name no catalog service code resembles.
+    - service: "AWS CloudTrail"
+
+    - service: "Amazon EC2 Container Registry (ECR)"
+      catalogServices: [AmazonECR]
+
+    # A NAT gateway's hours bill here and its bytes bill under `EC2 - Other`
+    # below. One node, two lines, told apart only by the usage type.
+    - service: "Amazon Virtual Private Cloud"
+      catalogServices: [AmazonVPC]
+      usageTypes:
+        NAT-Gateway-Hour: NatGateway-Hours
+
+    # A public IPv4 address bills here rather than under the service that holds
+    # it, which is what makes a mapping file necessary in the first place.
+    - service: "EC2 - Other"
+      catalogServices: [AmazonVPC, AmazonEC2]
+      usageTypes:
+        NAT-Gateway-DataProcessed: NatGateway-Bytes
+        IPv4-InUse-Hours: IP-Hours
+        IPv4-Idle-Hours: IP-Hours
+
+    - service: "Amazon Elastic Compute Cloud"
+      catalogServices: [AmazonEC2]
+
+    - service: "Amazon Relational Database Service"
+      catalogServices: [AmazonRDS]
+
+    - service: "AWS Elastic Load Balancing"
+      catalogServices: [AmazonALB, AmazonELB]
+
+    - service: "Amazon CloudFront"
+      catalogServices: [AmazonCloudFront]
+
+    - service: "Amazon Elastic Container Service"
+      catalogServices: [AmazonECS]
+
+    - service: "Amazon EventBridge"
+      catalogServices: [AmazonEventBridge]
+
+    - service: "Amazon Route 53"
+      catalogServices: [AmazonRoute53]
+
+    - service: "AWS Key Management Service"
+      catalogServices: [AWSKMS]
+
+    - service: "AWS Secrets Manager"
+      catalogServices: [AWSSecretsManager]
+
+    - service: "AWS WAF"
+      catalogServices: [AWSWAF]
+
+    - service: "AWS Data Transfer"
+      catalogServices: [AWSDataTransfer]
+
+    - service: "Amazon API Gateway"
+      catalogServices: [AmazonAPIGatewayHTTP, AmazonAPIGateway]
+
+    - service: "Amazon Bedrock"
+      catalogServices: [AmazonBedrock]

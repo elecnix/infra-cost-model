@@ -55,6 +55,9 @@ infra-cost-model what-if model-a.yaml --compare model-b.yaml \
 
 # Visualize the DAG
 infra-cost-model graph model.yaml
+
+# Which line of the cloud bill each usage metric lands on
+infra-cost-model billing-lines model.yaml --json
 ```
 
 ## Metric values
@@ -86,6 +89,37 @@ nodes:
 Here `MAU` is 1,000 monthly active users for 25 customers, and `SSO-Connection` is one SSO connection per customer. Because the expressions name `customers`, `what-if --param customers` and a sensitivity run over it move both metrics without a pre-processing step that multiplies values and strips a marker before the engine sees the model.
 
 An unknown parameter name, an operator outside `+ - * /`, and a division by zero each raise an error naming the expression. The expression is arithmetic, never code: a call or a conditional in a `value` is refused. Frequency and edge `rate` still take one number or one parameter name.
+=======
+## Bill lines
+
+A model prices a node from a catalog service code, and the bill names the
+same money differently. A NAT gateway's hours bill under `Amazon Virtual
+Private Cloud` and its processed bytes under `EC2 - Other`, and nothing in a
+node's service code says so. The engine carries the known names, so the
+defaults already resolve, and `billing-lines` prints them:
+
+```text
+NODE                  METRIC            SERVICE                       USAGE TYPE
+aws_nat_gateway.main  natHours          Amazon Virtual Private Cloud  USW2-NatGateway-Hours
+aws_nat_gateway.main  dataProcessedGb   EC2 - Other                   USW2-NatGateway-Bytes
+```
+
+Where the defaults are wrong, or the billing service is one the engine does
+not know, a node states the line itself. Keyed by usage metric, and the
+usage type carries the region prefix the bill prints:
+
+```yaml
+nodes:
+  aws_nat_gateway.main:
+    # ...
+    billingLines:
+      natHours:
+        service: "Amazon Virtual Private Cloud"
+        usageType: "USW2-NatGateway-Hours"
+```
+
+`validate` refuses a service name the bill does not have. A typo there would
+match zero bill rows and read as $0 rather than as the mistake it is.
 
 ## Pinning the engine version
 
