@@ -1,0 +1,459 @@
+"""A run pins its price source: seed, live, or a named cache file (#446).
+
+Without a pinned source, `compute` reads whatever the catalog finds: synced
+rows when the local cache holds them, the bundled rows when it does not, and a
+node's embedded `pricingRates` when neither has a row. The same model then
+prices from different sources on a laptop and in CI.
+"""
+
+import sqlite3
+
+import pytest
+import yaml
+
+from infra_cost_model.cli import main
+from infra_cost_model.pricing import cache as cache_module
+from infra_cost_model.pricing.cache import Price, PricingCache
+from infra_cost_model.pricing.catalog import PricingCatalog
+
+# A flat rate a sync would store for the metric below. It differs from the
+# bundled seed rate, so a total tells which source answered.
+LIVE_RATE = 0.0000003
+SEED_PAID_RATE = 0.0000002
+MONTHLY_REQUESTS = 10_000_000
+
+
+def model(with_embedded_rates: bool = False) -> str:
+    """A model whose single metric prices from the catalog's Lambda rows."""
+    node = {
+        "nodeType": "compute",
+        "resourceAddress": "aws_lambda_function.fn",
+        "provider": "aws",
+        "service": "AWSLambda",
+        "region": "us-east-1",
+        "usageMetrics": {
+            "Lambda-Request": {"unit": "requests", "value": 1},
+        },
+    }
+    if with_embedded_rates:
+        node["pricingRates"] = {"Lambda-Request": 0.5}
+    return yaml.safe_dump({
+        "version": "1.0",
+        "workflow": {
+            "name": "pinned",
+            "entry": "fn",
+            "frequency": {"unit": "perMonth", "value": MONTHLY_REQUESTS},
+        },
+        "nodes": {"fn": node},
+        "edges": [],
+    })
+
+
+def lambda_model() -> str:
+    """A model whose handler derives catalog quantities from logical metrics."""
+    return yaml.safe_dump({
+        "version": "1.0",
+        "workflow": {
+            "name": "derived",
+            "entry": "fn",
+            "frequency": {"unit": "perMonth", "value": MONTHLY_REQUESTS},
+        },
+        "nodes": {"fn": {
+            "nodeType": "compute",
+            "resourceAddress": "aws_lambda_function.fn",
+            "provider": "aws",
+            "service": "AWSLambda",
+            "region": "us-east-1",
+            "usageMetrics": {
+                "invocations": {"unit": "requests", "value": 1},
+                "avgDurationMs": {"unit": "ms", "value": 50},
+                "memoryMb": {"unit": "MB", "value": 256},
+            },
+        }},
+        "edges": [],
+    })
+
+
+def labelled_model() -> str:
+    """A Lambda whose node carries a label a filter can select (#445)."""
+    data = yaml.safe_load(lambda_model())
+    data["nodes"]["fn"]["labels"] = {"category": "platform"}
+    return yaml.safe_dump(data)
+
+
+@pytest.fixture
+def home_cache(monkeypatch, tmp_path):
+    """Point the default cache at a database this test controls."""
+    db_path = tmp_path / "home" / "pricing.db"
+    db_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(cache_module, "DB_PATH", db_path)
+    return db_path
+
+
+@pytest.fixture
+def live_db(tmp_path):
+    """A cache with synced rows for the model's only metric."""
+    cache = PricingCache(db_path=tmp_path / "synced" / "pricing.db")
+    cache.upsert(Price(
+        vendor="aws", service="AWSLambda", region="us-east-1",
+        product_family="Serverless", attributes={},
+        usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+        source="infracost", effective_date="2026-01-01",
+        fetched_at="2026-01-01T00:00:00"))
+    return cache.db_path
+
+
+def write(tmp_path, text: str):
+    path = tmp_path / "model.yaml"
+    path.write_text(text)
+    return str(path)
+
+
+def total(stdout: str) -> float:
+    line = [ln for ln in stdout.splitlines() if ln.startswith("Total Monthly Cost")][0]
+    return float(line.split("$")[1])
+
+
+def rows_by_source(db_path) -> dict[str, int]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {source: count for source, count in conn.execute(
+            "SELECT source, COUNT(*) FROM prices GROUP BY source")}
+    finally:
+        conn.close()
+
+
+class TestTheCatalogCanPinItsSource:
+    """`PricingCatalog(sources=...)` answers from one set of rows only."""
+
+    def test_a_live_catalog_ignores_the_bundled_rows(self, tmp_path):
+        db = tmp_path / "seeded.db"
+        PricingCatalog(db_path=db, seed=True)
+        assert PricingCatalog(db_path=db).query(
+            "aws", "AWSLambda", "us-east-1", "Lambda-Request") is not None
+        assert PricingCatalog(db_path=db, sources="live").query(
+            "aws", "AWSLambda", "us-east-1", "Lambda-Request") is None
+
+    def test_a_live_catalog_answers_from_the_synced_rows(self, tmp_path, live_db):
+        price = PricingCatalog(db_path=live_db, sources="live").query(
+            "aws", "AWSLambda", "us-east-1", "Lambda-Request")
+        assert price is not None
+        assert price.price_usd == LIVE_RATE
+
+    def test_a_seed_catalog_ignores_the_synced_rows(self, tmp_path, live_db):
+        priced = PricingCatalog(db_path=live_db, sources="seed").query(
+            "aws", "AWSLambda", "us-east-1", "Lambda-Request")
+        assert priced.tiers[-1].price_usd == SEED_PAID_RATE
+
+    def test_a_seed_catalog_writes_no_rows_to_the_cache_it_reads(self, live_db):
+        PricingCatalog(db_path=live_db, sources="seed")
+        assert rows_by_source(live_db).get("seed") is None
+
+    def test_seed_catalogs_share_one_temporary_database(self, monkeypatch):
+        # Rows load with INSERT OR IGNORE, so a second catalog can share the
+        # first catalog's database. Building one per catalog would leave a
+        # temporary directory behind for every `--pricing seed` run in a
+        # process that prices several models (#446).
+        monkeypatch.setattr(cache_module, "_BUNDLED_DB_PATH", None)
+        first = PricingCatalog(sources="seed")
+        second = PricingCatalog(sources="seed")
+        assert first._cache.db_path == second._cache.db_path
+
+    def test_an_empty_source_filter_matches_no_row(self, tmp_path):
+        # An empty filter names no source, so it must read no row. Falling
+        # through to every source would be the silent widening the filter
+        # exists to prevent (#446).
+        cache = PricingCache(db_path=tmp_path / "seeded.db")
+        cache.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        assert cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request",
+                           sources=frozenset()) is None
+
+    def test_a_pinned_source_keeps_its_rows_beside_a_live_row(self, tmp_path):
+        # A seed row and a live row for one metric share a key. The
+        # live-supersede pass keeps only the live row, but a run pinned to the
+        # seed must still read the seed row: the filter has to run before the
+        # supersede, or a pinned source answers None (#446).
+        cache = PricingCache(db_path=tmp_path / "mixed.db")
+        cache.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests",
+            price_usd=SEED_PAID_RATE, source="seed",
+            effective_date="2026-01-01", fetched_at="2026-01-01T00:00:00"))
+        cache.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        seeded = cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request",
+                             sources=frozenset({"seed"}))
+        assert seeded is not None and seeded.price_usd == SEED_PAID_RATE
+        live = cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request",
+                           sources=frozenset({"infracost"}))
+        assert live is not None and live.price_usd == LIVE_RATE
+
+
+class TestComputePricingSeed:
+    """`--pricing seed` gives the same total whatever the local cache holds."""
+
+    def test_the_total_does_not_depend_on_the_local_cache(
+            self, tmp_path, live_db, capsys, monkeypatch):
+        model_path = write(tmp_path, model())
+
+        # A machine whose cache holds synced rows ...
+        monkeypatch.setattr(cache_module, "DB_PATH", live_db)
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        with_synced = total(capsys.readouterr().out)
+
+        # ... and one whose cache holds none give the same number.
+        monkeypatch.setattr(cache_module, "DB_PATH", tmp_path / "cold" / "pricing.db")
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        assert total(capsys.readouterr().out) == with_synced
+
+    def test_the_seed_total_is_the_bundled_rate_not_the_synced_one(
+            self, tmp_path, home_cache, capsys, monkeypatch):
+        model_path = write(tmp_path, model())
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        seeded = total(capsys.readouterr().out)
+
+        # 1,000,000 requests a month are free in the bundled rows; the rest
+        # pay the seed rate.
+        assert seeded == pytest.approx(
+            (MONTHLY_REQUESTS - 1_000_000) * SEED_PAID_RATE)
+
+    def test_a_region_the_seed_lacks_keeps_its_embedded_rate(
+            self, tmp_path, home_cache, capsys, monkeypatch):
+        # A node outside the seed's regions (us-east-1, eastus, global) matches
+        # no seed row, so an offline run prices it from embedded pricingRates.
+        # That is the documented offline fallback (#446), and it must not read
+        # the local cache: the same synced row for that region changes nothing;
+        # only --pricing live reads it.
+        model_path = write(tmp_path, model(with_embedded_rates=True))
+        data = yaml.safe_load(open(model_path))
+        data["nodes"]["fn"]["region"] = "eu-central-1"
+        open(model_path, "w").write(yaml.safe_dump(data))
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        embedded = total(capsys.readouterr().out)
+        assert embedded == pytest.approx(MONTHLY_REQUESTS * 0.5)
+
+        # A synced live row for that exact region sits in the cache.
+        PricingCache(db_path=home_cache).upsert(Price(
+            vendor="aws", service="AWSLambda", region="eu-central-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(embedded)
+
+        # Only the pinned-live run reads that row.
+        assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * LIVE_RATE)
+
+    def test_the_run_leaves_the_local_cache_without_seed_rows(
+            self, tmp_path, home_cache, capsys):
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        assert not home_cache.exists()
+
+    def test_the_header_names_the_pinned_source(self, tmp_path, home_cache, capsys):
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        assert "pricing: seed" in capsys.readouterr().out
+
+
+class TestComputePricingLive:
+    """`--pricing live` prices from synced rows and refuses anything else."""
+
+    def test_it_fails_and_names_the_metric_without_a_synced_row(
+            self, tmp_path, home_cache, capsys):
+        model_path = write(tmp_path, model(with_embedded_rates=True))
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 1
+        captured = capsys.readouterr()
+        assert "--pricing live" in captured.err
+        assert "Lambda-Request" in captured.err
+        assert "aws" in captured.err and "AWSLambda" in captured.err
+        assert "us-east-1" in captured.err
+        assert "Total Monthly Cost" not in captured.out
+
+    def test_it_fails_on_a_cold_cache(self, tmp_path, capsys):
+        cold = PricingCache(db_path=tmp_path / "cold.db").db_path
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "live",
+                     "--pricing-db", str(cold)]) == 1
+        assert "Lambda-Request" in capsys.readouterr().err
+
+    def test_it_prices_from_the_synced_rows(self, tmp_path, live_db, capsys):
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "live",
+                     "--pricing-db", str(live_db)]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * LIVE_RATE)
+
+    def test_the_missing_list_names_the_row_a_sync_can_fetch(
+            self, tmp_path, home_cache, capsys):
+        # The model says `invocations`, `avgDurationMs` and `memoryMb`; the
+        # rows it needs are the two quantities the handler derives. A list of
+        # logical names would send the reader to a sync that can't fetch them.
+        model_path = write(tmp_path, lambda_model())
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 1
+        err = capsys.readouterr().err
+        listed = err.split("Run sync-pricing")[0]
+        assert "Lambda-Request" in listed
+        assert "Lambda-GB-Second" in listed
+        assert "invocations" not in listed
+
+    def test_it_reads_the_home_cache_by_default(self, tmp_path, home_cache,
+                                                live_db, capsys, monkeypatch):
+        # The synced rows sit where `sync-pricing` writes them.
+        monkeypatch.setattr(cache_module, "DB_PATH", live_db)
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * LIVE_RATE)
+
+    def test_a_partly_synced_node_charges_nothing_for_it(
+            self, tmp_path, capsys, monkeypatch):
+        # A handler derives two quantities from one node (a Lambda's requests
+        # and GB-seconds). A sync that fetched one of the two rows leaves the
+        # node half-priced, so the run prices no part of it: charging the row
+        # that did arrive would report a number from a partly-synced node
+        # (#446). The derived charges are dropped together, and the per-metric
+        # path does not re-add them.
+        partial = PricingCache(db_path=tmp_path / "partial" / "pricing.db")
+        partial.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        monkeypatch.setattr(cache_module, "DB_PATH", partial.db_path)
+        model_path = write(tmp_path, lambda_model())
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 1
+        err = capsys.readouterr().err
+        listed = err.split("Run sync-pricing")[0]
+        assert "Lambda-GB-Second" in listed
+        assert "Lambda-Request" not in listed
+
+
+class TestComputePricingDb:
+    """`--pricing-db` points the run at a named cache file."""
+
+    def test_it_reads_the_named_file(self, tmp_path, home_cache, live_db, capsys):
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--monthly",
+                     "--pricing-db", str(live_db)]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * LIVE_RATE)
+
+    def test_a_run_with_no_named_file_reads_the_home_cache(
+            self, tmp_path, capsys, monkeypatch):
+        # The home cache holds a rate the embedded rates don't, so a total
+        # that matches it can only have come from there.
+        home = PricingCache(db_path=tmp_path / "home" / "pricing.db")
+        home.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        monkeypatch.setattr(cache_module, "DB_PATH", home.db_path)
+        model_path = write(tmp_path, model())
+
+        assert main(["compute", model_path, "--monthly"]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * LIVE_RATE)
+
+    def test_a_missing_file_is_an_error(self, tmp_path, capsys):
+        model_path = write(tmp_path, model())
+        absent = tmp_path / "nowhere" / "pricing.db"
+        assert main(["compute", model_path, "--pricing-db", str(absent)]) == 1
+        assert "no price cache" in capsys.readouterr().err
+
+
+class TestPinnedSourceConflicts:
+    """Options that would silently price from somewhere else are refused."""
+
+    def test_pricing_with_no_catalog_is_an_error(self, tmp_path, capsys):
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--no-catalog",
+                     "--pricing", "live"]) == 1
+        assert "--no-catalog" in capsys.readouterr().err
+
+    def test_seed_with_a_pricing_db_is_an_error(self, tmp_path, live_db, capsys):
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--pricing", "seed",
+                     "--pricing-db", str(live_db)]) == 1
+        assert "--pricing-db" in capsys.readouterr().err
+
+    def test_pricing_db_with_no_catalog_is_an_error(self, tmp_path, capsys):
+        # --no-catalog says the run reads no catalog, so naming a cache file
+        # contradicts it. The combination is refused for the same reason
+        # --pricing and --no-catalog are: naming an unused source reads as a
+        # run that used it (#446). Reporting the file as missing would blame
+        # the wrong thing.
+        model_path = write(tmp_path, model())
+        absent = tmp_path / "nowhere" / "pricing.db"
+        assert main(["compute", model_path, "--no-catalog",
+                     "--pricing-db", str(absent)]) == 1
+        err = capsys.readouterr().err
+        assert "--no-catalog" in err
+        assert "no price cache" not in err
+
+    def test_a_label_filter_narrows_a_pinned_source_without_changing_it(
+            self, tmp_path, home_cache, capsys):
+        # A pinned source and a label filter answer different questions (#446,
+        # #445): the one fixes where every price comes from, the other leaves
+        # a node out of the report. Both hold at once, so the filtered run
+        # still names its pinned source and still shows what it left out.
+        model_path = write(tmp_path, labelled_model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed",
+                     "--exclude-label", "category=platform"]) == 0
+        out = capsys.readouterr().out
+        assert "pricing: seed" in out
+        assert "Excluded by label category=platform" in out
+        assert total(out) == 0.0
+
+    def test_a_label_filter_does_not_excuse_a_live_miss(
+            self, tmp_path, home_cache, capsys):
+        # The pinned source covers the whole run, so filtering the node that
+        # misses out of the report must not turn a refusal into a total.
+        model_path = write(tmp_path, labelled_model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "live",
+                     "--exclude-label", "category=platform"]) == 1
+        captured = capsys.readouterr()
+        assert "Lambda-Request" in captured.err
+        assert "Total Monthly Cost" not in captured.out
+
+
+class TestTheDefaultRunIsUnchanged:
+    """Without a pinned source, the run prices as it always has."""
+
+    def test_the_synced_rows_still_answer(self, tmp_path, home_cache, live_db,
+                                          capsys, monkeypatch):
+        monkeypatch.setattr(cache_module, "DB_PATH", live_db)
+        model_path = write(tmp_path, model())
+        assert main(["compute", model_path, "--monthly"]) == 0
+        out = capsys.readouterr().out
+        assert "pricing: catalog" in out
+        assert total(out) == pytest.approx(MONTHLY_REQUESTS * LIVE_RATE)
+
+    def test_embedded_rates_still_price_what_the_catalog_lacks(
+            self, tmp_path, home_cache, capsys):
+        model_path = write(tmp_path, model(with_embedded_rates=True))
+        assert main(["compute", model_path, "--monthly"]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * 0.5)

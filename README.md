@@ -123,6 +123,24 @@ infra-cost-model pricing-status --max-age-hours 24   # exits 1 when the fetched 
 
 The age gate watches the sources a sync fetched over the network — `infracost`, `azure-retail` and `aws-pricelist`. The bundled seed and vendor rows ship with a release rather than with a fetch, so they don't age out. `--max-age-hours` also fails when the cache holds no fetched rows at all. The `stale` and `maxAgeHours` fields appear in the JSON only when `--max-age-hours` is given, because without a limit there is no verdict to report.
 
+### Pinning the price source
+
+By default a run reads whichever source has a row: synced rows when the local cache holds them, the bundled rows otherwise, and a node's `pricingRates` when neither has one. The same model will then price from different sources on a laptop and in CI. `compute` can pin the source instead:
+
+```bash
+infra-cost-model compute model.yaml --pricing live    # synced rows only
+infra-cost-model compute model.yaml --pricing seed    # bundled rows only
+infra-cost-model compute model.yaml --pricing-db ./pricing.db
+```
+
+`--pricing live` prices from rows a sync wrote (`sync-pricing`). When a usage metric has no synced row, the run prints each missing metric on stderr and exits 1 without printing a total, so a CI job fails instead of reporting a number that mixed sources.
+
+`--pricing seed` prices from the bundled seed file and vendor price files only. It reads a database of its own, never the local cache, so the number is the same on every machine, and the run leaves your cache as it found it. It refuses `--pricing-db`, which would contradict it.
+
+`--pricing-db` names the cache file to read, so a CI job and a laptop can price from the same one. A path with no file there is an error rather than a silent drop back to the embedded rates.
+
+All three need the catalog, so they can't be combined with `--no-catalog`.
+
 ## SaaS vendor prices
 
 SaaS vendors such as WorkOS, Datadog and GitHub Copilot price from rows in `infra_cost_model/vendors/<id>/prices.yaml`. A node sets `provider` to the vendor id, and the catalog prices its metrics from those rows. To add a vendor, see [CONTRIBUTING.md](./CONTRIBUTING.md).

@@ -1025,6 +1025,17 @@ class CostAggregator:
         # Metrics with a non-zero quantity that no shape, catalog row or
         # pricingRates entry could price. Their cost is left out of the node.
         self.unpriced: list[_Miss] = []
+        # Metrics the catalog had no row for, with a non-zero quantity. The
+        # engine priced them from a shape or an embedded pricingRates entry,
+        # so a run that pins its price source reads this to refuse a total it
+        # cannot source from that source (#446).
+        self.catalog_misses: list[_Miss] = []
+        # Per node, the usageMetrics a handler derives catalog quantities from
+        # (Lambda's invocations, avgDurationMs and memoryMb, say) when those
+        # quantities had no row. The catalog names are recorded instead, so a
+        # pinned run lists what a sync can fetch rather than a logical name
+        # no price list holds (#446).
+        self._derived_misses: dict[str, frozenset] = {}
         # Every catalog quantity a node pays for, so that tiers apply to the
         # account's total rather than to each node (#294).
         self.catalog_charges: list[_CatalogCharge] = []
@@ -1053,6 +1064,24 @@ class CostAggregator:
         if quantity == 0:
             return
         self.unpriced.append(_Miss(
+            node=address, metric=metric, provider=node.get("provider"),
+            service=node.get("service", ""), region=node.get("region"),
+            quantity=quantity, fixed=fixed,
+        ))
+
+    def _record_catalog_miss(self, address: str, node: dict, metric: str,
+                             quantity: float, fixed: bool) -> None:
+        """Note a metric the catalog had no row for.
+
+        A metric with no quantity is skipped: nothing prices it either way, so
+        it cannot move the total. The metric is named as the catalog names it,
+        which is what a sync takes (#446).
+        """
+        if quantity == 0:
+            return
+        if metric in self._derived_misses.get(address, frozenset()):
+            return
+        self.catalog_misses.append(_Miss(
             node=address, metric=metric, provider=node.get("provider"),
             service=node.get("service", ""), region=node.get("region"),
             quantity=quantity, fixed=fixed,
@@ -1225,6 +1254,7 @@ class CostAggregator:
 
         if self.catalog is not None:
             result = self._query_catalog(node, metric_name, quantity, fixed)
+            mapped = None
             if result is None:
                 # The node used a logical metric name (e.g. "natHours"); map it
                 # to the catalog usage_metric ("NAT-Gateway-Hour") via the
@@ -1236,6 +1266,12 @@ class CostAggregator:
                                                 logical=metric_name)
             if result is not None:
                 return result.total_cost, _price_source(result)
+            # Nothing matched on either name: a run that pins its price source
+            # reports the miss (#446), named as the catalog names the row.
+            self._record_catalog_miss(
+                address, node,
+                mapped if isinstance(mapped, str) else metric_name,
+                quantity, fixed)
 
         if metric_name in pricing_rates:
             return quantity * pricing_rates[metric_name], "pricingRates"
@@ -1346,20 +1382,34 @@ class CostAggregator:
 
         cost = 0.0
         charges_before = len(self.catalog_charges)
+        missing = False
+        priced: list[tuple[str, float, float, str]] = []
         for catalog_metric, per_invocation in derived.quantities.items():
             quantity = invocations * per_invocation
             result = self._query_catalog(node, catalog_metric, quantity,
                                          fixed=False)
             if result is None:
-                del self.catalog_charges[charges_before:]
-                return 0.0, frozenset()
+                self._record_catalog_miss(address, node, catalog_metric,
+                                          quantity, False)
+                missing = True
+                continue
             cost += result.total_cost
-            # A handler turned the node's own metrics into a catalog quantity
-            # (a Lambda's duration and memory into GB-seconds), so the
-            # snapshot names the quantity the engine priced (#443). The
-            # model's metrics feed it, and the resource notes say how.
+            priced.append((catalog_metric, quantity, result.total_cost,
+                           _price_source(result)))
+        if missing:
+            # All or nothing: a node's derived quantities price together, so
+            # a miss drops the charges the ones that did price had added.
+            del self.catalog_charges[charges_before:]
+            self._derived_misses[address] = derived.consumed
+            return 0.0, frozenset()
+        # A handler turned the node's own metrics into a catalog quantity (a
+        # Lambda's duration and memory into GB-seconds), so the snapshot names
+        # the quantity the engine priced (#443). The model's metrics feed it,
+        # and the resource notes say how. Recorded only once every quantity
+        # priced, so the snapshot and the node's cost tell the same story.
+        for catalog_metric, quantity, metric_cost, source in priced:
             self._record_metric(address, catalog_metric, quantity,
-                                result.total_cost, False, _price_source(result))
+                                metric_cost, False, source)
         return cost, derived.consumed
 
     def _price_shape(self, metric: str, metric_def, quantity: float,
@@ -1594,20 +1644,27 @@ class CostAggregator:
             fixed = node.get("flatOverride", False)
             if self.catalog is not None:
                 result = self._query_catalog(node, token_name, total_tokens, fixed)
+                mapped = None
                 if result is None:
                     # The catalog names token rows by provider, such as
                     # "Bedrock-Input-Token". The node's handler maps the
                     # logical token name to that row (#312).
                     mapped = self._resolve_catalog_metric(address, node, token_name)
                     if mapped is not None:
-                        result = self._query_catalog(node, mapped, total_tokens,
-                                                     fixed, logical=token_name)
+                        result = self._query_mapped(node, mapped, total_tokens,
+                                                    fixed, logical=token_name)
                 if result is not None:
                     total_cost += result.total_cost
                     self._record_metric(address, token_name, total_tokens,
                                         result.total_cost, fixed,
                                         _price_source(result))
                     continue
+                # No row under either name: a run that pins its price source
+                # reports the miss (#446), named as the catalog names it.
+                self._record_catalog_miss(
+                    address, node,
+                    mapped if isinstance(mapped, str) else token_name,
+                    total_tokens, fixed)
             if token_name in pricing_rates:
                 cost = total_tokens * pricing_rates[token_name]
                 total_cost += cost
@@ -1689,6 +1746,11 @@ class CostEngine:
         # Metrics left out of ``costs`` because nothing could price them.
         # Filled by ``compute``; each one also emits an UnpricedMetricWarning.
         self.unpriced_metrics: list[UnpricedMetric] = []
+        # Metrics the catalog had no row for, which this engine priced from a
+        # shape or an embedded `pricingRates` entry. Filled by ``compute`` and
+        # reported by nothing: only a run that pins its price source reads it,
+        # to refuse a total the pinned source cannot account for (#446).
+        self.catalog_misses: list[UnpricedMetric] = []
         # Metrics whose edgeType never reaches their node (#322). Filled by
         # ``compute``; each one also emits an EdgeTypeMetricWarning.
         self.edge_type_warnings: list[str] = []
@@ -1763,6 +1825,7 @@ class CostEngine:
         self.costs = self._finalize_costs(aggregator.costs, aggregator.fixed_costs)
         self.metric_costs = self._finalize_metric_costs(aggregator.metric_costs)
         self._report_unpriced(aggregator.unpriced)
+        self.catalog_misses = self._merge_misses(aggregator.catalog_misses)
         self._report_edge_types()
 
         return self.costs
@@ -1787,6 +1850,9 @@ class CostEngine:
         # Metric costs from every workflow, merged the same way as the node
         # costs: usage-driven metrics add up, fixed ones count once (#443).
         all_metrics: dict[str, dict[str, _MetricCost]] = {}
+        # Catalog misses from every workflow, so a pinned price source reports
+        # every metric no synced row covers (#446).
+        all_catalog_misses: list[_Miss] = []
         # Catalog charges from every workflow, so tiers apply to the account's
         # total once (#294). Like the fixed cost, a node's fixed charges come
         # from the last workflow that reaches it.
@@ -1806,6 +1872,7 @@ class CostEngine:
                                          self.catalog, parameters=wf_params)
             aggregator.aggregate()
             all_unpriced.extend(aggregator.unpriced)
+            all_catalog_misses.extend(aggregator.catalog_misses)
             shape_charges.extend(aggregator.shape_charges)
             _merge_metric_costs(all_metrics, aggregator.metric_costs)
 
@@ -1867,6 +1934,7 @@ class CostEngine:
                 + all_fixed.get(addr, 0.0) * fixed_multiplier
             )
         self._report_unpriced(all_unpriced)
+        self.catalog_misses = self._merge_misses(all_catalog_misses)
         self._report_edge_types()
         self.metric_costs = self._finalize_metric_costs(all_metrics)
 
@@ -1912,8 +1980,8 @@ class CostEngine:
         for message in self.edge_type_warnings:
             warnings.warn(EdgeTypeMetricWarning(message), stacklevel=4)
 
-    def _report_unpriced(self, misses: list["_Miss"]) -> None:
-        """Store and warn about metrics that no price source covered.
+    def _merge_misses(self, misses: list["_Miss"]) -> list[UnpricedMetric]:
+        """One record per (node, metric), with the merged quantity.
 
         A metric is reported once per node, even when several workflows reach
         the node. Usage-driven quantities add up across workflows, and a fixed
@@ -1929,7 +1997,7 @@ class CostEngine:
 
         multiplier = self._time_multiplier
         fixed_multiplier = self._fixed_multiplier
-        self.unpriced_metrics = [
+        return [
             UnpricedMetric(
                 node=m.node, metric=m.metric, provider=m.provider,
                 service=m.service, region=m.region,
@@ -1938,6 +2006,10 @@ class CostEngine:
             )
             for m in merged.values()
         ]
+
+    def _report_unpriced(self, misses: list["_Miss"]) -> None:
+        """Store and warn about metrics that no price source covered."""
+        self.unpriced_metrics = self._merge_misses(misses)
         for unpriced in self.unpriced_metrics:
             warnings.warn(UnpricedMetricWarning(unpriced), stacklevel=4)
 
