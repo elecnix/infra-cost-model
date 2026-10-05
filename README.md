@@ -84,6 +84,15 @@ infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
 
 The bundled `infra_cost_model/pricing/seed/seed_prices.json` is a small fixture, with AWS prices for us-east-1 and Azure prices for eastus, for the test suite and offline use. You don't need it to set up the tool. `seed-pricing` loads it into the local cache.
 
+Every timestamp the cache writes states its UTC offset, so the same row reports the same age on any machine. `pricing-status` reports the cache and how old the newest row of each source is:
+
+```bash
+infra-cost-model pricing-status --json
+infra-cost-model pricing-status --max-age-hours 24   # exits 1 when the fetched prices are older
+```
+
+The age gate watches the sources a sync fetched over the network — `infracost`, `azure-retail` and `aws-pricelist`. The bundled seed and vendor rows ship with a release rather than with a fetch, so they don't age out. `--max-age-hours` also fails when the cache holds no fetched rows at all. The `stale` and `maxAgeHours` fields appear in the JSON only when `--max-age-hours` is given, because without a limit there is no verdict to report.
+
 ## SaaS vendor prices
 
 SaaS vendors such as WorkOS, Datadog and GitHub Copilot price from rows in `infra_cost_model/vendors/<id>/prices.yaml`. A node sets `provider` to the vendor id, and the catalog prices its metrics from those rows. To add a vendor, see [CONTRIBUTING.md](./CONTRIBUTING.md).

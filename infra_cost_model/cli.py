@@ -115,6 +115,15 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Seed all services (default)")
     p_seed.set_defaults(func=cmd_seed_pricing)
 
+    # pricing-status (how fresh are the cached prices?)
+    p_status = sub.add_parser(
+        "pricing-status",
+        help="Report the cached prices, and how old the newest row of each source is")
+    p_status.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_status.add_argument("--max-age-hours", type=float, metavar="<hours>",
+                           help="Exit with code 1 when the newest fetched price is older than this")
+    p_status.set_defaults(func=cmd_pricing_status)
+
     # graph
     p_graph = sub.add_parser("graph", help="Render DAG visualization")
     p_graph.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
@@ -529,6 +538,53 @@ def cmd_seed_pricing(args: argparse.Namespace) -> int:
     except RuntimeError as e:
         _print_stderr(f"Error: {e}")
         return 1
+
+
+def cmd_pricing_status(args: argparse.Namespace) -> int:
+    """Report the cached price rows and how old the newest of each source is.
+
+    With --max-age-hours, exits 1 when the newest row a sync fetched is older
+    than that, or when the cache holds no fetched rows at all, so a CI job can
+    refuse to price from prices it knows are old (#447).
+    """
+    from infra_cost_model.pricing.cache import PricingCache, live_age_hours
+
+    report = PricingCache().status()
+
+    age = live_age_hours(report)
+    limit = args.max_age_hours
+    # One expression, so the verdict and the exit code can't disagree: a cache
+    # is stale only when a limit was given and its age breaches it (#447).
+    stale = limit is not None and (age is None or age > limit)
+    if limit is not None:
+        report["maxAgeHours"] = limit
+        report["stale"] = stale
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"path: {report['path']}")
+        for source, entry in report["sources"].items():
+            newest = entry["newest"] or "unreadable timestamp"
+            age_text = "unknown age" if entry["ageHours"] is None else f"{entry['ageHours']}h old"
+            print(f"  {source}: {entry['rows']} rows, newest {newest} ({age_text})")
+        if limit is not None:
+            print(f"stale: {'yes' if stale else 'no'} (max age {limit}h)")
+
+    if not stale:
+        return 0
+
+    if age is None:
+        _print_stderr(
+            f"Error: the cache at {report['path']} has no fetched prices, so its age "
+            f"can't be within {limit}h. Run sync-pricing."
+        )
+    else:
+        _print_stderr(
+            f"Error: the newest fetched price is {age}h old, over the "
+            f"{limit}h limit. Run sync-pricing."
+        )
+    return 1
 
 
 def cmd_graph(args: argparse.Namespace) -> int:

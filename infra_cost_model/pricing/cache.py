@@ -3,7 +3,7 @@
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Optional
 import json
@@ -16,8 +16,76 @@ DEFAULT_TTL_DAYS = 7
 # fallback sources (#309, #376).
 LIVE_SOURCES = frozenset({"infracost", "azure-retail"})
 
+# The sources whose rows a sync fetched over a network, so their age means
+# something. A staleness gate watches them (#447). The bundled offline rows --
+# the seed file and the vendor files -- ship with a release rather than with a
+# fetch, so they don't age out. `aws-pricelist` is in this set but not in
+# LIVE_SOURCES: it reads the AWS Price List API, but it doesn't supersede the
+# seed rows.
+FETCHED_SOURCES = LIVE_SOURCES | {"aws-pricelist"}
+
 # Package data, next to this module, so an installed wheel carries it (#265).
 SEED_PRICES_PATH = Path(__file__).parent / "seed" / "seed_prices.json"
+
+
+def _utc_now() -> datetime:
+    """The current UTC time, as an aware datetime.
+
+    Every timestamp the cache writes and every comparison against one reads
+    this function, so a stored instant is the same whatever time zone the
+    machine runs in (#447).
+    """
+    return datetime.now(timezone.utc)
+
+
+def utc_now_iso() -> str:
+    """The current UTC time as ``2026-01-15T08:00:00+00:00``."""
+    return _utc_now().isoformat()
+
+
+def parse_fetched_at(value: str) -> datetime | None:
+    """Read a stored ``fetched_at``, or None when it isn't a timestamp.
+
+    A value with no offset is read as UTC. Rows written before #447 carry the
+    writing machine's local time and so state no offset; UTC is how every
+    value written since the fix reads, which keeps one row from reporting a
+    different age on two machines.
+    """
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def age_since(moment: datetime, now: datetime | None = None) -> timedelta:
+    """How long ago ``moment`` was, never negative.
+
+    A timestamp in the future, from clock skew or a hand edit, reads as brand
+    new rather than as a negative age. ``is_stale`` and ``status`` both
+    measure a row through this, so neither can call a row stale that the
+    other calls fresh, and the TTL comparison keeps its exact boundary
+    (#447).
+    """
+    return max(timedelta(0), (now or _utc_now()) - moment)
+
+
+def live_age_hours(status: dict) -> float | None:
+    """The age of the newest fetched row in a ``status`` report, in hours.
+
+    None means no fetched row has a readable timestamp, so nothing in the
+    cache can be shown to be fresh.
+    """
+    ages = [
+        entry["ageHours"]
+        for source, entry in status["sources"].items()
+        if source in FETCHED_SOURCES and entry["ageHours"] is not None
+    ]
+    return min(ages) if ages else None
 
 
 @dataclass
@@ -154,7 +222,7 @@ def load_seed_rows(services: list[str] | None = None) -> list[Price]:
     except json.JSONDecodeError as e:
         raise RuntimeError(f"Invalid seed prices JSON: {e}") from e
 
-    now = datetime.now().isoformat()
+    now = utc_now_iso()
     return [
         Price(
             vendor=item.get("vendor"),
@@ -293,17 +361,76 @@ class PricingCache:
         """Check if cached prices are older than TTL."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.execute(
-            "SELECT MAX(fetched_at) FROM prices WHERE vendor = ? AND service = ?",
+            # Distinct, because every row one sync wrote shares a timestamp and
+            # only the instants matter, so the parse is per sync, not per row.
+            "SELECT DISTINCT fetched_at FROM prices WHERE vendor = ? AND service = ?",
             (vendor, service)
         )
-        result = cursor.fetchone()[0]
+        stamps = [row[0] for row in cursor.fetchall()]
         conn.close()
 
-        if not result:
+        if not stamps:
             return True
 
-        fetched = datetime.fromisoformat(result)
-        return datetime.now() - fetched > timedelta(days=self.ttl_days)
+        # MAX() in SQL would sort the timestamps as text, and a naive value
+        # and one with an offset don't compare that way, so the newest is
+        # chosen from the parsed instants, as status() does (#447).
+        newest = max(
+            (moment for moment in (parse_fetched_at(v) for v in stamps)
+             if moment is not None),
+            default=None,
+        )
+        if newest is None:
+            # A row nobody can date can't be shown to be fresh (#447).
+            return True
+        # The same non-negative age `status` reports, so the two readers
+        # can't disagree about one row (#447).
+        return age_since(newest) > timedelta(days=self.ttl_days)
+
+    def status(self) -> dict:
+        """Report the rows each source wrote and how old the newest one is.
+
+        Returns the ``path`` of the cache and a ``sources`` map from each
+        source to its row count, the ``newest`` timestamp it wrote, and that
+        row's ``ageHours``. A source whose rows carry no readable timestamp
+        reports a null ``newest`` and ``ageHours``, so it never reads as
+        fresh.
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT source, fetched_at, COUNT(*) FROM prices"
+                " GROUP BY source, fetched_at"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        # Grouping in SQL would sort the timestamps as text, and a naive value
+        # and one with an offset don't compare that way, so the newest of each
+        # source is chosen from the parsed instants.
+        counts: dict[str, int] = {}
+        newest: dict[str, datetime] = {}
+        for source, fetched_at, count in rows:
+            counts[source] = counts.get(source, 0) + count
+            moment = parse_fetched_at(fetched_at)
+            if moment is None:
+                continue
+            if source not in newest or moment > newest[source]:
+                newest[source] = moment
+
+        now = _utc_now()
+        sources: dict[str, dict] = {}
+        for source in sorted(counts):
+            moment = newest.get(source)
+            sources[source] = {
+                "rows": counts[source],
+                "newest": moment.isoformat() if moment else None,
+                "ageHours": (
+                    round(age_since(moment, now).total_seconds() / 3600, 1)
+                    if moment else None
+                ),
+            }
+        return {"path": str(self.db_path), "sources": sources}
 
     def source_info(self) -> dict[str, int]:
         """Return a count of rows by pricing source.

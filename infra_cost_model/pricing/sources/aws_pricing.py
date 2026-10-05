@@ -1,7 +1,6 @@
 """AWS Pricing API client for fallback pricing."""
 
 import warnings
-from datetime import datetime
 
 import requests
 
@@ -104,7 +103,7 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
         # Fetch live prices only for known services the seed file didn't cover.
         cached_services = _cached_services(cache, list(SERVICE_CODES), region)
         missing = [s for s in SERVICE_CODES if s not in cached_services]
-        count += _fetch_live(missing, cache, region, datetime.now().isoformat())
+        count += _fetch_live(missing, cache, region, cache_module.utc_now_iso())
         if count == 0:
             raise _no_pricing_error(services, region, seed_missing)
         return count
@@ -128,7 +127,7 @@ def aws_fallback_prices(services: list[str] | None, cache, region: str = "us-eas
             stacklevel=2,
         )
     known = [s for s in missing if s in SERVICE_CODES]
-    count += _fetch_live(known, cache, region, datetime.now().isoformat())
+    count += _fetch_live(known, cache, region, cache_module.utc_now_iso())
 
     if count == 0:
         raise _no_pricing_error(services, region, seed_missing)
