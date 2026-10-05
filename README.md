@@ -91,7 +91,7 @@ infra-cost-model pricing-status --json
 infra-cost-model pricing-status --max-age-hours 24   # exits 1 when the fetched prices are older
 ```
 
-The age gate watches the sources a sync fetched over the network — `infracost`, `azure-retail` and `aws-pricelist`. The bundled seed and vendor rows ship with a release rather than with a fetch, so they don't age out. `--max-age-hours` also fails when the cache holds no fetched rows at all.
+The age gate watches the sources a sync fetched over the network — `infracost`, `azure-retail` and `aws-pricelist`. The bundled seed and vendor rows ship with a release rather than with a fetch, so they don't age out. `--max-age-hours` also fails when the cache holds no fetched rows at all. The `stale` and `maxAgeHours` fields appear in the JSON only when `--max-age-hours` is given, because without a limit there is no verdict to report.
 
 ## SaaS vendor prices
 

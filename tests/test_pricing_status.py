@@ -110,6 +110,21 @@ class TestIsStale:
         cache.upsert(_price("infracost", "whenever"))
         assert cache.is_stale("test", "Probe")
 
+    def test_a_future_row_reads_fresh_from_both_readers(
+        self, tmp_path, frozen_now
+    ):
+        """A clock-skewed row can't be stale to one reader and fresh to another.
+
+        ``is_stale`` and ``status`` must agree on the same row, so both read
+        the age from one non-negative helper rather than each subtracting
+        the instants themselves.
+        """
+        cache = PricingCache(db_path=tmp_path / "pricing.db")
+        cache.upsert(_price("infracost", "2026-01-15T09:00:00+00:00"))
+
+        assert not cache.is_stale("test", "Probe")
+        assert cache.status()["sources"]["infracost"]["ageHours"] == 0.0
+
     def test_the_newest_row_is_picked_by_instant_not_by_text(
         self, tmp_path, frozen_now
     ):
@@ -322,5 +337,9 @@ class _LocalSkewedClock(datetime):
     @classmethod
     def now(cls, tz=None):
         if tz is None:
-            return cls(NOW.year, NOW.month, NOW.day, NOW.hour + 9, NOW.minute)
+            # Arithmetic, not `NOW.hour + 9`, so an edit to NOW can't push the
+            # hour past 23 and raise (#447).
+            local = (NOW + timedelta(hours=9)).replace(tzinfo=None)
+            return cls(local.year, local.month, local.day,
+                       local.hour, local.minute)
         return NOW.astimezone(tz)

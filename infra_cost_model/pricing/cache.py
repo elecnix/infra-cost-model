@@ -62,6 +62,18 @@ def parse_fetched_at(value: str) -> datetime | None:
     return moment
 
 
+def age_since(moment: datetime, now: datetime | None = None) -> timedelta:
+    """How long ago ``moment`` was, never negative.
+
+    A timestamp in the future, from clock skew or a hand edit, reads as brand
+    new rather than as a negative age. ``is_stale`` and ``status`` both
+    measure a row through this, so neither can call a row stale that the
+    other calls fresh, and the TTL comparison keeps its exact boundary
+    (#447).
+    """
+    return max(timedelta(0), (now or _utc_now()) - moment)
+
+
 def live_age_hours(status: dict) -> float | None:
     """The age of the newest fetched row in a ``status`` report, in hours.
 
@@ -349,7 +361,9 @@ class PricingCache:
         """Check if cached prices are older than TTL."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.execute(
-            "SELECT fetched_at FROM prices WHERE vendor = ? AND service = ?",
+            # Distinct, because every row one sync wrote shares a timestamp and
+            # only the instants matter, so the parse is per sync, not per row.
+            "SELECT DISTINCT fetched_at FROM prices WHERE vendor = ? AND service = ?",
             (vendor, service)
         )
         stamps = [row[0] for row in cursor.fetchall()]
@@ -369,7 +383,9 @@ class PricingCache:
         if newest is None:
             # A row nobody can date can't be shown to be fresh (#447).
             return True
-        return _utc_now() - newest > timedelta(days=self.ttl_days)
+        # The same non-negative age `status` reports, so the two readers
+        # can't disagree about one row (#447).
+        return age_since(newest) > timedelta(days=self.ttl_days)
 
     def status(self) -> dict:
         """Report the rows each source wrote and how old the newest one is.
@@ -410,9 +426,7 @@ class PricingCache:
                 "rows": counts[source],
                 "newest": moment.isoformat() if moment else None,
                 "ageHours": (
-                    # Never negative: a clock-skewed or hand-edited future
-                    # timestamp reads as fresh, not as a negative age (#447).
-                    max(0.0, round((now - moment).total_seconds() / 3600, 1))
+                    round(age_since(moment, now).total_seconds() / 3600, 1)
                     if moment else None
                 ),
             }
