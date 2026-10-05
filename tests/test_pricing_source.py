@@ -228,6 +228,38 @@ class TestComputePricingSeed:
         assert seeded == pytest.approx(
             (MONTHLY_REQUESTS - 1_000_000) * SEED_PAID_RATE)
 
+    def test_a_region_the_seed_lacks_keeps_its_embedded_rate(
+            self, tmp_path, home_cache, capsys, monkeypatch):
+        # A node outside the seed's regions (us-east-1, eastus, global) matches
+        # no seed row, so an offline run prices it from embedded pricingRates.
+        # That is the documented offline fallback (#446), and it must not read
+        # the local cache: the same synced row for that region changes nothing;
+        # only --pricing live reads it.
+        model_path = write(tmp_path, model(with_embedded_rates=True))
+        data = yaml.safe_load(open(model_path))
+        data["nodes"]["fn"]["region"] = "eu-central-1"
+        open(model_path, "w").write(yaml.safe_dump(data))
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        embedded = total(capsys.readouterr().out)
+        assert embedded == pytest.approx(MONTHLY_REQUESTS * 0.5)
+
+        # A synced live row for that exact region sits in the cache.
+        PricingCache(db_path=home_cache).upsert(Price(
+            vendor="aws", service="AWSLambda", region="eu-central-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed"]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(embedded)
+
+        # Only the pinned-live run reads that row.
+        assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 0
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * LIVE_RATE)
+
     def test_the_run_leaves_the_local_cache_without_seed_rows(
             self, tmp_path, home_cache, capsys):
         model_path = write(tmp_path, model())
