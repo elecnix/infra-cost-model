@@ -93,6 +93,12 @@ export interface Node {
   config?: {
     [k: string]: unknown;
   };
+  /**
+   * Free-form key/value labels on the node (e.g. { category: llm, env: prod }). `compute` and `analyze` group costs by one with --group-by and leave out the nodes carrying one with --exclude-label, so a total splits into budgeted parts without an undocumented key. Labels change neither derived usage nor a price (DP#6).
+   */
+  labels?: {
+    [k: string]: string;
+  };
   usageMetrics?: {
     [k: string]: UsageMetric;
   };
