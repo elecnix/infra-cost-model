@@ -154,8 +154,9 @@ class TestExpressionErrors:
 
     def test_a_parameter_that_is_not_a_number_names_itself(self):
         """The schema states a parameter is a number; a model can still say otherwise."""
-        with pytest.raises(ValueError, match="customers"):
-            evaluate_metric_expression("customers * 40", {"customers": "many"})
+        for value in ("many", True, None, [1]):
+            with pytest.raises(ValueError, match="customers"):
+                evaluate_metric_expression("customers * 40", {"customers": value})
 
     def test_a_long_operator_chain_is_refused_rather_than_exhausting_the_stack(self):
         """A 5,000-term sum parses, so the walk itself has to stay bounded."""

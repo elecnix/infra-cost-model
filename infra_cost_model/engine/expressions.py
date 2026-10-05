@@ -58,7 +58,10 @@ def _evaluate(node: ast.AST, parameters: dict, text: str) -> float:
                 f"Available parameters: {available}"
             )
         try:
-            return float(parameters[node.id])
+            value = parameters[node.id]
+            if isinstance(value, bool):
+                raise TypeError
+            return float(value)
         except (TypeError, ValueError):
             raise ValueError(
                 f"Parameter '{node.id}' in '{text}' is not a number: "
