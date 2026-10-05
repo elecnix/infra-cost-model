@@ -98,6 +98,11 @@
           "type": "string",
           "description": "Infrastructure resource address (Terraform: aws_lambda_function.foo, Pulumi: aws:lambda:Function:foo, CDK: AWS::Lambda::Function/myApi/getItems)"
         },
+        "covers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Infrastructure resource addresses this node also costs, as exact strings or glob patterns. A node names one logical address, so it lists the Terraform module paths and the several resources it stands for here; the coverage command treats a matching address as costed and reports a pattern that matches nothing as stale."
+        },
         "provider": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_-]*$",

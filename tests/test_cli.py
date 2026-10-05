@@ -1671,6 +1671,163 @@ edges:
 
 
 
+YAML_COVERAGE_COVERS = """
+version: "1.0"
+workflow:
+  name: "coverage-covers-test"
+  entry: "aws_apigatewayv2_api.items_api"
+  frequency:
+    unit: perMinute
+    value: 500
+nodes:
+  aws_apigatewayv2_api.items_api:
+    nodeType: routing
+    resourceAddress: aws_apigatewayv2_api.items_api
+  aws_lb.main:
+    nodeType: routing
+    resourceAddress: aws_lb.public
+    covers:
+      - "aws_lb.partner_public"
+      - "aws_lb.internal"
+edges:
+  - from: aws_apigatewayv2_api.items_api
+    to: aws_lb.main
+    rate: 1.0
+"""
+
+
+def _tf_resource(address, resource_type, name, region="us-west-2"):
+    return {
+        "address": address,
+        "mode": "managed",
+        "type": resource_type,
+        "name": name,
+        "values": {"region": region},
+    }
+
+
+class TestCLICoverageCovers:
+    """Tests for a node's `covers` entries in the coverage CLI subcommand (#449)."""
+
+    def _run(self, capsys, yaml_text, tf_resources, *extra_args):
+        import tempfile, os, json
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(yaml_text)
+            temp_yaml = f.name
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump({"resource": tf_resources}, f)
+            temp_tf = f.name
+        try:
+            result = main(["coverage", temp_yaml, "--from", "terraform", temp_tf, *extra_args])
+            return result, capsys.readouterr().out
+        finally:
+            os.unlink(temp_yaml)
+            os.unlink(temp_tf)
+
+    def test_covers_glob_costs_every_address_it_reaches(self, capsys):
+        """A `aws_lb.*` pattern costs both load balancers the node stands for."""
+        result, output = self._run(
+            capsys,
+            YAML_COVERAGE_COVERS.replace('      - "aws_lb.partner_public"', '      - "aws_lb.*"'),
+            [
+                _tf_resource("aws_apigatewayv2_api.items_api", "aws_apigatewayv2_api", "items_api"),
+                _tf_resource("aws_lb.public", "aws_lb", "public"),
+                _tf_resource("aws_lb.internal", "aws_lb", "internal"),
+            ],
+        )
+        assert result == 0
+        assert "Matched:    3" in output
+        assert "Uncosted:" not in output
+        # The aggregate node stands for both load balancers, so it is not orphaned.
+        assert "Orphaned:" not in output
+
+    def test_covers_exact_entry_matches_the_full_address(self, capsys):
+        """A `covers` entry without a wildcard matches one full address."""
+        result, output = self._run(
+            capsys,
+            YAML_COVERAGE_COVERS,
+            [
+                _tf_resource("aws_apigatewayv2_api.items_api", "aws_apigatewayv2_api", "items_api"),
+                _tf_resource("aws_lb.public", "aws_lb", "public"),
+                _tf_resource("aws_lb.internal", "aws_lb", "internal"),
+                _tf_resource("aws_lb.partner_public", "aws_lb", "partner_public"),
+            ],
+        )
+        assert result == 0
+        assert "Matched:    4" in output
+        assert "Uncosted:" not in output
+
+    def test_uncovered_address_stays_uncosted(self, capsys):
+        """A load balancer no pattern reaches is still uncosted."""
+        result, output = self._run(
+            capsys,
+            YAML_COVERAGE_COVERS,
+            [
+                _tf_resource("aws_apigatewayv2_api.items_api", "aws_apigatewayv2_api", "items_api"),
+                _tf_resource("aws_lb.public", "aws_lb", "public"),
+                _tf_resource("aws_lb.internal", "aws_lb", "internal"),
+                _tf_resource("aws_s3_bucket.logs", "aws_s3_bucket", "logs"),
+            ],
+            "--exit-on-uncosted",
+        )
+        assert result == 1
+        assert "Uncosted:" in output
+        assert "aws_s3_bucket.logs" in output
+
+    def test_stale_pattern_is_reported_and_fails(self, capsys):
+        """A pattern that matches nothing is an error, even without --exit-on-uncosted."""
+        result, output = self._run(
+            capsys,
+            YAML_COVERAGE_COVERS,
+            [
+                _tf_resource("aws_apigatewayv2_api.items_api", "aws_apigatewayv2_api", "items_api"),
+                _tf_resource("aws_lb.public", "aws_lb", "public"),
+            ],
+        )
+        assert result == 1
+        assert "Stale:" in output
+        assert "aws_lb.internal" in output
+        assert "aws_lb.main" in output
+
+    def test_json_output_names_the_node_and_pattern_of_a_stale_pattern(self, capsys):
+        import json
+        result, output = self._run(
+            capsys,
+            YAML_COVERAGE_COVERS,
+            [
+                _tf_resource("aws_apigatewayv2_api.items_api", "aws_apigatewayv2_api", "items_api"),
+                _tf_resource("aws_lb.public", "aws_lb", "public"),
+            ],
+            "--json",
+        )
+        assert result == 1
+        data = json.loads(output)
+        assert data["stalePatterns"] == [
+            {"node": "aws_lb.main", "pattern": "aws_lb.internal"},
+            {"node": "aws_lb.main", "pattern": "aws_lb.partner_public"},
+        ]
+        assert data["matched"] == ["aws_apigatewayv2_api.items_api", "aws_lb.public"]
+
+    def test_json_output_lists_a_clean_coverage(self, capsys):
+        import json
+        result, output = self._run(
+            capsys,
+            YAML_COVERAGE_COVERS,
+            [
+                _tf_resource("aws_apigatewayv2_api.items_api", "aws_apigatewayv2_api", "items_api"),
+                _tf_resource("aws_lb.public", "aws_lb", "public"),
+                _tf_resource("aws_lb.internal", "aws_lb", "internal"),
+                _tf_resource("aws_lb.partner_public", "aws_lb", "partner_public"),
+            ],
+            "--json",
+        )
+        assert result == 0
+        data = json.loads(output)
+        assert data["uncosted"] == []
+        assert data["orphaned"] == []
+        assert data["stalePatterns"] == []
+
+
 def test_cli_sync_pricing_defaults_to_all_regions(monkeypatch):
     """`sync-pricing` with no --region syncs every known region."""
     import infra_cost_model.pricing.sources.infracost as ic
