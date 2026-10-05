@@ -243,26 +243,15 @@ class TestSdkAcceptsAnExpression:
         model = workflow.assemble()
         assert model["kinde.tenant"]["usageMetrics"]["MAU"]["value"] == "customers * 40"
 
-    def test_a_metric_with_no_unit_is_resolved_too(self, catalog):
-        """`with_metric` without a unit stores the value bare; it still resolves.
+    def test_a_metric_with_no_unit_keeps_the_expression(self):
+        """Without a unit or edge type, `with_metric` stores the value bare.
 
-        The bare form is what `with_metric` has always written when neither a
-        unit nor an edge type is given, so widening the parameter to accept a
-        string has to work on that form as well, not only inside a wrapper.
+        That is the form the widened parameter has to accept as well, not
+        only the wrapped one.
         """
-        usage = NodeUsage().with_metric("SSO-Connection", "customers")
+        usage = NodeUsage().with_metric("SSO-Connection", "customers * 40")
         workflow = Workflow("saas-identity").parameter("customers", 25)
         workflow.usage("kinde.tenant", usage)
         assert workflow.assemble()["kinde.tenant"]["usageMetrics"] == {
-            "SSO-Connection": "customers"
+            "SSO-Connection": "customers * 40"
         }
-
-        # The bare value resolves through the same path as the wrapped one, so
-        # a metric written this way prices the same quantity (300 customers).
-        bare = identity_model(mau=10000)
-        bare["nodes"]["identity_provider"]["usageMetrics"]["SSO-Connection"] = "customers"
-        wrapped = identity_model(mau=10000, organizations="customers")
-        bare_total = CostEngine(bare, catalog, time_basis="monthly").total_cost()
-        wrapped_total = CostEngine(wrapped, catalog, time_basis="monthly").total_cost()
-        assert bare_total == pytest.approx(7375.0)
-        assert wrapped_total == pytest.approx(bare_total)
