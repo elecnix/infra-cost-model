@@ -173,6 +173,31 @@ class TestTheCatalogCanPinItsSource:
         assert cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request",
                            sources=frozenset()) is None
 
+    def test_a_pinned_source_keeps_its_rows_beside_a_live_row(self, tmp_path):
+        # A seed row and a live row for one metric share a key. The
+        # live-supersede pass keeps only the live row, but a run pinned to the
+        # seed must still read the seed row: the filter has to run before the
+        # supersede, or a pinned source answers None (#446).
+        cache = PricingCache(db_path=tmp_path / "mixed.db")
+        cache.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests",
+            price_usd=SEED_PAID_RATE, source="seed",
+            effective_date="2026-01-01", fetched_at="2026-01-01T00:00:00"))
+        cache.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        seeded = cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request",
+                             sources=frozenset({"seed"}))
+        assert seeded is not None and seeded.price_usd == SEED_PAID_RATE
+        live = cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request",
+                           sources=frozenset({"infracost"}))
+        assert live is not None and live.price_usd == LIVE_RATE
+
 
 class TestComputePricingSeed:
     """`--pricing seed` gives the same total whatever the local cache holds."""

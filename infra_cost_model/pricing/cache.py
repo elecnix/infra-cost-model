@@ -554,14 +554,12 @@ class PricingCache:
                    source, fetched_at, per, block_size
             FROM prices
             WHERE vendor = ? AND service = ? AND region = ? AND usage_metric = ?
+            ORDER BY start_usage_amount
         """
         params: tuple = (vendor, service, region, usage_metric)
-        if sources is not None:
-            sql += f" AND source IN ({', '.join('?' for _ in sources)})"
-            params += tuple(sorted(sources))
 
         with closing(sqlite3.connect(self.db_path)) as conn:
-            cursor = conn.execute(sql + " ORDER BY start_usage_amount", params)
+            cursor = conn.execute(sql, params)
             rows = cursor.fetchall()
 
         if not rows:
@@ -580,6 +578,17 @@ class PricingCache:
             )
             for row in rows
         ]
+
+        if sources is not None:
+            # Narrow to the pinned sources here rather than in the query. The
+            # filter is a set of source names, and assembling a placeholder
+            # list for each one would mean building the SQL by string
+            # interpolation for no gain (#446). The filter runs before the
+            # live-supersede pass below, so a pinned source never has its rows
+            # replaced by a live row it deliberately excluded.
+            prices = [p for p in prices if p.source in sources]
+            if not prices:
+                return None
 
         # Live prices supersede every offline fallback source: seed,
         # aws-pricelist, and seed-initial. Older versions wrote seed-initial
