@@ -306,6 +306,29 @@ def test_a_failed_payload_reads_unreadable(tmp_path):
     assert report.groups[0].status == "unreadable"
 
 
+def test_an_unparseable_amount_reads_unreadable_not_zero(tmp_path):
+    """A cost the reader cannot parse is missing data, not a zero.
+
+    Treating it as $0.00 would report a fully costed model as failing drift
+    against a bill that says nothing, which is the reading trap 5 forbids.
+    """
+    payload = {"ResultsByTime": [
+        {"Time": {"Start": day, "End": day}, "Groups": [
+            {"Keys": ["Amazon Virtual Private Cloud/USW2-NatGateway-Hours"],
+             "Metrics": {"UnblendedCost": {"Amount": "N/A"}}}]}
+        for day in month_days(30)
+    ]}
+    actuals = load_actuals(write_json(tmp_path, "actuals.json", payload))
+
+    report = run(model_with({"aws_nat_gateway.main": node()}), {"aws_nat_gateway.main": 30.44},
+                  actuals)
+
+    assert actuals.readable is False
+    assert "N/A" in actuals.error
+    assert report.groups[0].status == "unreadable"
+    assert report.status == "unreadable"
+
+
 def test_an_empty_payload_reads_unreadable(tmp_path):
     actuals = load_actuals(write_json(tmp_path, "actuals.json", {}))
 

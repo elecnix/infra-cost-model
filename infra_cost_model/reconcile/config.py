@@ -112,7 +112,7 @@ def load_config(path) -> ReconcileConfig:
     unknown = set(raw) - _KNOWN_KEYS
     if unknown:
         raise ReconcileError(
-            f"reconcile.yaml: unknown keys: " + ", ".join(sorted(unknown))
+            "reconcile.yaml: unknown keys: " + ", ".join(sorted(unknown))
         )
 
     entries = [_entry(index, item)

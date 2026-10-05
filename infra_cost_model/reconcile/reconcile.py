@@ -229,7 +229,7 @@ def _covered_keys(line: BillLine, actuals: Actuals) -> list[BillLineKey]:
 def _window(actuals: Actuals, window_days: int) -> list[str]:
     """The trailing `window_days` days the file reports, or all of them."""
     if window_days <= 0:
-        raise ReconcileError(f"--window-days must be a positive number of days")
+        raise ReconcileError("--window-days must be a positive number of days")
     return actuals.days[-window_days:]
 
 
@@ -334,6 +334,11 @@ def reconcile(model: dict, costs: dict, actuals: Actuals,
         nodes = sorted(item[1] for item in members if item[0] == "node")
         lines = sorted((item[1] for item in members if item[0] == "line"),
                        key=lambda key: key.label())
+        if not lines:
+            # A component always holds the line its node was grouped by, so this
+            # is defensive. It keeps the label below from indexing an empty list
+            # if that invariant ever breaks.
+            continue
         modelled = sum(costs.get(address, 0.0) for address in nodes)
         results = [_project(remaining.daily(key), remaining.days, window)
                    for key in lines]
@@ -348,8 +353,11 @@ def reconcile(model: dict, costs: dict, actuals: Actuals,
             status=_UNREADABLE if not actuals.readable else status,
         ))
 
+    # Worst first: the rank is negated rather than reversed because the drift
+    # and label that follow it are already in ascending order.
     groups.sort(key=lambda group: (
-        _RANK[group.status] * -1, -abs(group.drift_usd), group.lines[0].label(),
+        _RANK[group.status] * -1, -abs(group.drift_usd),
+        group.lines[0].label() if group.lines else "",
     ))
 
     return Reconciliation(

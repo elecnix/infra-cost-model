@@ -78,17 +78,24 @@ class Actuals:
         return {service for service, _usage_type in self.lines}
 
 
-def _amount(group: dict) -> float:
-    """The unblended cost of a group, falling back to the blended cost."""
+def _amount(group: dict) -> tuple[Optional[float], object]:
+    """The unblended cost of a group, falling back to the blended cost.
+
+    Returns the amount and the raw value it was read from. The value is None
+    when the group carries no readable amount at all: a cost the reader cannot
+    parse is missing data, and turning it into 0.0 would report a fully costed
+    model as drifting against a bill that says nothing (#444, trap 5).
+    """
     metrics = group.get("Metrics") or {}
     for name in ("UnblendedCost", "BlendedCost"):
         metric = metrics.get(name)
         if isinstance(metric, dict) and "Amount" in metric:
+            raw = metric["Amount"]
             try:
-                return float(metric["Amount"])
+                return float(raw), raw
             except (TypeError, ValueError):
-                continue
-    return 0.0
+                return None, raw
+    return None, None
 
 
 def _split_key(key: str) -> tuple[str, Optional[str]]:
@@ -127,6 +134,7 @@ def parse_actuals(payload: dict) -> Actuals:
     if not isinstance(results, list):
         return actuals
 
+    unreadable: Optional[str] = None
     days: list[str] = []
     for period in results:
         if not isinstance(period, dict):
@@ -139,13 +147,22 @@ def parse_actuals(payload: dict) -> Actuals:
             keys = group.get("Keys") or []
             if not keys or not isinstance(keys[0], str):
                 continue
+            amount, raw = _amount(group)
+            if amount is None:
+                amount = 0.0
+                unreadable = unreadable or (
+                    f"{start}: the group for {keys[0]} carries no readable amount "
+                    f"in UnblendedCost or BlendedCost (found {raw!r})"
+                )
             line = _split_key(keys[0])
             amounts = actuals.lines.setdefault(line, {})
             # Two pages can carry the same line for the same day. The exporter
             # already paid for both, so the day's spend is their sum.
-            amounts[start] = amounts.get(start, 0.0) + _amount(group)
+            amounts[start] = amounts.get(start, 0.0) + amount
 
     actuals.days = sorted(set(days))
+    if unreadable is not None:
+        actuals.error = unreadable
     return actuals
 
 
