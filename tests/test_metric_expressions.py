@@ -171,6 +171,12 @@ class TestExpressionErrors:
         with pytest.raises(ValueError, match="Unrecognized parameter reference"):
             evaluate_metric_expression("tenants", {"customers": 25})
 
+    def test_a_non_string_is_refused_rather_than_crashing_the_caller(self):
+        """The caller catches ValueError; the contract says it gets one."""
+        for value in (None, ["customers"], {"a": 1}, 10 ** 400):
+            with pytest.raises(ValueError, match="number or a string"):
+                evaluate_metric_expression(value, {"customers": 25})
+
 
 class TestSchemaAcceptsAnExpression:
     """One schema, three interfaces (Principle 11)."""
@@ -187,24 +193,27 @@ class TestSchemaAcceptsAnExpression:
         assert validate_cost_model(model) == []
 
     @pytest.mark.parametrize("value", [
-        "customers; import os", "__import__('os')", "",
+        "customers % 2", "customers & 1", "customers | 1", "customers ^ 1",
+        "~customers", "!customers", "customers; import os",
+        "__import__('os')", "customers, 2", "customers: 2", "",
     ])
-    def test_text_outside_the_grammar_is_refused(self, value):
-        """The pattern pins the characters; it cannot pin the grammar.
-
-        `customers ** 2` uses only characters the grammar admits, so it passes
-        here and the engine refuses the exponent. Splitting the two layers is
-        the same call `per` makes: the schema states what it can state, and the
-        engine refuses the rest.
-        """
+    def test_a_character_outside_the_grammar_is_refused(self, value):
+        """The pattern is a character filter, and it does filter these."""
         model = identity_model(mau=value)
         assert validate_cost_model(model) != []
 
-    def test_an_operator_the_engine_does_not_implement_is_refused_at_compute_time(
-            self, catalog):
-        model = identity_model(mau="customers ** 2")
+    @pytest.mark.parametrize("value", ["customers ** 2", "f(customers)"])
+    def test_the_engine_refuses_what_the_class_cannot(self, catalog, value):
+        """Two admitted characters can still spell an exponent or a call.
+
+        A character class cannot forbid either, so the model validates and the
+        engine refuses it. Splitting the two layers is the same call `per`
+        makes: the schema states what it can state, and the engine refuses the
+        rest.
+        """
+        model = identity_model(mau=value)
         assert validate_cost_model(model) == []
-        with pytest.raises(ValueError, match="operator"):
+        with pytest.raises(ValueError, match="not a quantity|operator"):
             CostEngine(model, catalog, time_basis="monthly").total_cost()
 
     def test_a_number_still_validates(self):

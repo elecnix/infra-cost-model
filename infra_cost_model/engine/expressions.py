@@ -98,9 +98,16 @@ def evaluate_metric_expression(text: str, parameters: dict) -> float:
         The resolved quantity.
 
     Raises:
-        ValueError: The text is not arithmetic over declared parameters. The
-            message names the parameter or the operator at fault.
+        ValueError: The text is not a string, or is not arithmetic over
+            declared parameters. The message names the parameter or the
+            operator at fault.
     """
+    if not isinstance(text, str):
+        raise ValueError(
+            f"A metric value is a number or a string, not {type(text).__name__}: "
+            f"{text!r}"
+        )
+
     if len(text) > _MAXIMUM_LENGTH:
         raise ValueError(
             f"'{text[:60]}…' is too long or too deeply nested to read as a "
