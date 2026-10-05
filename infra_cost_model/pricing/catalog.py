@@ -3,7 +3,19 @@
 from pathlib import Path
 from typing import Optional, Union
 
-from infra_cost_model.pricing.cache import PricingCache, TieredPrice, Price, band_cost
+from infra_cost_model.pricing.cache import (
+    PricingCache, TieredPrice, Price, band_cost, bundled_db_path,
+    BUNDLED_SOURCES, LIVE_SOURCES,
+)
+
+# The set of row sources behind each name a run can pin its price
+# source to (#446). A name maps to no set when the run reads every
+# source the cache holds, which is how it has always run.
+PINNED_SOURCES = {
+    "live": LIVE_SOURCES,
+    "seed": BUNDLED_SOURCES,
+}
+
 
 # Seconds in an average month (365.25 days / 12).
 SECONDS_PER_MONTH = 86400 * 365.25 / 12  # = 2629800.0
@@ -17,8 +29,19 @@ TIER_BOUNDARY_PERIOD_SECONDS = SECONDS_PER_MONTH
 class PricingCatalog:
     """High-level interface for querying cloud pricing."""
 
-    def __init__(self, db_path: str | Path = None, seed: bool = False):
-        self._cache = PricingCache(db_path, seed=seed)
+    def __init__(self, db_path: str | Path = None, seed: bool = False,
+                 sources: str | None = None):
+        if sources not in (None, *PINNED_SOURCES):
+            raise ValueError(f"unknown pricing source: {sources}")
+        if sources == "seed":
+            # The bundled rows live in a database of their own, so a
+            # pinned run reads no synced row, and none of its writes
+            # reaches a cache the user has (#446).
+            db_path = bundled_db_path()
+            seed = True
+        self.sources = sources
+        rows = PINNED_SOURCES.get(sources)
+        self._cache = PricingCache(db_path, seed=seed, sources=rows)
 
     def source_info(self) -> dict[str, int]:
         """Return a count of rows by pricing source (infracost, seed, etc.).
@@ -56,7 +79,6 @@ class PricingCatalog:
             _CostResult if quantity provided, TieredPrice if multiple tiers, Price if single, None if not found
         """
         result = self._cache.query(vendor, service, region, usage_metric)
-
         if result is None:
             return None
 

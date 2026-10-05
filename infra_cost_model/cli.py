@@ -75,6 +75,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_compute.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     p_compute.add_argument("--no-catalog", action="store_true",
                            help="Disable pricing catalog (use embedded pricing rates)")
+    p_compute.add_argument("--pricing", choices=["live", "seed"],
+                           help="Pin the price source: 'live' prices from synced rows only "
+                                "and fails on a metric with none; 'seed' prices from the "
+                                "bundled rows only, never the local cache")
+    p_compute.add_argument("--pricing-db", metavar="<path>",
+                           help="Read prices from this cache file instead of "
+                                "~/.infra-cost-model/pricing.db")
     p_compute.add_argument("--time-basis", choices=["perSecond", "monthly", "yearly"], default="perSecond",
                            help="Time basis for cost reporting (default: perSecond)")
     p_compute.add_argument("--monthly", action="store_true",
@@ -577,6 +584,22 @@ def cmd_compute(args: argparse.Namespace) -> int:
 
     use_catalog = not args.no_catalog
 
+    if args.pricing and not use_catalog:
+        _print_stderr("Error: --pricing picks a catalog source, so it can't be "
+                      "combined with --no-catalog.")
+        return 1
+    if args.pricing == "seed" and args.pricing_db:
+        _print_stderr("Error: --pricing seed reads the bundled price rows, so "
+                      "--pricing-db has no effect.")
+        return 1
+    db_path = Path(args.pricing_db) if args.pricing_db else None
+    if db_path is not None and not db_path.exists():
+        # An empty database would price every metric from the embedded rates,
+        # which is the silent fallback this option exists to avoid (#446).
+        _print_stderr(f"Error: no price cache at {db_path}. Run sync-pricing, "
+                      "or point --pricing-db at a file that exists.")
+        return 1
+
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         content = f.read()
@@ -587,7 +610,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
         _print_stderr(f"Error: {e}")
         return 1
 
-    catalog = PricingCatalog() if use_catalog else None
+    catalog = PricingCatalog(db_path, sources=args.pricing) if use_catalog else None
 
     nodes = model.get("nodes", {})
     label_error, selectors = _label_options(nodes, args)
@@ -614,6 +637,20 @@ def cmd_compute(args: argparse.Namespace) -> int:
     try:
         computed = engine.compute()
 
+        # A pinned live source either answers every metric or the run stops:
+        # a total that mixes synced rows with embedded rates or bundled rows
+        # is the one thing this option exists to prevent (#446).
+        if args.pricing == "live" and engine.catalog_misses:
+            _print_stderr(
+                f"Error: --pricing live found no synced price for "
+                f"{len(engine.catalog_misses)} usage metric"
+                f"{'s' if len(engine.catalog_misses) > 1 else ''}:")
+            for miss in engine.catalog_misses:
+                _print_stderr(f"  - {miss.node}: {miss.metric} "
+                              f"({miss.provider} {miss.service} {miss.region})")
+            _print_stderr("Run sync-pricing for these, or price with --pricing seed.")
+            return 1
+
         # A label filter narrows what the report and --budget talk about (#445).
         # The cost it leaves out is still printed, so a filtered total never
         # reads as the whole model's spend.
@@ -633,7 +670,9 @@ def cmd_compute(args: argparse.Namespace) -> int:
                 return 1
             return 0
 
-        pricing_source = "catalog" if use_catalog else "embedded pricing rates"
+        pricing_source = (args.pricing if args.pricing
+                          else "catalog" if use_catalog
+                          else "embedded pricing rates")
         print(f"Costs for: {_model_name(model)} (pricing: {pricing_source}, {time_basis})")
         print("-" * 40)
         for node, cost in sorted(costs.items()):

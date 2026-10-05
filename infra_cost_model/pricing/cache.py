@@ -1,13 +1,16 @@
 """SQLite cache layer for cloud pricing data."""
 
+import atexit
+import json
+import math
+import shutil
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Optional
-import json
-import math
 
 DB_PATH = Path.home() / ".infra-cost-model" / "pricing.db"
 DEFAULT_TTL_DAYS = 7
@@ -23,6 +26,10 @@ LIVE_SOURCES = frozenset({"infracost", "azure-retail"})
 # LIVE_SOURCES: it reads the AWS Price List API, but it doesn't supersede the
 # seed rows.
 FETCHED_SOURCES = LIVE_SOURCES | {"aws-pricelist"}
+
+# The sources of the rows that ship with the package: the seed price file and
+# the vendor price files. They cost the same on every machine (#446).
+BUNDLED_SOURCES = frozenset({"seed", "seed-initial", "vendor"})
 
 # Package data, next to this module, so an installed wheel carries it (#265).
 SEED_PRICES_PATH = Path(__file__).parent / "seed" / "seed_prices.json"
@@ -306,9 +313,13 @@ class PricingCache:
     """SQLite cache for cloud pricing data."""
 
     def __init__(self, db_path: str | Path = None, ttl_days: int = DEFAULT_TTL_DAYS,
-                 seed: bool = False):
+                 seed: bool = False, sources: frozenset[str] | None = None):
         self.db_path = Path(db_path) if db_path else DB_PATH
         self.ttl_days = ttl_days
+        # The sources a pinned run reads, or None for every source in
+        # the cache. Every query filters on it, so a live-pinned run
+        # never prices from a bundled row and the other way round (#446).
+        self.sources = sources
         self._seed_loaded = False
         # The connection of an open `replacing` block, which `upsert` writes to.
         self._replace_conn: sqlite3.Connection | None = None
@@ -517,22 +528,35 @@ class PricingCache:
         ))
 
     def query(self, vendor: str, service: str, region: str,
-              usage_metric: str, quantity: float | None = None) -> TieredPrice | Price | None:
+              usage_metric: str, quantity: float | None = None,
+              sources: frozenset[str] | None = None) -> TieredPrice | Price | None:
         """Query prices for a specific vendor/service/region/usage metric.
 
         Returns a TieredPrice if multiple tiers exist, or a single Price.
-        If no prices are found, loads seed prices and retries once.
+        Returns None if no row matches.
+
+        ``sources`` narrows the answer to rows from those sources. It defaults
+        to the cache's own ``sources``, so a run that pins its price source
+        never mixes one with another (#446): rows of a source the caller left
+        out are as absent as rows that were never cached.
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute("""
+        if sources is None:
+            sources = self.sources
+        sql = """
             SELECT vendor, service, region, product_family, attributes,
                    usage_metric, unit, price_usd, start_usage_amount,
                    end_usage_amount, purchase_option, effective_date,
                    source, fetched_at, per, block_size
             FROM prices
             WHERE vendor = ? AND service = ? AND region = ? AND usage_metric = ?
-            ORDER BY start_usage_amount
-        """, (vendor, service, region, usage_metric))
+        """
+        params: tuple = (vendor, service, region, usage_metric)
+        if sources:
+            sql += f" AND source IN ({', '.join('?' for _ in sources)})"
+            params += tuple(sorted(sources))
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute(sql + " ORDER BY start_usage_amount", params)
 
         rows = cursor.fetchall()
         conn.close()
@@ -591,6 +615,19 @@ class PricingCache:
         if len(prices) > 1:
             return TieredPrice(tiers=prices)
         return prices[0]
+
+
+def bundled_db_path() -> Path:
+    """Return a private, empty database path for a bundled-rows-only catalog.
+
+    A run that pins its price source to the bundled rows must read the same
+    rows on every machine, so it takes neither the synced cache nor a path the
+    caller named (#446). The directory is temporary; its removal is registered
+    with `atexit`, which runs after the interpreter returns.
+    """
+    folder = Path(tempfile.mkdtemp(prefix="infra-cost-model-bundled-"))
+    atexit.register(shutil.rmtree, folder, ignore_errors=True)
+    return folder / "pricing.db"
 
 
 def _hash_attributes(attrs: dict) -> str:
