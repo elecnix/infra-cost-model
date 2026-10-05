@@ -72,26 +72,29 @@ def known_line(vendor: Optional[str], service: Optional[str],
 
     A catalog service code can bill under several lines — ``AmazonVPC``
     under both ``Amazon Virtual Private Cloud`` and ``EC2 - Other`` — so
-    the catalog metric decides between them. A line with no usage type
-    for the metric still matches: the service alone is the most that is
-    known, and a node states the exact line in ``billingLines``.
+    the catalog metric decides between them. A line that names no usage
+    types prices the whole service, so it is the default for a metric no
+    line names; a node states the exact line in ``billingLines``.
     """
     entry = known_lines().get(vendor) if isinstance(vendor, str) else None
     if not isinstance(entry, dict) or not isinstance(service, str):
         return None
 
+    whole_service: Optional[dict] = None
     service_only: Optional[dict] = None
     with_metric: Optional[dict] = None
     for line in entry.get("lines") or []:
         if service not in (line.get("catalogServices") or []):
             continue
-        if catalog_metric is not None and catalog_metric in (
-                line.get("usageTypes") or {}):
+        usage_types = line.get("usageTypes") or {}
+        if catalog_metric is not None and catalog_metric in usage_types:
             if with_metric is None:
                 with_metric = line
         elif service_only is None:
             service_only = line
-    return with_metric or service_only
+        if not usage_types and whole_service is None:
+            whole_service = line
+    return with_metric or whole_service or service_only
 
 
 def bill_provider(vendor: Optional[str]) -> Optional[str]:
@@ -146,7 +149,7 @@ def unmapped_billing_lines(model: dict) -> list[dict[str, str]]:
             continue
         mapped = {line.metric for line in _node_billing_lines(address, node)}
         service = node.get("service")
-        for metric in node.get("usageMetrics") or {}:
+        for metric in _usage_metrics(node):
             if metric in mapped:
                 continue
             unmapped.append({
@@ -155,6 +158,17 @@ def unmapped_billing_lines(model: dict) -> list[dict[str, str]]:
                 "service": service if isinstance(service, str) else "",
             })
     return unmapped
+
+
+def _usage_metrics(node: dict) -> dict:
+    """A node's usage metrics, as a mapping, or an empty one.
+
+    The schema requires a mapping; a model that reached here without one is
+    reported as carrying no metrics rather than raising, because `validate`
+    collects the schema error alongside this module's.
+    """
+    metrics = node.get("usageMetrics")
+    return metrics if isinstance(metrics, dict) else {}
 
 
 def billing_line_errors(model: dict) -> list[str]:
@@ -182,13 +196,13 @@ def _node_billing_lines(address: str, node: dict) -> list[BillingLine]:
     overrides = node.get("billingLines") or {}
     catalog = _catalog_metrics(node)
     lines: list[BillingLine] = []
-    for metric in node.get("usageMetrics") or {}:
+    for metric in _usage_metrics(node):
         override = overrides.get(metric)
-        if isinstance(override, dict) and override.get("service") is not None:
+        if isinstance(override, dict) and isinstance(override.get("service"), str):
             lines.append(BillingLine(
                 node=address,
                 metric=metric,
-                provider=override.get("provider") or provider or "",
+                provider=_override_provider(override, provider),
                 service=override["service"],
                 usage_type=override.get("usageType"),
                 source="node",
@@ -207,6 +221,18 @@ def _node_billing_lines(address: str, node: dict) -> list[BillingLine]:
                 source="default",
             ))
     return lines
+
+
+def _override_provider(override: dict, provider: Optional[str]) -> str:
+    """The bill provider a node override names, as a string.
+
+    A provider the model states but this module cannot read is the schema's
+    error to report, so the line carries the node's own provider instead.
+    """
+    named = override.get("provider")
+    if isinstance(named, str) and named:
+        return named
+    return provider or ""
 
 
 def _resolved_metric(vendor: Optional[str], service: Optional[str],
@@ -275,6 +301,13 @@ def _node_billing_line_errors(address: str, node: dict) -> list[str]:
                 f"{where}: 'billingLines' must map a metric to a bill line."
             )
             continue
+        service = override.get("service")
+        if not isinstance(service, str):
+            errors.append(
+                f"{where}: 'service' must be a string naming a line on the "
+                f"bill, not {_shape_of(service)}."
+            )
+            continue
         provider = override.get("provider") or bill_provider(vendor)
         if not isinstance(provider, str):
             errors.append(
@@ -293,16 +326,23 @@ def _node_billing_line_errors(address: str, node: dict) -> list[str]:
                 f"Known bill providers: {known}."
             )
             continue
-        if override.get("service") not in _service_names(entry):
+        if service not in _service_names(entry):
             known = ", ".join(sorted(_service_names(entry)))
             errors.append(
                 f"{where}: unknown bill service "
-                f"'{override.get('service')}' on bill provider "
+                f"'{service}' on bill provider "
                 f"'{provider}'. Known bill services: {known}."
             )
             continue
         errors += _usage_type_errors(where, entry, node, override)
     return errors
+
+
+def _shape_of(value) -> str:
+    """A value's shape, for an error that must not print it as a name."""
+    if value is None:
+        return "absent"
+    return f"a {type(value).__name__}"
 
 
 def _service_names(entry: dict) -> set[str]:

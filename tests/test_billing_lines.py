@@ -18,6 +18,7 @@ from infra_cost_model.billing import (
     billing_line_errors,
     known_line,
     resolve_billing_lines,
+    unmapped_billing_lines,
 )
 from infra_cost_model.cli import main
 
@@ -86,6 +87,27 @@ class TestDefaults:
         lines = lines_for(node)
 
         assert lines["storageGb"] == ("Amazon Simple Storage Service", None)
+
+    def test_an_unknown_metric_takes_the_services_own_line(self):
+        """`AmazonEC2` bills under `EC2 - Other` for the usage types that line
+        names, and under `Amazon Elastic Compute Cloud` for everything else. A
+        metric the catalog does not map is one of the others, so taking the
+        first line that shares the service would name the wrong one."""
+        node = {
+            "nodeType": "compute",
+            "resourceAddress": "aws_instance.web",
+            "provider": "aws",
+            "service": "AmazonEC2",
+            "region": "us-west-2",
+            "usageMetrics": {"computeHours": {"unit": "hours", "value": 730}},
+        }
+        lines = lines_for(node)
+
+        assert lines["computeHours"] == ("Amazon Elastic Compute Cloud", None)
+
+        assert known_line("aws", "AmazonEC2", None)["service"] == (
+            "Amazon Elastic Compute Cloud"
+        )
 
     def test_a_metric_with_no_known_line_resolves_to_nothing(self):
         node = {
@@ -282,6 +304,35 @@ class TestValidation:
 
     def test_a_node_without_lines_is_never_an_error(self):
         assert billing_line_errors(model_with({"aws_nat_gateway.main": NAT_NODE})) == []
+
+    def test_a_malformed_line_is_refused_rather_than_crashing(self):
+        """The schema refuses these too, but `validate` reports every error it
+        finds rather than stopping at the first, so this module must survive a
+        shape the schema would reject."""
+        for override in (
+            {"service": ["AmazonVPC"]},
+            {"provider": ["aws"], "service": "Amazon Virtual Private Cloud"},
+            {"service": {"name": "AmazonVPC"}},
+            {"service": None},
+            "AmazonVPC",
+        ):
+            node = dict(NAT_NODE, billingLines={"natHours": override})
+            model = model_with({"aws_nat_gateway.main": node})
+
+            errors = billing_line_errors(model)
+
+            assert errors, f"{override!r} was accepted"
+
+    def test_a_malformed_usage_metrics_is_reported_as_no_lines(self):
+        """A model the schema rejects still reaches `billing-lines`, which must
+        report the node has no bill lines rather than raise."""
+        for usage_metrics in (5, "natHours", ["natHours"]):
+            model = model_with({
+                "aws_nat_gateway.main": dict(NAT_NODE, usageMetrics=usage_metrics),
+            })
+
+            assert resolve_billing_lines(model) == []
+            assert unmapped_billing_lines(model) == []
 
 
 NAT_MODEL_YAML = """
