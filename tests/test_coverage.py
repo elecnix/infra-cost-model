@@ -164,6 +164,18 @@ def test_stale_patterns_are_sorted_for_deterministic_output():
     ]
 
 
+def test_a_node_whose_address_the_export_has_is_not_orphaned():
+    """A node naming an address a `covers` glob would also reach is not orphaned."""
+    nodes = {
+        "aws_lb.main": _node(resourceAddress="aws_lb.public", covers=["aws_lb.*"])
+    }
+    result = match_coverage(nodes, {"aws_lb.public"})
+    assert result.matched == {"aws_lb.public"}
+    assert result.orphaned == set()
+    assert result.uncosted == set()
+    assert result.stale_patterns == []
+
+
 def test_glob_without_a_metacharacter_matches_one_exact_address():
     nodes = {
         "aws_lb.main": _node(

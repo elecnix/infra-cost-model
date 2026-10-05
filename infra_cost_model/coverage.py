@@ -33,7 +33,8 @@ class CoverageResult:
     matched: frozenset[str]
     #: Addresses in the export that no node claims.
     uncosted: frozenset[str]
-    #: Addresses a node names that no other claim of that node reaches.
+    #: Addresses a node names that the export lacks, when no `covers` pattern
+    #: of that node reaches any address the export has.
     orphaned: frozenset[str]
     #: `covers` patterns that match nothing, sorted by node then pattern.
     stale_patterns: list[StalePattern]
@@ -69,7 +70,10 @@ def match_coverage(nodes: dict, iac_addresses: Iterable[str]) -> CoverageResult:
 
         address = node_data.get("resourceAddress")
         # A node is accounted for once any one of its claims reaches an
-        # address, so a stale claim alongside a live one is not orphaned.
+        # address the export has. Its own address counts when the export has
+        # it; a stale `covers` entry alongside a live claim does not orphan the
+        # node. A `covers` pattern is never matched against the node's own
+        # resourceAddress, which is a model-side name the export need not have.
         claimed = isinstance(address, str) and address in iac
         if claimed:
             matched.add(address)
