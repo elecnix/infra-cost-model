@@ -21,9 +21,9 @@ import platform
 import warnings
 import requests
 from pathlib import Path
-from datetime import datetime
 from typing import Optional
 
+from infra_cost_model.pricing import cache as cache_module
 from infra_cost_model.pricing.free_tiers import (
     FREE_ALLOWANCES, FREE_ALLOWANCE_REGIONS, SPEND_BASED_FREE_TIERS,
 )
@@ -482,7 +482,7 @@ class InfracostClient:
         if descriptor.get("attribute_patterns"):
             descriptor = {**descriptor, "attribute_patterns": _resolve_cloud_run_tier(
                 descriptor["attribute_patterns"], region)}
-        now = datetime.now().isoformat()
+        now = cache_module.utc_now_iso()
         # Some products are priced by Infracost under a different service than the
         # handler/seed model them (e.g. NAT Gateway is priced under AmazonEC2 but
         # modeled under AmazonVPC). `store_service` stores them under the service

@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from datetime import datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from .cache import Price, PricingCache, _hash_attributes
+from .cache import Price, PricingCache, _hash_attributes, utc_now_iso
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -139,7 +138,7 @@ def _parse_row(row: Any, source: str, index: int, fetched_at: str) -> Price:
 def _read_vendor_prices() -> list[Price]:
     vendors_root = _vendors_root()
 
-    fetched_at = datetime.now().isoformat()
+    fetched_at = utc_now_iso()
     parsed: list[Price] = []
     for vendor_id, prices_file in _prices_files(vendors_root):
         source = f"infra_cost_model/vendors/{vendor_id}/prices.yaml"
