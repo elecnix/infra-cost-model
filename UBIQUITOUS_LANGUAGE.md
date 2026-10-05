@@ -20,6 +20,7 @@
 | **Derived usage** | Per-node resource consumption computed from the entry frequency and call rates through the graph | Computed usage, propagated usage, estimated usage |
 | **Usage metric** | A single measurable unit of consumption on a node (e.g., compute-ms, data-out-GB, read-units) | Usage param, usage override, dimension |
 | **Parameter** | A symbolic variable in the model (frequency, call rate, payload size) that can be varied for what-if analysis | Variable, input, factor |
+| **Metric value** | The quantity a usage metric bills, written as a number, one parameter name, or arithmetic over parameter names and numbers | Metric expression, formula, per-invocation multiplier |
 
 ## Inputs and outputs
 

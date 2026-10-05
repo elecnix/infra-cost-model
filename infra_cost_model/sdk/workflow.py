@@ -63,11 +63,15 @@ class Call:
 @dataclass
 class NodeUsage:
     """Usage metrics for a node."""
-    metrics: dict[str, Union[float, dict]] = field(default_factory=dict)
+    metrics: dict[str, Union[float, str, dict]] = field(default_factory=dict)
 
-    def with_metric(self, name: str, value: float, unit: Optional[str] = None,
+    def with_metric(self, name: str, value: Union[float, str], unit: Optional[str] = None,
                     edge_type: Optional[str] = None) -> "NodeUsage":
         """Add a usage metric.
+
+        ``value`` is a number, one parameter name, or arithmetic over the
+        workflow's parameters, such as ``customers * 40`` (#448). It shares
+        the schema's grammar with YAML and TypeScript (Principle 11).
 
         With ``edge_type`` ("read", "write" or "invoke"), the metric counts
         only the calls that arrive over edges of that type (#313).
