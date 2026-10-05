@@ -23,6 +23,14 @@ from infra_cost_model.engine import (
     UnpricedMetricWarning,
 )
 from infra_cost_model.engine.snapshot import build_snapshot, render_snapshot
+from infra_cost_model.labels import (
+    UNLABELED,
+    excluded_addresses,
+    group_nodes,
+    label_keys,
+    label_value_problem,
+    parse_label_selector,
+)
 from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.pricing.vendors import VendorPackageError
 from infra_cost_model.version_requirement import check_engine_requirement
@@ -67,6 +75,10 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="Compute on a monthly time basis (deprecated: use --time-basis monthly)")
     p_compute.add_argument("--budget", type=float, metavar="<usd>",
                            help="Exit with code 1 if total cost exceeds this USD threshold")
+    p_compute.add_argument("--group-by", metavar="<label>",
+                           help="Print a subtotal per value of this node label, plus one for unlabeled nodes")
+    p_compute.add_argument("--exclude-label", action="append", metavar="<key=value>",
+                           help="Leave out the nodes whose label matches (repeatable). --budget applies to the total that is left")
     p_compute.add_argument("--exit-on-unpriced", action="store_true",
                            help="Exit with code 1 if any usage metric has no price")
     p_compute.add_argument("--format", choices=["table", "json"], default="table",
@@ -80,6 +92,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_analyze.add_argument("--json", action="store_true", help="Output in JSON format")
     p_analyze.add_argument("--budget", type=float, metavar="<usd>",
                            help="Exit with code 1 if total cost exceeds this USD threshold")
+    p_analyze.add_argument("--group-by", metavar="<label>",
+                           help="Report a subtotal per value of this node label, plus one for unlabeled nodes")
+    p_analyze.add_argument("--exclude-label", action="append", metavar="<key=value>",
+                           help="Leave out the nodes whose label matches (repeatable). --budget applies to the total that is left")
     p_analyze.add_argument("--exit-on-unpriced", action="store_true",
                            help="Exit with code 1 if any usage metric has no price")
     p_analyze.set_defaults(func=cmd_analyze)
@@ -349,6 +365,74 @@ def _model_name(model: dict) -> str:
     return ", ".join(w.get("name", "unnamed") for w in model.get("workflows", []))
 
 
+def _unknown_label(flag: str, key: str, nodes: dict) -> str:
+    """The error for a label key no node in the model carries.
+
+    The key and the keys in use come from the model and from the command line,
+    so both are escaped: a raw control character in either would reach the
+    terminal that prints the message.
+    """
+    listed = ", ".join(sorted(repr(k) for k in label_keys(nodes))) or "(none)"
+    return f"{flag}: no node in this model carries the label {key!r}. Labels in use: {listed}"
+
+
+def _label_options(nodes: dict, args: argparse.Namespace) -> tuple[Optional[str], list]:
+    """Read --group-by and --exclude-label, or return the error to report.
+
+    Both flags name a label key, and a key no node carries is almost always a
+    typo. Catching it here matters more than usual: a filter that matched
+    nothing would leave a --budget gate covering the wrong total (#445). A
+    model with no nodes carries no labels at all, so the check waits for the
+    engine, which names the empty model as the real problem.
+    """
+    if not nodes:
+        return None, []
+
+    # Only these flags read labels, so a model with none of them given stays as
+    # lenient about a label value as it already is about a missing `provider`.
+    if args.group_by is None and not args.exclude_label:
+        return None, []
+
+    problem = label_value_problem(nodes)
+    if problem is not None:
+        return problem, []
+
+    if args.group_by is not None and args.group_by not in label_keys(nodes):
+        return _unknown_label("--group-by", args.group_by, nodes), []
+
+    selectors: list[tuple[str, str]] = []
+    for text in args.exclude_label or []:
+        try:
+            selector = parse_label_selector(text)
+        except ValueError as e:
+            return str(e), []
+        if selector[0] not in label_keys(nodes):
+            return _unknown_label("--exclude-label", selector[0], nodes), []
+        selectors.append(selector)
+    return None, selectors
+
+
+def _print_label_groups(nodes: dict, costs: dict, key: str) -> None:
+    """Print one subtotal per value of label `key`, plus one for unlabeled nodes."""
+    print()
+    print(f"Grouped by {key}:")
+    for value, subtotal, addresses in group_nodes(nodes, costs, key):
+        label = UNLABELED if value == UNLABELED else f"{key}={value}"
+        print(f"  {label}: ${subtotal:.6f} ({len(addresses)} node(s))")
+
+
+def _print_excluded(selectors: list[tuple[str, str]], excluded_costs: dict) -> None:
+    """Print the cost a label filter left out, so nothing disappears silently."""
+    if not excluded_costs:
+        return
+    stated = ", ".join(f"{key}={value}" for key, value in selectors)
+    total = sum(excluded_costs.values())
+    print()
+    print(f"Excluded by label {stated} (${total:.6f}):")
+    for node, cost in sorted(excluded_costs.items()):
+        print(f"  {node}: ${cost:.6f}")
+
+
 def cmd_compute(args: argparse.Namespace) -> int:
     """Compute costs from a cost model file."""
     yaml_path = Path(args.yaml_file)
@@ -370,6 +454,21 @@ def cmd_compute(args: argparse.Namespace) -> int:
 
     catalog = PricingCatalog() if use_catalog else None
 
+    nodes = model.get("nodes", {})
+    label_error, selectors = _label_options(nodes, args)
+    if label_error is not None:
+        _print_stderr(f"Error: {label_error}")
+        return 1
+    # A snapshot is the model's whole cost, meant to be committed and diffed
+    # (#443): filtering it by label would leave the excluded node in the file
+    # while --budget gated the total without it. Refuse rather than half-apply.
+    if args.format == "json":
+        for flag, given in (("--exclude-label", bool(selectors)),
+                            ("--group-by", args.group_by is not None)):
+            if given:
+                _print_stderr(f"Error: {flag} cannot be combined with --format json")
+                return 1
+
     # Resolve time basis: --monthly flag (deprecated) or --time-basis
     time_basis = args.time_basis
     if args.monthly:
@@ -378,7 +477,14 @@ def cmd_compute(args: argparse.Namespace) -> int:
     engine = CostEngine(model, catalog=catalog, time_basis=time_basis)
 
     try:
-        costs = engine.compute()
+        computed = engine.compute()
+
+        # A label filter narrows what the report and --budget talk about (#445).
+        # The cost it leaves out is still printed, so a filtered total never
+        # reads as the whole model's spend.
+        excluded = excluded_addresses(nodes, selectors)
+        excluded_costs = {a: c for a, c in computed.items() if a in excluded}
+        costs = {a: c for a, c in computed.items() if a not in excluded}
         total = sum(costs.values())
 
         if args.budget is not None and total > args.budget:
@@ -397,6 +503,9 @@ def cmd_compute(args: argparse.Namespace) -> int:
         print("-" * 40)
         for node, cost in sorted(costs.items()):
             print(f"  {node}: ${cost:.6f}")
+        if args.group_by is not None:
+            _print_label_groups(nodes, costs, args.group_by)
+        _print_excluded(selectors, excluded_costs)
         print("-" * 40)
 
         # Fixed labels for test compatibility
@@ -433,12 +542,21 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         _print_stderr(f"Error: {e}")
         return 1
 
+    nodes = model.get("nodes", {})
+    label_error, selectors = _label_options(nodes, args)
+    if label_error is not None:
+        _print_stderr(f"Error: {label_error}")
+        return 1
+
     engine = CostEngine(model, time_basis="monthly")
 
     try:
-        costs = engine.compute()
+        computed = engine.compute()
         derived = engine.get_derived_usage()
 
+        excluded = excluded_addresses(nodes, selectors)
+        costs = {a: c for a, c in computed.items() if a not in excluded}
+        excluded_nodes = [{"node": a, "cost": computed[a]} for a in sorted(excluded)]
         total = sum(costs.values())
 
         if args.budget is not None and total > args.budget:
@@ -456,6 +574,14 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "total_cost": total,
             "unpriced_metrics": [u.to_dict() for u in engine.unpriced_metrics],
         }
+        # Only the flags that ask for them add these two sections (#445).
+        if args.group_by is not None:
+            output["groups"] = [
+                {"label": value, "subtotal": subtotal, "nodes": addresses}
+                for value, subtotal, addresses in group_nodes(nodes, costs, args.group_by)
+            ]
+        if selectors:
+            output["excluded_nodes"] = excluded_nodes
 
         if args.json:
             print(json.dumps(output, indent=2))
@@ -470,6 +596,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print("\nCosts:")
             for node, cost in sorted(costs.items()):
                 print(f"  {node}: ${cost:.6f}")
+
+            if args.group_by is not None:
+                _print_label_groups(nodes, costs, args.group_by)
+            _print_excluded(selectors, {e["node"]: e["cost"] for e in excluded_nodes})
 
             print("-" * 50)
             print(f"Total Monthly Cost: ${total:.6f}")

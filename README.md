@@ -90,6 +90,59 @@ SaaS vendors such as WorkOS, Datadog and GitHub Copilot price from rows in `infr
 
 Version 0.3.0 removed the `free_tier`, `per_unit_flat` and `flat_subscription` pricing shapes ([#246](https://github.com/elecnix/infra-cost-model/issues/246)). `validate` rejects a model that still sets one, with a message that points to vendor price rows. CONTRIBUTING.md shows how to move each one to price rows.
 
+## Node labels
+
+A node may carry free-form `labels`. They change neither derived usage nor a price; they say how to slice a total:
+
+```yaml
+nodes:
+  anthropic.messages.primary:
+    labels: { category: llm }
+  aws_lb.main:
+    labels: { category: platform, env: prod }
+  aws_tax.prod:
+    labels: { category: tax }
+  aws_s3.bucket:
+    # no labels
+```
+
+`compute` and `analyze` take `--group-by <label>` to print one subtotal per value of that key, plus one for the nodes that carry none of it:
+
+```bash
+infra-cost-model compute model.yaml --monthly --group-by category
+```
+
+```text
+Grouped by category:
+  category=llm: $21.000000 (1 node(s))
+  category=platform: $100.000000 (1 node(s))
+  category=tax: $50.000000 (1 node(s))
+  (unlabeled): $5.000000 (1 node(s))
+```
+
+`--exclude-label <key=value>` (repeatable) leaves the matching nodes out of the costs and of the total, and `--budget` then applies to what is left — a ceiling on the platform spend with the third-party API set apart from it. The command still prints the cost it left out, so a filtered total never reads as the whole model's spend:
+
+```bash
+infra-cost-model compute model.yaml --monthly --exclude-label category=llm --budget 160
+```
+
+```text
+Costs for: model (pricing: embedded pricing rates, monthly)
+----------------------------------------
+  api: $100.000000
+  bucket: $5.000000
+  tax: $50.000000
+
+Excluded by label category=llm ($21.000000):
+  llm: $21.000000
+----------------------------------------
+Total Monthly Cost: $155.000000
+```
+
+`analyze --json` adds a `groups` list for `--group-by` and an `excluded_nodes` list for `--exclude-label`. A label value is a string and a label key no node in the model carries is almost always a typo, so either flag fails on one and names the keys the model does use. (Only these flags read labels: `compute` without them stays as lenient about a label as it already is about a missing `provider`.)
+
+Either flag also fails with `--format json` on `compute`. A snapshot is the model's whole cost, meant to be committed and diffed ([#443](https://github.com/elecnix/infra-cost-model/issues/443)), so a filtered one would keep the excluded node while `--budget` gated the total without it. Run the two as separate commands.
+
 ## Metrics with no price
 
 The engine prices a usage metric from its `shape`, then from the catalog, then from the node's `pricingRates`. If all three come up empty, the node's cost leaves that metric out. Each command that computes costs prints one warning per such metric on stderr, with the node, the metric, the provider, service and region, and the quantity left out. `analyze --json` also lists them under `unpriced_metrics`. A metric with a quantity of 0 doesn't warn.
