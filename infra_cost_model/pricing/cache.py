@@ -542,6 +542,11 @@ class PricingCache:
         """
         if sources is None:
             sources = self.sources
+        if sources is not None and not sources:
+            # An empty filter names no source, and so matches no row. Reading
+            # every source instead would price from rows the caller ruled out
+            # (#446).
+            return None
         sql = """
             SELECT vendor, service, region, product_family, attributes,
                    usage_metric, unit, price_usd, start_usage_amount,
@@ -552,9 +557,7 @@ class PricingCache:
         """
         params: tuple = (vendor, service, region, usage_metric)
         if sources is not None:
-            # An empty set names no source, and matches no row. Widening it to
-            # every source would price from rows the caller ruled out (#446).
-            sql += f" AND source IN ({', '.join('?' for _ in sources) or 'NULL'})"
+            sql += f" AND source IN ({', '.join('?' for _ in sources)})"
             params += tuple(sorted(sources))
 
         with closing(sqlite3.connect(self.db_path)) as conn:
