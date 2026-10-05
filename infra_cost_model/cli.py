@@ -588,6 +588,10 @@ def cmd_compute(args: argparse.Namespace) -> int:
         _print_stderr("Error: --pricing picks a catalog source, so it can't be "
                       "combined with --no-catalog.")
         return 1
+    if args.pricing_db and not use_catalog:
+        _print_stderr("Error: --pricing-db names a catalog file, so it can't be "
+                      "combined with --no-catalog.")
+        return 1
     if args.pricing == "seed" and args.pricing_db:
         _print_stderr("Error: --pricing seed reads the bundled price rows, so "
                       "--pricing-db has no effect.")

@@ -342,6 +342,20 @@ class TestPinnedSourceConflicts:
                      "--pricing-db", str(live_db)]) == 1
         assert "--pricing-db" in capsys.readouterr().err
 
+    def test_pricing_db_with_no_catalog_is_an_error(self, tmp_path, capsys):
+        # --no-catalog says the run reads no catalog, so naming a cache file
+        # contradicts it. The combination is refused for the same reason
+        # --pricing and --no-catalog are: naming an unused source reads as a
+        # run that used it (#446). Reporting the file as missing would blame
+        # the wrong thing.
+        model_path = write(tmp_path, model())
+        absent = tmp_path / "nowhere" / "pricing.db"
+        assert main(["compute", model_path, "--no-catalog",
+                     "--pricing-db", str(absent)]) == 1
+        err = capsys.readouterr().err
+        assert "--no-catalog" in err
+        assert "no price cache" not in err
+
     def test_a_label_filter_narrows_a_pinned_source_without_changing_it(
             self, tmp_path, home_cache, capsys):
         # A pinned source and a label filter answer different questions (#446,
