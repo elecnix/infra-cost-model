@@ -66,6 +66,10 @@ When the Infracost API has no price for an Azure meter in a region, the sync rea
 
 A vendor directory and its `vendor.yaml` manifest define the canonical vendor identity. Examples, provider registration and price rows use that identity. A few rows for a cloud provider's own services, such as Amazon Cognito, come from outside the live catalog. They go in the directory for that provider (`aws`, `azure` or `gcp`). `prices.yaml` is the canonical price data; nearby research notes may explain the model and cite sources but must not become a second price schedule.
 
+## Per-metric cost bookkeeping
+
+`compute --format json` reports what each usage metric of each node cost. Every number in the snapshot is one the engine computed. A node's printed metrics reproduce its printed total to six decimals, and the model total is the one the table prints. A new pricing path must record every cost it books to the usage metric behind it, so that holds. After it knows a cost, it records the metric with `_record_metric` (the internal cost per second for a usage-driven metric, per month for a fixed one, plus where the price came from), or calls `_record_unpriced` when nothing priced it. A price the engine pools across nodes, such as a shared free allowance or a global service ([#294](https://github.com/elecnix/infra-cost-model/issues/294), [#378](https://github.com/elecnix/infra-cost-model/issues/378)), names the metric its charge belongs to on the `_CatalogCharge`, so the pool prices the metric that incurred the charge. `tests/test_compute_snapshot.py` checks that a node's metrics reproduce its total on every time basis.
+
 ## Development
 
 - **Run tests:** `python3 -m pytest -q`

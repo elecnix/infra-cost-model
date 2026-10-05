@@ -31,6 +31,7 @@
 | **Surface** | A user-facing interface for declaring a cost model (YAML, TypeScript SDK, or Python SDK) | Interface, API, front-end, binding |
 | **Flat override** | A per-resource usage value specified directly without directed acyclic graph propagation; exists for migration and edge cases | Manual override, usage override, direct usage, static usage |
 | **Code generation** | The process of producing typed SDK classes from .tf files or Pulumi exports so that resource addresses and usage metrics are compile-time checked | Codegen, type generation |
+| **Cost snapshot** | The per-metric cost of one computed model, printed as rounded and sorted JSON so that two revisions can be diffed | Cost report, cost dump, cost export |
 
 ## Analysis
 
