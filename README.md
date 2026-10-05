@@ -62,8 +62,15 @@ infra-cost-model graph model.yaml
 A usage metric's `value` is the quantity it bills: how many requests an invocation makes, how many monthly active users a tenant carries. It is a number, one parameter name, or arithmetic over the workflow's parameters with `+ - * /` and parentheses:
 
 ```yaml
-parameters:
-  customers: 25
+version: "1.0"
+
+workflow:
+  name: saas-identity
+  entry: identity_provider
+  frequency: { unit: perMonth, value: 1 }
+  parameters:
+    customers: 25
+
 nodes:
   identity_provider:
     nodeType: external
