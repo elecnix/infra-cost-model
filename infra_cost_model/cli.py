@@ -179,7 +179,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p_codegen.set_defaults(func=cmd_codegen)
 
     # coverage
-    p_coverage = sub.add_parser("coverage", help="Check coverage between cost model and IaC resources")
+    p_coverage = sub.add_parser(
+        "coverage",
+        help="Check coverage between cost model and IaC resources",
+        description=(
+            "Compare the addresses an IaC export declares with the nodes that claim them. "
+            "A node claims its resourceAddress and every address its `covers` patterns "
+            "reach, as exact strings or globs, so a module path or an aggregate node "
+            "costs without renaming the node. A `covers` pattern that reaches nothing "
+            "is stale and fails."
+        ),
+    )
     p_coverage.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     p_coverage.add_argument("--from", dest="source_format", metavar="FORMAT",
                             choices=["terraform", "pulumi", "cdk", "arm"], default="terraform",
@@ -187,7 +197,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_coverage.add_argument("iac_file", metavar="<iac-file>", help="Path to IaC JSON export")
     p_coverage.add_argument("--exit-on-uncosted", action="store_true",
                             help="Exit with error code 1 if uncosted resources exist (for CI budget gates)")
-    p_coverage.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_coverage.add_argument("--json", action="store_true",
+                            help="Output in JSON format (matched, uncosted, orphaned, stalePatterns)")
     p_coverage.set_defaults(func=cmd_coverage)
 
     # import-infracost (blanket long-tail pricing from an Infracost breakdown)
@@ -1051,7 +1062,9 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     """Check coverage between cost model nodes and IaC resources.
 
     Compares resource addresses extracted from IaC export against those
-    declared in the cost model YAML, reporting uncosted resources and orphaned nodes.
+    declared in the cost model YAML, reporting uncosted resources and orphaned
+    nodes. A node also claims the addresses its `covers` patterns reach, so a
+    module path or an aggregate node costs without renaming the node (#449).
 
     Args:
         args.yaml_file: Path to cost model YAML
@@ -1061,8 +1074,10 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         args.json: Output in JSON format
 
     Returns:
-        0 if no uncosted resources or --exit-on-uncosted not set
-        1 if --exit-on-uncosted and uncosted resources exist
+        0 if no stale `covers` pattern and, when --exit-on-uncosted is set, no
+        uncosted resources
+        1 if a stale `covers` pattern matches nothing, or if --exit-on-uncosted
+        and uncosted resources exist
     """
     yaml_path = Path(args.yaml_file)
     iac_path = Path(args.iac_file)
@@ -1076,6 +1091,7 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         return 1
 
     # Load and parse cost model YAML
+    from infra_cost_model.coverage import match_coverage
     from infra_cost_model.sdk import parse_yaml_dsl
     with open(yaml_path) as f:
         yaml_content = f.read()
@@ -1086,12 +1102,9 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         _print_stderr(f"Error parsing cost model: {e}")
         return 1
 
-    # Extract model node resourceAddress values
+    # Model nodes claim their own resourceAddress plus every address their
+    # `covers` patterns reach.
     nodes = model.get("nodes", {})
-    model_addresses = set()
-    for node_data in nodes.values():
-        if isinstance(node_data, dict) and "resourceAddress" in node_data:
-            model_addresses.add(node_data["resourceAddress"])
 
     # Extract resource addresses from IaC
     try:
@@ -1122,9 +1135,11 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     iac_addresses = set(extracted.keys())
 
     # Compute diff
-    matched = model_addresses & iac_addresses
-    uncosted = iac_addresses - model_addresses  # In IaC, missing from model
-    orphaned = model_addresses - iac_addresses   # In model, missing from IaC
+    coverage = match_coverage(nodes, iac_addresses)
+    matched = coverage.matched
+    uncosted = coverage.uncosted
+    orphaned = coverage.orphaned
+    stale_patterns = coverage.stale_patterns
 
     # Output
     if args.json:
@@ -1132,11 +1147,14 @@ def cmd_coverage(args: argparse.Namespace) -> int:
             "matched": sorted(matched),
             "uncosted": sorted(uncosted),
             "orphaned": sorted(orphaned),
+            "stalePatterns": [
+                {"node": s.node, "pattern": s.pattern} for s in stale_patterns
+            ],
         }
         print(json.dumps(output, indent=2))
     else:
         if matched:
-            print(f"✓ Matched:    {len(matched)} node(s)")
+            print(f"✓ Matched:    {len(matched)} resource(s)")
         if uncosted:
             print(f"✗ Uncosted:   {len(uncosted)} resource(s) — in {source_format}, missing from model")
             for addr in sorted(uncosted):
@@ -1145,9 +1163,17 @@ def cmd_coverage(args: argparse.Namespace) -> int:
             print(f"✗ Orphaned:   {len(orphaned)} node(s) — in model, not in {source_format}")
             for addr in sorted(orphaned):
                 print(f"               {addr}")
+        if stale_patterns:
+            print(f"✗ Stale:      {len(stale_patterns)} covers pattern(s) matching no {source_format} address")
+            for stale in stale_patterns:
+                print(f"               {stale.node} covers {stale.pattern}")
 
-    # Exit logic: uncosted resources are dangerous for budget gates
-    # Orphaned nodes over-count cost (safe for budget gates), so don't fail
+    # Exit logic: uncosted resources are dangerous for budget gates.
+    # Orphaned nodes over-count cost (safe for budget gates), so don't fail.
+    # A stale `covers` pattern is a model error rather than a budget signal: it
+    # claims a resource the export does not have, so it fails either way.
+    if stale_patterns:
+        return 1
     if args.exit_on_uncosted and uncosted:
         return 1
 

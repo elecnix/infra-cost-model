@@ -72,6 +72,10 @@ export interface Node {
    */
   resourceAddress: string;
   /**
+   * Infrastructure resource addresses this node also costs, as exact strings or glob patterns. A node names one logical address, so it lists the Terraform module paths and the several resources it stands for here; the coverage command treats a matching address as costed and reports a pattern that matches nothing as stale.
+   */
+  covers?: string[];
+  /**
    * Cloud or SaaS provider (e.g., aws, gcp, github)
    */
   provider?: string;
