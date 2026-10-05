@@ -177,6 +177,27 @@ class TestNodeOverrides:
 
 
 class TestKnownNames:
+    def test_the_region_prefix_is_the_bills_code_not_the_region_abbreviated(self):
+        """Europe (Ireland) bills as `EU` and Europe (Paris) as `EUW3`, so a
+        prefix read as the region name abbreviated would be wrong in silence."""
+        from infra_cost_model.billing import known_lines
+
+        prefixes = known_lines()["aws"]["regionPrefixes"]
+
+        assert prefixes["eu-west-1"] == "EU"
+        assert prefixes["eu-west-3"] == "EUW3"
+        assert prefixes["ap-south-1"] == "APS3"
+        assert prefixes["ap-southeast-1"] == "APS1"
+
+    def test_no_two_regions_share_a_prefix(self):
+        """A shared prefix would leave the region of a usage type undecidable,
+        which is what `validate` compares against."""
+        from infra_cost_model.billing import known_lines
+
+        prefixes = list(known_lines()["aws"]["regionPrefixes"].values())
+
+        assert len(prefixes) == len(set(prefixes))
+
     def test_the_bill_name_is_not_the_catalog_service_code(self):
         """The catalog says `AmazonVPC`; the bill says
         `Amazon Virtual Private Cloud`. The list carries the bill's name."""

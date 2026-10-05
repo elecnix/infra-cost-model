@@ -21,21 +21,31 @@
 aws:
   billProvider: aws-cost-explorer
 
-  # A usage type carries the region it was billed in. A resource with no region,
-  # such as a CloudFront distribution, bills under `Global-`.
+  # A usage type carries the region it was billed in. The codes are the short
+  # ones AWS publishes for billing and usage reports, which are not the region
+  # name abbreviated: Europe (Ireland) is `EU` and Europe (Paris) is `EUW3`,
+  # and Asia Pacific (Mumbai) is `APS3` where Asia Pacific (Singapore) is
+  # `APS1`. US East (N. Virginia) is `USE1`, though some services omit the
+  # prefix there; a node states its usage type where that matters. A resource
+  # with no region, such as a CloudFront distribution, bills under `Global-`.
   regionPrefixes:
     us-east-1: USE1
     us-east-2: USE2
     us-west-1: USW1
     us-west-2: USW2
     ca-central-1: CAN1
-    eu-west-1: EUW1
+    af-south-1: AFS1
+    eu-west-1: EU
     eu-west-2: EUW2
-    eu-west-3: EU
+    eu-west-3: EUW3
     eu-central-1: EUC1
     eu-north-1: EUN1
     ap-northeast-1: APN1
     ap-northeast-2: APN2
+    ap-southeast-1: APS1
+    ap-southeast-2: APS2
+    ap-south-1: APS3
+    me-south-1: MES1
     sa-east-1: SAE1
     global: Global
 
