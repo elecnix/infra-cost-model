@@ -74,6 +74,13 @@ def lambda_model() -> str:
     })
 
 
+def labelled_model() -> str:
+    """A Lambda whose node carries a label a filter can select (#445)."""
+    data = yaml.safe_load(lambda_model())
+    data["nodes"]["fn"]["labels"] = {"category": "platform"}
+    return yaml.safe_dump(data)
+
+
 @pytest.fixture
 def home_cache(monkeypatch, tmp_path):
     """Point the default cache at a database this test controls."""
@@ -334,6 +341,31 @@ class TestPinnedSourceConflicts:
         assert main(["compute", model_path, "--pricing", "seed",
                      "--pricing-db", str(live_db)]) == 1
         assert "--pricing-db" in capsys.readouterr().err
+
+    def test_a_label_filter_narrows_a_pinned_source_without_changing_it(
+            self, tmp_path, home_cache, capsys):
+        # A pinned source and a label filter answer different questions (#446,
+        # #445): the one fixes where every price comes from, the other leaves
+        # a node out of the report. Both hold at once, so the filtered run
+        # still names its pinned source and still shows what it left out.
+        model_path = write(tmp_path, labelled_model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "seed",
+                     "--exclude-label", "category=platform"]) == 0
+        out = capsys.readouterr().out
+        assert "pricing: seed" in out
+        assert "Excluded by label category=platform" in out
+        assert total(out) == 0.0
+
+    def test_a_label_filter_does_not_excuse_a_live_miss(
+            self, tmp_path, home_cache, capsys):
+        # The pinned source covers the whole run, so filtering the node that
+        # misses out of the report must not turn a refusal into a total.
+        model_path = write(tmp_path, labelled_model())
+        assert main(["compute", model_path, "--monthly", "--pricing", "live",
+                     "--exclude-label", "category=platform"]) == 1
+        captured = capsys.readouterr()
+        assert "Lambda-Request" in captured.err
+        assert "Total Monthly Cost" not in captured.out
 
 
 class TestTheDefaultRunIsUnchanged:
