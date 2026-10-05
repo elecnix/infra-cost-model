@@ -177,6 +177,17 @@ class TestExpressionErrors:
             with pytest.raises(ValueError, match="number or a string"):
                 evaluate_metric_expression(value, {"customers": 25})
 
+    @pytest.mark.parametrize("text,parameters", [
+        ("1e999", {}),                     # a literal that overflows to inf
+        ("-1e999", {}),
+        ("1e999 - 1e999", {}),             # inf - inf is nan
+        ("huge", {"huge": float("inf")}),  # a parameter that is inf
+    ])
+    def test_a_quantity_that_is_not_finite_is_refused(self, text, parameters):
+        """An infinite or NaN quantity is not a bill."""
+        with pytest.raises(ValueError, match="finite"):
+            evaluate_metric_expression(text, parameters)
+
 
 class TestSchemaAcceptsAnExpression:
     """One schema, three interfaces (Principle 11)."""

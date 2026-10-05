@@ -16,6 +16,7 @@ node types below, rather than handing the text to an interpreter.
 """
 
 import ast
+import math
 import operator
 
 
@@ -121,4 +122,9 @@ def evaluate_metric_expression(text: str, parameters: dict) -> float:
             f"Cannot read '{text}' as a quantity: {exc.msg}"
         ) from None
 
-    return _evaluate(tree, parameters, text)
+    quantity = _evaluate(tree, parameters, text)
+    if not math.isfinite(quantity):
+        raise ValueError(
+            f"'{text}' is not a finite quantity: {quantity}"
+        )
+    return quantity
