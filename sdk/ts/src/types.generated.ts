@@ -119,9 +119,9 @@ export interface UsageMetric {
   unit: string;
   description?: string;
   /**
-   * Per-invocation multiplier. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead.
+   * Per-invocation multiplier, or arithmetic over the workflow's parameters. A string is read as a number, one parameter name, or arithmetic over parameter names and numbers with + - * / and parentheses, so 'customers * 40' states a per-customer quantity (DP#4, Issue #448). The pattern rejects a character the grammar never uses; it cannot reject a call or an exponent, which two admitted characters spell, so the engine refuses those and names the operator. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead.
    */
-  value?: number;
+  value?: number | string;
   /**
    * When true, this metric is a fixed (always-on) monthly total: its value is used directly and is NOT scaled by the derived invocation count. This lets one node carry both a fixed dimension (e.g. NAT gateway hours, ALB-hours) and a usage-driven dimension (e.g. GB processed, LCUs) without splitting into two nodes (Issue #196).
    */

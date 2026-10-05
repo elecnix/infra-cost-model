@@ -20,16 +20,19 @@ export class NodeUsage {
   metrics: Record<
     string,
     | number
-    | { value: number; unit?: string; fixed?: boolean; edgeType?: EdgeType }
+    | string
+    | { value: number | string; unit?: string; fixed?: boolean; edgeType?: EdgeType }
   > = {};
 
   /**
-   * Add a usage metric. Returns this for chaining. With `edgeType`, the
-   * metric counts only the calls that arrive over edges of that type (#313).
+   * Add a usage metric. Returns this for chaining. `value` is a number, one
+   * parameter name, or arithmetic over the workflow's parameters, such as
+   * `customers * 40` (#448). With `edgeType`, the metric counts only the
+   * calls that arrive over edges of that type (#313).
    */
   withMetric(
     name: string,
-    value: number,
+    value: number | string,
     unit?: string,
     edgeType?: EdgeType,
   ): this {
@@ -50,7 +53,7 @@ export class NodeUsage {
    * that is NOT scaled by the derived invocation count, letting one node carry
    * both a fixed and a usage-driven dimension (Issue #196).
    */
-  withFixedMetric(name: string, value: number, unit?: string): this {
+  withFixedMetric(name: string, value: number | string, unit?: string): this {
     this.metrics[name] = { value, unit, fixed: true };
     return this;
   }

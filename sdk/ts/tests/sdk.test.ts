@@ -111,6 +111,17 @@ describe("NodeUsage", () => {
       "Dynamo-WriteRequest": { value: 1, edgeType: "write" },
     });
   });
+
+  it("states a metric value as arithmetic over parameters (#448)", () => {
+    const usage = new NodeUsage()
+      .withMetric("MAU", "customers * 40", "users")
+      .withFixedMetric("SSO-Connection", "customers");
+
+    expect(usage.metrics).toEqual({
+      MAU: { value: "customers * 40", unit: "users" },
+      "SSO-Connection": { value: "customers", unit: undefined, fixed: true },
+    });
+  });
 });
 
 // ── Workflow Builder ─────────────────────────────────────────────────────────

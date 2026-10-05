@@ -13,6 +13,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
+from infra_cost_model.engine.expressions import evaluate_metric_expression
 from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
 from infra_cost_model.pricing.free_tiers import (
     ACCOUNT, FREE_ALLOWANCE_REGIONS, SharedFreeAllowance, free_tier_scope,
@@ -494,11 +495,13 @@ class WorkloadDeriver:
         return value / divisors[unit]
 
     def _resolve_value(self, value) -> float:
-        """Resolve a value that may be a parameter name or a numeric literal.
+        """Resolve an edge rate: a number or one parameter name.
 
-        Per DP#4, edge rates and usage metric values can reference symbolic
-        parameters by name. If the value is a string, it is looked up in the
-        parameters dict. If not found, it is treated as a float literal.
+        Per DP#4, edge rates can reference a symbolic parameter by
+        name. An edge rate stays a single name, so a what-if run
+        over it scales every child call by the same factor; the
+        arithmetic grammar of a usage metric's ``value`` (#448)
+        does not apply here.
 
         Args:
             value: A numeric value or a parameter name string.
@@ -1495,34 +1498,25 @@ class CostAggregator:
             resource_address, logical_metric, node.get("config"))
 
     def _resolve_param(self, value) -> float:
-        """Resolve a value that may be a parameter name or a numeric literal.
+        """Resolve a usage metric value: a number, or arithmetic over parameters.
 
-        Per DP#4, usage metric values can reference symbolic parameters by name.
-        If the value is a string, it is looked up in the parameters dict.
+        Per DP#4, a usage metric's ``value`` can reference symbolic parameters
+        by name. A string is read as arithmetic over them, so ``customers * 40``
+        states a per-customer quantity without a pre-processing step (#448).
 
         Args:
-            value: A numeric value or a parameter name string.
+            value: A numeric value, or a parameter name or expression string.
 
         Returns:
             Resolved float value.
 
         Raises:
-            ValueError: If the value is a string that is not in parameters
-                        and cannot be parsed as a float.
+            ValueError: If the string is not arithmetic over the parameters.
         """
         if isinstance(value, (int, float)):
             return float(value)
         if isinstance(value, str):
-            if value in self.parameters:
-                return self.parameters[value]
-            try:
-                return float(value)
-            except ValueError:
-                raise ValueError(
-                    f"Unrecognized parameter reference '{value}'. "
-                    f"Available parameters: "
-                    f"{', '.join(sorted(self.parameters.keys()))}"
-                ) from None
+            return evaluate_metric_expression(value, self.parameters)
         return float(value)
 
     def _compute_token_cost(self, address: str, node: dict, usage: DerivedUsage) -> float:

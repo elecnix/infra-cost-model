@@ -158,8 +158,9 @@
           "type": "string"
         },
         "value": {
-          "type": "number",
-          "description": "Per-invocation multiplier. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead."
+          "type": ["number", "string"],
+          "pattern": "^[A-Za-z0-9_.() +*/-]+$",
+          "description": "Per-invocation multiplier, or arithmetic over the workflow's parameters. A string is read as a number, one parameter name, or arithmetic over parameter names and numbers with + - * / and parentheses, so 'customers * 40' states a per-customer quantity (DP#4, Issue #448). The pattern rejects a character the grammar never uses; it cannot reject a call or an exponent, which two admitted characters spell, so the engine refuses those and names the operator. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead."
         },
         "fixed": {
           "type": "boolean",

@@ -57,6 +57,36 @@ infra-cost-model what-if model-a.yaml --compare model-b.yaml \
 infra-cost-model graph model.yaml
 ```
 
+## Metric values
+
+A usage metric's `value` is the quantity it bills: how many requests an invocation makes, how many monthly active users a tenant carries. It is a number, one parameter name, or arithmetic over the workflow's parameters with `+ - * /` and parentheses:
+
+```yaml
+version: "1.0"
+
+workflow:
+  name: saas-identity
+  entry: identity_provider
+  frequency: { unit: perMonth, value: 1 }
+  parameters:
+    customers: 25
+
+nodes:
+  identity_provider:
+    nodeType: external
+    resourceAddress: kinde.tenant
+    provider: kinde
+    service: Kinde
+    region: global
+    usageMetrics:
+      MAU:            { unit: users,       value: "customers * 40", fixed: true }
+      SSO-Connection: { unit: connections, value: customers,        fixed: true }
+```
+
+Here `MAU` is 1,000 monthly active users for 25 customers, and `SSO-Connection` is one SSO connection per customer. Because the expressions name `customers`, `what-if --param customers` and a sensitivity run over it move both metrics without a pre-processing step that multiplies values and strips a marker before the engine sees the model.
+
+An unknown parameter name, an operator outside `+ - * /`, and a division by zero each raise an error naming the expression. The expression is arithmetic, never code: a call or a conditional in a `value` is refused. Frequency and edge `rate` still take one number or one parameter name.
+
 ## Pinning the engine version
 
 A model may name the engine version it needs:

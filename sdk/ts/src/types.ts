@@ -90,7 +90,8 @@ export interface CallConfig {
 
 /** A usage metric value with optional unit. */
 export interface MetricValue {
-  value: number;
+  /** A number, one parameter name, or arithmetic over parameters (#448). */
+  value: number | string;
   unit?: string;
 }
 
