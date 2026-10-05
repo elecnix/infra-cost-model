@@ -142,6 +142,20 @@ class TestTheCatalogCanPinItsSource:
         PricingCatalog(db_path=live_db, sources="seed")
         assert rows_by_source(live_db).get("seed") is None
 
+    def test_an_empty_source_filter_matches_no_row(self, tmp_path):
+        # An empty filter names no source, so it must read no row. Falling
+        # through to every source would be the silent widening the filter
+        # exists to prevent (#446).
+        cache = PricingCache(db_path=tmp_path / "seeded.db")
+        cache.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        assert cache.query("aws", "AWSLambda", "us-east-1", "Lambda-Request",
+                           sources=frozenset()) is None
+
 
 class TestComputePricingSeed:
     """`--pricing seed` gives the same total whatever the local cache holds."""
@@ -192,11 +206,12 @@ class TestComputePricingLive:
         model_path = write(tmp_path, model(with_embedded_rates=True))
 
         assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 1
-        err = capsys.readouterr().err
-        assert "--pricing live" in err
-        assert "Lambda-Request" in err
-        assert "aws" in err and "AWSLambda" in err and "us-east-1" in err
-        assert "Total Monthly Cost" not in capsys.readouterr().out
+        captured = capsys.readouterr()
+        assert "--pricing live" in captured.err
+        assert "Lambda-Request" in captured.err
+        assert "aws" in captured.err and "AWSLambda" in captured.err
+        assert "us-east-1" in captured.err
+        assert "Total Monthly Cost" not in captured.out
 
     def test_it_fails_on_a_cold_cache(self, tmp_path, capsys):
         cold = PricingCache(db_path=tmp_path / "cold.db").db_path
@@ -246,15 +261,23 @@ class TestComputePricingDb:
         assert total(capsys.readouterr().out) == pytest.approx(
             MONTHLY_REQUESTS * LIVE_RATE)
 
-    def test_the_same_run_reads_the_home_cache_when_it_names_none(
-            self, tmp_path, home_cache, live_db, capsys, monkeypatch):
-        monkeypatch.setattr(cache_module, "DB_PATH", live_db)
+    def test_a_run_with_no_named_file_reads_the_home_cache(
+            self, tmp_path, capsys, monkeypatch):
+        # The home cache holds a rate the embedded rates don't, so a total
+        # that matches it can only have come from there.
+        home = PricingCache(db_path=tmp_path / "home" / "pricing.db")
+        home.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        monkeypatch.setattr(cache_module, "DB_PATH", home.db_path)
         model_path = write(tmp_path, model())
-        assert main(["compute", model_path, "--monthly",
-                     "--pricing-db", str(live_db)]) == 0
-        named = total(capsys.readouterr().out)
+
         assert main(["compute", model_path, "--monthly"]) == 0
-        assert total(capsys.readouterr().out) == named
+        assert total(capsys.readouterr().out) == pytest.approx(
+            MONTHLY_REQUESTS * LIVE_RATE)
 
     def test_a_missing_file_is_an_error(self, tmp_path, capsys):
         model_path = write(tmp_path, model())

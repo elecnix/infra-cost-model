@@ -6,7 +6,7 @@ import math
 import shutil
 import sqlite3
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
@@ -551,15 +551,15 @@ class PricingCache:
             WHERE vendor = ? AND service = ? AND region = ? AND usage_metric = ?
         """
         params: tuple = (vendor, service, region, usage_metric)
-        if sources:
-            sql += f" AND source IN ({', '.join('?' for _ in sources)})"
+        if sources is not None:
+            # An empty set names no source, and matches no row. Widening it to
+            # every source would price from rows the caller ruled out (#446).
+            sql += f" AND source IN ({', '.join('?' for _ in sources) or 'NULL'})"
             params += tuple(sorted(sources))
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute(sql + " ORDER BY start_usage_amount", params)
-
-        rows = cursor.fetchall()
-        conn.close()
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.execute(sql + " ORDER BY start_usage_amount", params)
+            rows = cursor.fetchall()
 
         if not rows:
             return None
