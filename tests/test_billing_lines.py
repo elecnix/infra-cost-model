@@ -374,13 +374,16 @@ class TestCommand:
             "service: AmazonVPC\n",
             "service: AmazonVPC\n"
             "    billingLines:\n"
-            "      natHours: { provider: aws-cost-explorer, service: AmazonVPC }\n",
+            "      natHours: { provider: aws-cost-explorer,"
+            " service: \"Amazon Virtual Private Clou\" }\n",
         ))
 
         exit_code = main(["validate", str(path)])
 
         assert exit_code == 1
-        assert "AmazonVPC" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "Amazon Virtual Private Clou" in out
+        assert "Known bill services" in out
 
     def test_the_model_in_the_issue_validates(self, tmp_path, capsys):
         path = tmp_path / "model.yaml"
