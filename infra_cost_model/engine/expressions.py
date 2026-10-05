@@ -30,6 +30,14 @@ _BINARY_OPERATORS = {
 
 _UNARY_OPERATORS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 
+# A flat sum of N terms nests N deep in the tree, and the walk below recurses
+# with it, so the text's length bounds how deep the walk goes. Real quantities
+# are a handful of terms: `customers * 40`, `(seats + extra) / 2`. A 500-
+# character floor is far beyond any of those and still leaves the walk well
+# clear of the interpreter's recursion limit, so a pathological expression is
+# refused by name instead of exhausting the stack mid-walk.
+_MAXIMUM_LENGTH = 500
+
 
 def _evaluate(node: ast.AST, parameters: dict, text: str) -> float:
     """Value of one parsed node, or a refusal that names what is wrong."""
@@ -48,7 +56,13 @@ def _evaluate(node: ast.AST, parameters: dict, text: str) -> float:
                 f"Unrecognized parameter reference '{node.id}' in '{text}'. "
                 f"Available parameters: {available}"
             )
-        return float(parameters[node.id])
+        try:
+            return float(parameters[node.id])
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Parameter '{node.id}' in '{text}' is not a number: "
+                f"{parameters[node.id]!r}"
+            ) from None
 
     if isinstance(node, ast.BinOp):
         operation = _BINARY_OPERATORS.get(type(node.op))
@@ -87,6 +101,12 @@ def evaluate_metric_expression(text: str, parameters: dict) -> float:
         ValueError: The text is not arithmetic over declared parameters. The
             message names the parameter or the operator at fault.
     """
+    if len(text) > _MAXIMUM_LENGTH:
+        raise ValueError(
+            f"'{text[:60]}…' is too long or too deeply nested to read as a "
+            f"quantity: {len(text)} characters"
+        )
+
     try:
         tree = ast.parse(text.strip(), mode="eval")
     except SyntaxError as exc:

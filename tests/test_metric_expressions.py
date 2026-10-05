@@ -140,13 +140,27 @@ class TestExpressionsAreNotCode:
 class TestExpressionErrors:
     """Every refusal says which name or which expression is at fault."""
 
-    def test_an_unknown_parameter_names_itself(self):
-        with pytest.raises(ValueError, match="tenants"):
+    def test_an_unknown_parameter_names_itself_and_lists_the_known_ones(self):
+        with pytest.raises(ValueError) as caught:
             evaluate_metric_expression("tenants * 40", {"customers": 25})
+        assert str(caught.value) == (
+            "Unrecognized parameter reference 'tenants' in 'tenants * 40'. "
+            "Available parameters: customers"
+        )
 
-    def test_an_unknown_parameter_lists_the_known_ones(self):
+    def test_an_unknown_parameter_in_a_parameterless_model(self):
+        with pytest.raises(ValueError, match="Available parameters: none declared"):
+            evaluate_metric_expression("tenants * 40", {})
+
+    def test_a_parameter_that_is_not_a_number_names_itself(self):
+        """The schema states a parameter is a number; a model can still say otherwise."""
         with pytest.raises(ValueError, match="customers"):
-            evaluate_metric_expression("tenants * 40", {"customers": 25})
+            evaluate_metric_expression("customers * 40", {"customers": "many"})
+
+    def test_a_long_operator_chain_is_refused_rather_than_exhausting_the_stack(self):
+        """A 5,000-term sum parses, so the walk itself has to stay bounded."""
+        with pytest.raises(ValueError, match="nested"):
+            evaluate_metric_expression(" + ".join(["1"] * 5000), {})
 
     def test_division_by_zero_is_refused(self):
         with pytest.raises(ValueError, match="zero"):
