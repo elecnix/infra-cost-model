@@ -25,6 +25,12 @@ from infra_cost_model.engine import (
 from infra_cost_model.engine.snapshot import build_snapshot, render_snapshot
 from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.pricing.vendors import VendorPackageError
+from infra_cost_model.reconcile import (
+    ReconcileError,
+    load_actuals,
+    load_config,
+    reconcile,
+)
 from infra_cost_model.version_requirement import check_engine_requirement
 
 
@@ -201,6 +207,24 @@ def _build_parser() -> argparse.ArgumentParser:
                             help="Output in JSON format (matched, uncosted, orphaned, stalePatterns)")
     p_coverage.set_defaults(func=cmd_coverage)
 
+    # reconcile (compare a model with an actuals file exported from a bill)
+    p_reconcile = sub.add_parser(
+        "reconcile",
+        help="Compare a cost model with an actuals file from `aws ce get-cost-and-usage`")
+    p_reconcile.add_argument("yaml_file", metavar="<yaml-file>",
+                             help="Path to cost model YAML file")
+    p_reconcile.add_argument("--actuals", metavar="<actuals-json>", required=True,
+                             help="Path to a Cost Explorer `get-cost-and-usage` payload")
+    p_reconcile.add_argument("--window-days", type=int, default=30, metavar="<days>",
+                             help="Trailing days of the actuals file to compare (default: 30)")
+    p_reconcile.add_argument("--config", metavar="<reconcile-yaml>",
+                             help="Thresholds and accepted gaps "
+                                  "(default: reconcile.yaml beside the model, if present)")
+    p_reconcile.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_reconcile.add_argument("--fail-on-drift", action="store_true",
+                             help="Exit with code 1 if any group fails or is unreadable")
+    p_reconcile.set_defaults(func=cmd_reconcile)
+
     # import-infracost (blanket long-tail pricing from an Infracost breakdown)
     p_import = sub.add_parser(
         "import-infracost",
@@ -294,6 +318,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         # as a traceback (#289).
         _print_stderr(f"Error: {e}")
         return 1
+    except ReconcileError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
     except SystemExit as e:
         # Normalize argparse exit code 2 to 1 for test compatibility
         code = e.code if isinstance(e.code, int) else 1
@@ -301,6 +328,94 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 # --- Command implementations ---
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Compare a model's monthly cost with an actuals file (#444).
+
+    The actuals come from a file the user already exported, so the command
+    never calls a cloud API. Nodes and bill lines are grouped into connected
+    components and each group is compared once, so a line four nodes share is
+    counted once rather than four times.
+    """
+    yaml_path = Path(args.yaml_file)
+    if not yaml_path.exists():
+        _print_stderr(f"File not found: {yaml_path}")
+        return 1
+
+    from infra_cost_model.sdk import parse_yaml_dsl
+    try:
+        model = parse_yaml_dsl(yaml_path.read_text())
+    except ValueError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
+
+    config_path = args.config
+    if config_path is None:
+        beside = yaml_path.parent / "reconcile.yaml"
+        config_path = str(beside) if beside.exists() else None
+
+    actuals = load_actuals(args.actuals)
+    config = load_config(config_path)
+
+    engine = CostEngine(model, catalog=PricingCatalog(), time_basis="monthly")
+    try:
+        costs = engine.compute()
+    except ValueError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
+
+    report = reconcile(model, costs, actuals, config=config,
+                       window_days=args.window_days)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        _print_reconciliation(report)
+
+    if args.fail_on_drift and report.status in ("fail", "unreadable"):
+        return 1
+    return 0
+
+
+def _print_reconciliation(report) -> None:
+    """The reconciliation as a table, one row per group of nodes and lines."""
+    window = f"{report.window_start} to {report.window_end}" \
+        if report.window_start else "no days reported"
+    print(f"Reconciliation over {window} "
+          f"({report.window_days} days, warn {report.warn_pct:g}%, "
+          f"fail {report.fail_pct:g}%)")
+    if report.error:
+        print(f"  Actuals unreadable: {report.error}")
+    elif report.truncated:
+        print("  Actuals truncated: the export carries more pages than were read")
+    print("-" * 78)
+    print(f"{'Status':<7} {'Modelled':>12} {'Projected':>12} {'Drift':>12} "
+          f"{'Drift%':>9}  Bill lines")
+    for group in report.groups:
+        pct = "n/a" if group.drift_pct is None else f"{group.drift_pct:.1f}%"
+        labels = ", ".join(key.label() for key in group.lines) or "-"
+        print(f"{group.status:<7} ${group.modelled:>11.4f} ${group.projected:>11.4f} "
+              f"${group.drift_usd:>11.4f} {pct:>9}  {labels}")
+        if group.nodes:
+            print(f"{'':<7} nodes: {', '.join(group.nodes)}")
+    if report.unmodelled:
+        print("-" * 78)
+        print("Unmodelled bill lines (accepted gaps):")
+        for entry in report.unmodelled:
+            label = entry.service if entry.usage_type is None \
+                else f"{entry.service}/{entry.usage_type}"
+            print(f"  {label}: ${entry.projected:.4f} a month — {entry.reason}")
+    if report.unplaced:
+        print("-" * 78)
+        print("Nodes with no bill line, so not compared:")
+        for address in report.unplaced:
+            print(f"  {address}")
+    totals = report.totals
+    print("-" * 78)
+    pct = "n/a" if totals["driftPct"] is None else f"{totals['driftPct']:.1f}%"
+    print(f"{report.status.upper():<7} ${totals['modelled']:>11.4f} "
+          f"${totals['projected']:>11.4f} ${totals['driftUsd']:>11.4f} {pct:>9}")
+
 
 def cmd_validate(args: argparse.Namespace) -> int:
     """Validate a cost model file."""
