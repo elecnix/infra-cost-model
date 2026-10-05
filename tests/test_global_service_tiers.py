@@ -171,7 +171,8 @@ def test_pool_is_skipped_when_no_region_prices_the_total(tmp_path):
     pools = {
         ("aws", ZONES[0], region, ZONES[1], ()): [_CatalogCharge(
             node=region, pool=("aws", ZONES[0], region, ZONES[1], ()),
-            quantity=20, cost=10.0, fixed=True, parameters={})]
+            quantity=20, cost=10.0, fixed=True, parameters={},
+            metric=ZONES[1])]
         for region in ("us-east-1", "eu-west-1")
     }
     assert _price_global_pools(catalog, pools) == {}

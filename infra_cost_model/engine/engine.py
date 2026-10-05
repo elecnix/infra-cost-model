@@ -526,11 +526,29 @@ class WorkloadDeriver:
 
 
 @dataclass
+class _MetricCost:
+    """What one usage metric cost one node (#443).
+
+    ``quantity`` and ``cost`` share one unit: a usage-driven metric holds a
+    quantity and a cost per second, a fixed one a monthly quantity and a
+    monthly cost, the same split the node's cost uses. ``price_source`` names
+    where the price came from, so a cost snapshot says why two machines that
+    priced the same model disagree.
+    """
+    quantity: float
+    cost: float
+    fixed: bool
+    price_source: str
+
+
+@dataclass
 class _CatalogCharge:
     """One catalog quantity that a node pays for.
 
     ``quantity`` and ``cost`` cover a month. ``cost`` is what the node's
-    cost holds for this charge right now.
+    cost holds for this charge right now. ``metric`` names the usage metric
+    of the node that pays for it: the node's own metric name when a handler
+    prices the charge from a catalog row named differently.
     """
     node: str
     pool: tuple
@@ -538,12 +556,64 @@ class _CatalogCharge:
     cost: float
     fixed: bool
     parameters: dict
+    metric: str
 
 
 @dataclass(frozen=True)
 class _MappedCost:
     """The cost of a logical metric that bills several catalog metrics."""
     total_cost: float
+    sources: tuple = ()
+
+
+def _price_source(result) -> str:
+    """Where a priced metric's price came from.
+
+    One name for the rows of a metric, such as ``infracost`` for a live sync,
+    ``seed`` for the bundled fixture, ``vendor`` for a price row from a SaaS
+    vendor directory, or ``azure-retail``. A metric whose rows come from more
+    than one source names them all, joined by ``+``.
+    """
+    sources = getattr(result, "sources", None)
+    if sources is None:
+        sources = [tier.source for tier in result.tiers]
+    return "+".join(sorted({s for s in sources if s})) or "unknown"
+
+
+def _add_cost_delta(metric_delta: list, delta: float, fixed: bool) -> None:
+    """Book one change in a priced cost to the usage metric behind it.
+
+    A fixed metric's delta is a monthly amount, and a usage-driven one is a
+    cost per second, the same units the node's two cost components use.
+    """
+    metric_delta[1 if fixed else 0] += delta
+
+
+def _metric_cost_record(costs: dict, address: str, metric: str) -> _MetricCost:
+    """The record of one metric of one node, created empty if it has none."""
+    return costs.setdefault(address, {}).setdefault(
+        metric, _MetricCost(quantity=0.0, cost=0.0, fixed=False,
+                            price_source="unknown"))
+
+
+def _merge_metric_costs(into: dict, costs: dict) -> None:
+    """Merge one workflow's metric costs into the model's own.
+
+    Usage-driven metrics add up across workflows, and a fixed metric counts
+    once, matching how the node costs combine (#196).
+    """
+    for address, metrics in costs.items():
+        for metric, record in metrics.items():
+            merged = _metric_cost_record(into, address, metric)
+            if record.fixed:
+                merged.quantity = record.quantity
+                merged.cost = record.cost
+                merged.fixed = True
+                merged.price_source = record.price_source
+            else:
+                merged.quantity += record.quantity
+                merged.cost += record.cost
+                merged.price_source = record.price_source
 
 
 def _pool_key(node: dict, metric: str, result) -> tuple:
@@ -563,19 +633,22 @@ def _pool_key(node: dict, metric: str, result) -> tuple:
 
 
 def _price_pooled_charges(catalog: PricingCatalog,
-                          charges: list[_CatalogCharge]) -> dict[str, list[float]]:
+                          charges: list[_CatalogCharge]
+                          ) -> tuple[dict[str, list[float]],
+                                     dict[str, dict[str, list[float]]]]:
     """Price each pool's monthly total once and split it by quantity (#294).
 
     Each charge gets ``pool cost * charge quantity / pool quantity``, so the
-    node costs still add up to the pool cost. Returns, per node, the change
-    to its usage-driven cost (per second) and to its fixed cost (per
-    month), and updates ``cost`` on each charge. A pool with one charge
-    keeps its cost, unless it shares an account-wide free allowance with a
-    pool in another region (#336), or its metric shares a free allowance
-    with other metrics (#338), or its metric belongs to a global service
-    used in another region (#378), or its region shares a meter or SKU with
-    another pool's region (#389), or its free allowance covers a few regions
-    together and another of them has a pool (#402).
+    node costs still add up to the pool cost. Returns the change to each
+    node's usage-driven cost (per second) and fixed cost (per month), the
+    same change per usage metric behind those charges, and updates ``cost``
+    on each charge. A pool with one charge keeps its cost, unless it shares
+    an account-wide free allowance with a pool in another region (#336), or
+    its metric shares a free allowance with other metrics (#338), or its
+    metric belongs to a global service used in another region (#378), or its
+    region shares a meter or SKU with another pool's region (#389), or its
+    free allowance covers a few regions together and another of them has a
+    pool (#402).
     """
     pools: dict[tuple, list[_CatalogCharge]] = defaultdict(list)
     for charge in charges:
@@ -588,6 +661,8 @@ def _price_pooled_charges(catalog: PricingCatalog,
     pool_costs.update(_price_free_region_pools(catalog, pools))
 
     deltas: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+    metric_deltas: dict[str, dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(lambda: [0.0, 0.0]))
     for key, members in pools.items():
         (provider, service, region, metric, _) = key
         total_quantity = sum(c.quantity for c in members)
@@ -604,11 +679,14 @@ def _price_pooled_charges(catalog: PricingCatalog,
             share = pool_cost * charge.quantity / total_quantity
             delta = share - charge.cost
             charge.cost = share
-            if charge.fixed:
-                deltas[charge.node][1] += delta
-            else:
-                deltas[charge.node][0] += delta / SECONDS_PER_MONTH
-    return deltas
+            # A usage-driven charge holds a cost per second, so its share of
+            # a monthly pool price scales down the same way.
+            per_second = delta if charge.fixed else delta / SECONDS_PER_MONTH
+            node_delta = deltas[charge.node]
+            node_delta[1 if charge.fixed else 0] += per_second
+            _add_cost_delta(metric_deltas[charge.node][charge.metric],
+                            per_second, charge.fixed)
+    return deltas, metric_deltas
 
 
 def _price_account_wide_pools(catalog: PricingCatalog,
@@ -894,15 +972,15 @@ class _ShapeCharge:
     cost: float
 
 
-def _price_pooled_shapes(charges: list[_ShapeCharge]) -> dict[str, float]:
+def _price_pooled_shapes(charges: list[_ShapeCharge]) -> dict[str, dict[str, float]]:
     """Price each node's shaped metric once on a month of use (#305).
 
     A shape's parameters, such as a free allowance or a subscription rate,
     describe a month of the node's whole use. When several workflows reach
     a node, each one adds a charge for the same metric. This sums their
-    monthly quantities, calls the handler once, and returns, per node, the
-    change to its usage-driven cost (per second). A metric with one charge
-    keeps its cost.
+    monthly quantities, calls the handler once, and returns, per node and
+    usage metric, the change to its usage-driven cost (per second). A metric
+    with one charge keeps its cost.
     """
     from infra_cost_model.saas import SaaSPricingRegistry
 
@@ -910,14 +988,14 @@ def _price_pooled_shapes(charges: list[_ShapeCharge]) -> dict[str, float]:
     for charge in charges:
         pools[(charge.node, charge.metric)].append(charge)
 
-    deltas: dict[str, float] = defaultdict(float)
-    for (node, _), members in pools.items():
+    deltas: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for (node, metric), members in pools.items():
         if len(members) < 2:
             continue
         params = members[0].params
         quantity = sum(c.quantity for c in members)
         cost = SaaSPricingRegistry.compute(params["shape"], quantity, params)
-        deltas[node] += (cost - sum(c.cost for c in members)) / SECONDS_PER_MONTH
+        deltas[node][metric] += (cost - sum(c.cost for c in members)) / SECONDS_PER_MONTH
     return deltas
 
 
@@ -933,6 +1011,10 @@ class CostAggregator:
         self.catalog = catalog
         self.parameters = parameters or {}
         self.costs: dict[str, float] = {}
+        # What each usage metric of each node cost (#443). A node's cost is
+        # the sum of its metric costs, so a cost snapshot of the engine's own
+        # arithmetic adds up to the node's total.
+        self.metric_costs: dict[str, dict[str, _MetricCost]] = {}
         # Per-node fixed (frequency-independent) cost, expressed as a flat
         # monthly total. Tracked separately so the time-basis conversion scales
         # only the usage-driven portion of each node (Issue #196).
@@ -947,6 +1029,21 @@ class CostAggregator:
         # with several workflows can price each shape once (#305).
         self.shape_charges: list[_ShapeCharge] = []
         self._pricing_address: Optional[str] = None
+
+    def _metric_record(self, address: str, metric: str) -> _MetricCost:
+        """The record of one usage metric of one node, created empty if new."""
+        return self.metric_costs.setdefault(address, {}).setdefault(
+            metric, _MetricCost(quantity=0.0, cost=0.0, fixed=False,
+                                price_source="unknown"))
+
+    def _record_metric(self, address: str, metric: str, quantity: float,
+                       cost: float, fixed: bool, price_source: str) -> None:
+        """Book what one usage metric cost one node (#443)."""
+        record = self._metric_record(address, metric)
+        record.quantity += quantity
+        record.cost += cost
+        record.fixed = fixed
+        record.price_source = price_source
 
     def _record_unpriced(self, address: str, node: dict, metric: str,
                          quantity: float, fixed: bool) -> None:
@@ -978,10 +1075,18 @@ class CostAggregator:
         self._pricing_address = None
 
         if self.catalog is not None:
-            deltas = _price_pooled_charges(self.catalog, self.catalog_charges)
+            deltas, metric_deltas = _price_pooled_charges(
+                self.catalog, self.catalog_charges)
             for addr, (variable_delta, fixed_delta) in deltas.items():
                 self.costs[addr] += variable_delta + fixed_delta
                 self.fixed_costs[addr] += fixed_delta
+            for addr, metrics in metric_deltas.items():
+                for metric, (variable_delta, fixed_delta) in metrics.items():
+                    # A pooled price is charged to the metric whose quantity
+                    # incurred it, so the node's metric costs still add up to
+                    # its cost.
+                    self._metric_record(addr, metric).cost += (
+                        variable_delta + fixed_delta)
 
         return self.costs
 
@@ -1075,46 +1180,63 @@ class CostAggregator:
                 else usage.invocations_for(metric_def) * per_invocation
             )
 
-            # SaaS pricing shapes (#241): if the metric declares a ``shape``,
-            # dispatch to the SaaS pricing-handler registry before the catalog
-            # / embedded-rates path. A shaped metric is priced by its shape
-            # handler (transactional, or a shape registered in code) using the
-            # metric's inline parameters. Other SaaS prices are vendor price
-            # rows in the catalog (#246). An unknown shape raises ValueError
-            # from the registry rather than falling through to the catalog, so
-            # a misspelled shape cannot price at $0.
-            metric_cost = self._price_shape(metric_name, metric_def,
-                                            total_quantity, metric_fixed)
-
-            # Query catalog first (preferred path per Principle 13), else fall
-            # back to embedded pricingRates (deprecated per Principle 13).
-            if metric_cost is None and self.catalog is not None:
-                result = self._query_catalog(node, metric_name,
-                                             total_quantity, metric_fixed)
-                if result is None:
-                    # The node used a logical metric name (e.g. "natHours"); map it
-                    # to the catalog usage_metric ("NAT-Gateway-Hour") via the
-                    # owning handler and retry, so catalog pricing (live/seed) is
-                    # reached instead of falling back to embedded pricingRates.
-                    mapped = self._resolve_catalog_metric(address, node, metric_name)
-                    if mapped is not None:
-                        result = self._query_mapped(node, mapped,
-                                                    total_quantity, metric_fixed)
-                if result is not None:
-                    metric_cost = result.total_cost
-            if metric_cost is None and metric_name in pricing_rates:
-                metric_cost = total_quantity * pricing_rates[metric_name]
+            metric_cost, price_source = self._price_metric(
+                address, node, metric_name, metric_def, total_quantity,
+                metric_fixed, pricing_rates)
 
             if metric_cost is None:
                 self._record_unpriced(address, node, metric_name,
                                       total_quantity, metric_fixed)
                 continue
+            self._record_metric(address, metric_name, total_quantity,
+                                metric_cost, metric_fixed, price_source)
             if metric_fixed:
                 fixed_cost += metric_cost
             else:
                 variable_cost += metric_cost
 
         return (variable_cost, fixed_cost)
+
+    def _price_metric(self, address: str, node: dict, metric_name: str,
+                      metric_def, quantity: float, fixed: bool,
+                      pricing_rates: dict) -> tuple[Optional[float], str]:
+        """Price one usage metric of a flat or tiered node.
+
+        The metric prices from its SaaS ``shape`` (#241), then from the
+        catalog, then from the node's embedded ``pricingRates`` (Principle
+        13). A SaaS-shaped metric is priced by its shape handler
+        (transactional, or a shape registered in code) using the metric's
+        inline parameters, and an unknown shape raises from the registry
+        rather than falling through to the catalog, so a misspelled shape
+        cannot price at $0. Other SaaS prices are vendor price rows in the
+        catalog (#246).
+
+        Returns the cost, which covers the same period as ``quantity``, and
+        the name of the source that priced it. ``(None, "")`` when nothing
+        could.
+        """
+        metric_cost = self._price_shape(metric_name, metric_def,
+                                        quantity, fixed)
+        if metric_cost is not None:
+            return metric_cost, "shape"
+
+        if self.catalog is not None:
+            result = self._query_catalog(node, metric_name, quantity, fixed)
+            if result is None:
+                # The node used a logical metric name (e.g. "natHours"); map it
+                # to the catalog usage_metric ("NAT-Gateway-Hour") via the
+                # owning handler and retry, so catalog pricing (live/seed) is
+                # reached instead of falling back to embedded pricingRates.
+                mapped = self._resolve_catalog_metric(address, node, metric_name)
+                if mapped is not None:
+                    result = self._query_mapped(node, mapped, quantity, fixed,
+                                                logical=metric_name)
+            if result is not None:
+                return result.total_cost, _price_source(result)
+
+        if metric_name in pricing_rates:
+            return quantity * pricing_rates[metric_name], "pricingRates"
+        return None, ""
 
     def _compute_tiered_cost(self, address: str, node: dict,
                              usage: DerivedUsage) -> tuple[float, float]:
@@ -1160,33 +1282,16 @@ class CostAggregator:
                 else usage.invocations_for(metric_def) * per_invocation
             )
 
-            # SaaS pricing shapes (#241): dispatch to the shape registry before
-            # the catalog path, same as _compute_flat_cost.
-            metric_cost = self._price_shape(metric_name, metric_def,
-                                            total_quantity, metric_fixed)
-
-            if metric_cost is None and self.catalog is not None:
-                result = self._query_catalog(node, metric_name,
-                                             total_quantity, metric_fixed)
-                if result is None:
-                    # The node used a logical metric name (e.g. "natHours"); map it
-                    # to the catalog usage_metric ("NAT-Gateway-Hour") via the
-                    # owning handler and retry, so catalog pricing (live/seed) is
-                    # reached instead of falling back to embedded pricingRates.
-                    mapped = self._resolve_catalog_metric(address, node, metric_name)
-                    if mapped is not None:
-                        result = self._query_mapped(node, mapped,
-                                                    total_quantity, metric_fixed)
-                if result is not None:
-                    metric_cost = result.total_cost
-            # Fallback: flat pricingRates
-            if metric_cost is None and metric_name in pricing_rates:
-                metric_cost = total_quantity * pricing_rates[metric_name]
+            metric_cost, price_source = self._price_metric(
+                address, node, metric_name, metric_def, total_quantity,
+                metric_fixed, pricing_rates)
 
             if metric_cost is None:
                 self._record_unpriced(address, node, metric_name,
                                       total_quantity, metric_fixed)
                 continue
+            self._record_metric(address, metric_name, total_quantity,
+                                metric_cost, metric_fixed, price_source)
             if metric_fixed:
                 fixed_cost += metric_cost
             else:
@@ -1239,12 +1344,19 @@ class CostAggregator:
         cost = 0.0
         charges_before = len(self.catalog_charges)
         for catalog_metric, per_invocation in derived.quantities.items():
-            result = self._query_catalog(node, catalog_metric,
-                                         invocations * per_invocation, fixed=False)
+            quantity = invocations * per_invocation
+            result = self._query_catalog(node, catalog_metric, quantity,
+                                         fixed=False)
             if result is None:
                 del self.catalog_charges[charges_before:]
                 return 0.0, frozenset()
             cost += result.total_cost
+            # A handler turned the node's own metrics into a catalog quantity
+            # (a Lambda's duration and memory into GB-seconds), so the
+            # snapshot names the quantity the engine priced (#443). The
+            # model's metrics feed it, and the resource notes say how.
+            self._record_metric(address, catalog_metric, quantity,
+                                result.total_cost, False, _price_source(result))
         return cost, derived.consumed
 
     def _price_shape(self, metric: str, metric_def, quantity: float,
@@ -1278,7 +1390,7 @@ class CostAggregator:
         return monthly_cost / period
 
     def _query_catalog(self, node: dict, metric: str, quantity: float,
-                       fixed: bool):
+                       fixed: bool, logical: Optional[str] = None):
         """Query the catalog for the cost of ``quantity`` of ``metric``.
 
         A usage-driven quantity is a rate per second, and a fixed quantity is
@@ -1288,7 +1400,11 @@ class CostAggregator:
         period as the quantity: per second, or per month for a fixed metric.
 
         Each priced quantity is also kept as a charge, so that ``aggregate``
-        can apply the tiers to the account's total (#294).
+        can apply the tiers to the account's total (#294). ``logical`` names
+        the node's own usage metric when the catalog row is named
+        differently, such as a handler's mapping; the charge carries it, so
+        a pooled price is charged to the metric whose quantity incurred it
+        (#443).
 
         When the node's handler bills ``metric`` under another service, such
         as S3 egress under ``AWSDataTransfer``, the query and the pool use
@@ -1319,10 +1435,12 @@ class CostAggregator:
                 cost=result.total_cost * months,
                 fixed=fixed,
                 parameters=self.parameters,
+                metric=logical or metric,
             ))
         return result
 
-    def _query_mapped(self, node: dict, mapped, quantity: float, fixed: bool):
+    def _query_mapped(self, node: dict, mapped, quantity: float, fixed: bool,
+                      logical: Optional[str] = None):
         """Query the catalog for a logical metric that the handler maps.
 
         ``mapped`` is a catalog metric, or a dict of catalog metrics and the
@@ -1331,16 +1449,20 @@ class CostAggregator:
         (#383). Returns ``None`` when a catalog metric has no rows.
         """
         if not isinstance(mapped, dict):
-            return self._query_catalog(node, mapped, quantity, fixed)
+            return self._query_catalog(node, mapped, quantity, fixed,
+                                       logical=logical)
         charges_before = len(self.catalog_charges)
+        sources: list[str] = []
         total = 0.0
         for metric, units in mapped.items():
-            result = self._query_catalog(node, metric, quantity * units, fixed)
+            result = self._query_catalog(node, metric, quantity * units, fixed,
+                                         logical=logical)
             if result is None:
                 del self.catalog_charges[charges_before:]
                 return None
+            sources.append(_price_source(result))
             total += result.total_cost
-        return _MappedCost(total)
+        return _MappedCost(total, tuple(sources))
 
     def _node_for_metric(self, node: dict, metric: str) -> dict:
         """The node as the catalog sees it when it prices ``metric``: with
@@ -1475,8 +1597,8 @@ class CostAggregator:
         for token_name, total_tokens in token_classes:
             if total_tokens <= 0:
                 continue
+            fixed = node.get("flatOverride", False)
             if self.catalog is not None:
-                fixed = node.get("flatOverride", False)
                 result = self._query_catalog(node, token_name, total_tokens, fixed)
                 if result is None:
                     # The catalog names token rows by provider, such as
@@ -1484,15 +1606,22 @@ class CostAggregator:
                     # logical token name to that row (#312).
                     mapped = self._resolve_catalog_metric(address, node, token_name)
                     if mapped is not None:
-                        result = self._query_catalog(node, mapped, total_tokens, fixed)
+                        result = self._query_catalog(node, mapped, total_tokens,
+                                                     fixed, logical=token_name)
                 if result is not None:
                     total_cost += result.total_cost
+                    self._record_metric(address, token_name, total_tokens,
+                                        result.total_cost, fixed,
+                                        _price_source(result))
                     continue
             if token_name in pricing_rates:
-                total_cost += total_tokens * pricing_rates[token_name]
+                cost = total_tokens * pricing_rates[token_name]
+                total_cost += cost
+                self._record_metric(address, token_name, total_tokens,
+                                    cost, fixed, "pricingRates")
             else:
                 self._record_unpriced(address, node, token_name, total_tokens,
-                                      node.get("flatOverride", False))
+                                      fixed)
 
         return total_cost
 
@@ -1521,15 +1650,20 @@ class CostAggregator:
         # Value of one transaction, from usageMetrics
         volume = 0.0
         usage_metrics = node.get("usageMetrics", {})
+        volume_metric = "transactionVolume"
         for metric_name, metric_def in usage_metrics.items():
             if "volume" in metric_name.lower() or "transaction" in metric_name.lower():
                 if isinstance(metric_def, dict):
                     volume = self._resolve_param(metric_def.get("value", 0))
                 else:
                     volume = self._resolve_param(metric_def)
+                volume_metric = metric_name
                 break
 
-        return invocations * (volume * percentage_rate + fixed_per_tx)
+        cost = invocations * (volume * percentage_rate + fixed_per_tx)
+        self._record_metric(address, volume_metric, invocations, cost,
+                            node.get("flatOverride", False), "pricingRates")
+        return cost
 
 
 # SECONDS_PER_MONTH, the canonical time conversion, is imported from the
@@ -1553,6 +1687,11 @@ class CostEngine:
         self.validator = DAGValidator(self.nodes, self.edges)
         self.derived_usage: dict[str, DerivedUsage] = {}
         self.costs: dict[str, float] = {}
+        # What each usage metric of each node cost, in the output time basis
+        # (#443). A node's cost is the sum of its metric costs, so a cost
+        # snapshot of the engine's own arithmetic adds up to its total.
+        # Filled by ``compute``.
+        self.metric_costs: dict[str, dict[str, _MetricCost]] = {}
         # Metrics left out of ``costs`` because nothing could price them.
         # Filled by ``compute``; each one also emits an UnpricedMetricWarning.
         self.unpriced_metrics: list[UnpricedMetric] = []
@@ -1628,6 +1767,7 @@ class CostEngine:
         # Convert per-second usage-driven costs and monthly fixed costs to
         # the output time basis.
         self.costs = self._finalize_costs(aggregator.costs, aggregator.fixed_costs)
+        self.metric_costs = self._finalize_metric_costs(aggregator.metric_costs)
         self._report_unpriced(aggregator.unpriced)
         self._report_edge_types()
 
@@ -1650,6 +1790,9 @@ class CostEngine:
         all_fixed: dict[str, float] = {}
         all_derived: dict[str, DerivedUsage] = {}
         all_unpriced: list[_Miss] = []
+        # Metric costs from every workflow, merged the same way as the node
+        # costs: usage-driven metrics add up, fixed ones count once (#443).
+        all_metrics: dict[str, dict[str, _MetricCost]] = {}
         # Catalog charges from every workflow, so tiers apply to the account's
         # total once (#294). Like the fixed cost, a node's fixed charges come
         # from the last workflow that reaches it.
@@ -1670,6 +1813,7 @@ class CostEngine:
             aggregator.aggregate()
             all_unpriced.extend(aggregator.unpriced)
             shape_charges.extend(aggregator.shape_charges)
+            _merge_metric_costs(all_metrics, aggregator.metric_costs)
 
             wf_fixed_charges: dict[str, list[_CatalogCharge]] = defaultdict(list)
             for charge in aggregator.catalog_charges:
@@ -1703,13 +1847,20 @@ class CostEngine:
             charges = variable_charges + [
                 c for node_charges in fixed_charges.values() for c in node_charges
             ]
-            deltas = _price_pooled_charges(self.catalog, charges)
+            deltas, metric_deltas = _price_pooled_charges(self.catalog, charges)
             for addr, (variable_delta, fixed_delta) in deltas.items():
                 all_variable[addr] += variable_delta
                 all_fixed[addr] = all_fixed.get(addr, 0.0) + fixed_delta
+            for addr, metrics in metric_deltas.items():
+                for metric, (variable_delta, fixed_delta) in metrics.items():
+                    record = _metric_cost_record(all_metrics, addr, metric)
+                    record.cost += variable_delta + fixed_delta
 
-        for addr, variable_delta in _price_pooled_shapes(shape_charges).items():
-            all_variable[addr] += variable_delta
+        for addr, metric_deltas in _price_pooled_shapes(shape_charges).items():
+            for metric, variable_delta in metric_deltas.items():
+                all_variable[addr] += variable_delta
+                record = _metric_cost_record(all_metrics, addr, metric)
+                record.cost += variable_delta
 
         # Convert both parts to the output time basis, the same way as
         # _finalize_costs, so the two workflow paths agree.
@@ -1723,8 +1874,35 @@ class CostEngine:
             )
         self._report_unpriced(all_unpriced)
         self._report_edge_types()
+        self.metric_costs = self._finalize_metric_costs(all_metrics)
 
         return self.costs
+
+    def _finalize_metric_costs(self, costs: dict
+                               ) -> dict[str, dict[str, _MetricCost]]:
+        """Convert each metric cost to the output time basis.
+
+        A usage-driven metric holds a cost per second and a fixed one a
+        monthly cost, mirroring the two parts of a node's cost. Both convert
+        to the output time basis, so every number in a snapshot of the engine
+        shares one unit.
+        """
+        multiplier = self._time_multiplier
+        fixed_multiplier = self._fixed_multiplier
+        return {
+            address: {
+                metric: _MetricCost(
+                    quantity=record.quantity * (
+                        fixed_multiplier if record.fixed else multiplier),
+                    cost=record.cost * (
+                        fixed_multiplier if record.fixed else multiplier),
+                    fixed=record.fixed,
+                    price_source=record.price_source,
+                )
+                for metric, record in metrics.items()
+            }
+            for address, metrics in costs.items()
+        }
 
     def _report_edge_types(self) -> None:
         """Store and warn about metrics whose edge type never reaches their node.

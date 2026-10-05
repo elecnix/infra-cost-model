@@ -22,6 +22,7 @@ from infra_cost_model.engine import (
     SensitivityAnalyzer,
     UnpricedMetricWarning,
 )
+from infra_cost_model.engine.snapshot import build_snapshot, render_snapshot
 from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.pricing.vendors import VendorPackageError
 from infra_cost_model.version_requirement import check_engine_requirement
@@ -68,6 +69,9 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="Exit with code 1 if total cost exceeds this USD threshold")
     p_compute.add_argument("--exit-on-unpriced", action="store_true",
                            help="Exit with code 1 if any usage metric has no price")
+    p_compute.add_argument("--format", choices=["table", "json"], default="table",
+                           help="Output format: the human-readable table (default) "
+                                "or a diffable JSON cost snapshot")
     p_compute.set_defaults(func=cmd_compute)
 
     # analyze
@@ -381,6 +385,12 @@ def cmd_compute(args: argparse.Namespace) -> int:
             overage = total - args.budget
             _print_stderr(f"BUDGET BREACH: total ${total:.6f} exceeds budget ${args.budget:.6f} by ${overage:.6f}")
             return 1
+
+        if args.format == "json":
+            print(render_snapshot(build_snapshot(engine)), end="")
+            if args.exit_on_unpriced and engine.unpriced_metrics:
+                return 1
+            return 0
 
         pricing_source = "catalog" if use_catalog else "embedded pricing rates"
         print(f"Costs for: {_model_name(model)} (pricing: {pricing_source}, {time_basis})")

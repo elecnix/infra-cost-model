@@ -96,6 +96,43 @@ The engine prices a usage metric from its `shape`, then from the catalog, then f
 
 Exit codes stay 0. To fail a CI run instead, pass `--exit-on-unpriced` to `compute` or `analyze`. Python callers can read `CostEngine.unpriced_metrics` after `compute()`, and each metric also raises an `UnpricedMetricWarning` through the `warnings` module.
 
+## Diffable cost snapshots
+
+`compute --format json` prints the same run as the table, arranged so you can commit it and read the diff:
+
+```bash
+infra-cost-model compute model.yaml --time-basis monthly --format json > cost-snapshot.json
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "engineVersion": "0.3.0",
+  "timeBasis": "monthly",
+  "total": 812.4,
+  "nodes": {
+    "gateway": {
+      "total": 41.97,
+      "fixed": 32.85,
+      "variable": 9.12,
+      "metrics": {
+        "gatewayHours": {"quantity": 730, "unitPrice": 0.045, "cost": 32.85, "fixed": true, "priceSource": "seed"},
+        "gatewayGb": {"quantity": 202.7, "unitPrice": 0.045, "cost": 9.12, "fixed": false, "priceSource": "seed"}
+      }
+    }
+  },
+  "unpriced": []
+}
+```
+
+(The amounts above are made up, to show the format.)
+
+Each metric reports the quantity the engine priced, the effective price of one unit of it, the cost, whether it is fixed, and where the price came from (`seed`, `infracost`, `azure-retail`, `vendor`, or the model's own `pricingRates`). When two machines disagree on a total, the snapshot points at the metric and the price source that moved. Keys are sorted, money is rounded to six decimals, and each cost is the engine's own, so a node's printed metrics reproduce its printed total and a diff is empty when nothing changed.
+
+When nothing priced a metric, it stays out of `costs` and appears in `unpriced` instead, with the same node, metric, provider, service, region and quantity as the stderr warning.
+
+The format is on `compute` rather than `analyze`, because `compute` has `--no-catalog` ([#420](https://github.com/elecnix/infra-cost-model/issues/420)) and so can say whether a run used the catalog or the model's embedded rates. `--format table` stays the default and is unchanged. `schemaVersion` rises when the snapshot's keys change.
+
 ## Blanket pricing for the long tail
 
 Native handlers cover the resources whose usage the DAG derives from upstream flow. For the static, always-on tail (anything Infracost already prices), import an `infracost breakdown` instead of hand-writing a handler + descriptor:
