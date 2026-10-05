@@ -541,11 +541,13 @@ def cmd_pricing_status(args: argparse.Namespace) -> int:
 
     report = PricingCache().status()
 
-    stale = False
     age = live_age_hours(report)
-    if args.max_age_hours is not None:
-        stale = age is None or age > args.max_age_hours
-        report["maxAgeHours"] = args.max_age_hours
+    limit = args.max_age_hours
+    # One expression, so the verdict and the exit code can't disagree: a cache
+    # is stale only when a limit was given and its age breaches it (#447).
+    stale = limit is not None and (age is None or age > limit)
+    if limit is not None:
+        report["maxAgeHours"] = limit
         report["stale"] = stale
 
     if args.json:
@@ -556,8 +558,8 @@ def cmd_pricing_status(args: argparse.Namespace) -> int:
             newest = entry["newest"] or "unreadable timestamp"
             age_text = "unknown age" if entry["ageHours"] is None else f"{entry['ageHours']}h old"
             print(f"  {source}: {entry['rows']} rows, newest {newest} ({age_text})")
-        if args.max_age_hours is not None:
-            print(f"stale: {'yes' if stale else 'no'} (max age {args.max_age_hours}h)")
+        if limit is not None:
+            print(f"stale: {'yes' if stale else 'no'} (max age {limit}h)")
 
     if not stale:
         return 0
@@ -565,12 +567,12 @@ def cmd_pricing_status(args: argparse.Namespace) -> int:
     if age is None:
         _print_stderr(
             f"Error: the cache at {report['path']} has no fetched prices, so its age "
-            f"can't be within {args.max_age_hours}h. Run sync-pricing."
+            f"can't be within {limit}h. Run sync-pricing."
         )
     else:
         _print_stderr(
             f"Error: the newest fetched price is {age}h old, over the "
-            f"{args.max_age_hours}h limit. Run sync-pricing."
+            f"{limit}h limit. Run sync-pricing."
         )
     return 1
 
