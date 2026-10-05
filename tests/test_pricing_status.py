@@ -110,6 +110,20 @@ class TestIsStale:
         cache.upsert(_price("infracost", "whenever"))
         assert cache.is_stale("test", "Probe")
 
+    def test_the_newest_row_is_picked_by_instant_not_by_text(
+        self, tmp_path, frozen_now
+    ):
+        """A text sort picks the wrong row when two offsets disagree.
+
+        ``12:00+05:00`` sorts above ``09:00+00:00`` but names the earlier
+        instant (07:00 UTC against 09:00 UTC), so a text ``MAX()`` reports a
+        seven-day-old row as the newest and calls a fresh cache stale.
+        """
+        cache = PricingCache(db_path=tmp_path / "pricing.db")
+        cache.upsert(_price("infracost", "2026-01-08T12:00:00+05:00", "M1"))
+        cache.upsert(_price("infracost", "2026-01-08T09:00:00+00:00", "M2"))
+        assert not cache.is_stale("test", "Probe")
+
 
 class TestStatus:
     """`PricingCache.status` reports rows, newest row and age per source."""
@@ -154,19 +168,30 @@ class TestStatus:
 
         assert cache.status()["sources"]["infracost"]["ageHours"] == 24.0
 
+    def test_a_future_timestamp_reports_no_age(self, tmp_path, frozen_now):
+        """A clock-skewed row reads as new, not as a negative age."""
+        cache = PricingCache(db_path=tmp_path / "pricing.db")
+        cache.upsert(_price("infracost", "2030-01-01T00:00:00+00:00"))
+
+        assert cache.status()["sources"]["infracost"]["ageHours"] == 0.0
+
     def test_the_age_follows_utc_not_the_local_clock(
-        self, tmp_path, frozen_now, monkeypatch
+        self, tmp_path, monkeypatch
     ):
-        """The same row ages the same whatever zone the reader runs in."""
-        monkeypatch.setenv("TZ", "Asia/Tokyo")
-        _tzset()
-        try:
-            cache = PricingCache(db_path=tmp_path / "pricing.db")
-            cache.upsert(_price("infracost", "2026-01-15T04:00:00"))
-            assert cache.status()["sources"]["infracost"]["ageHours"] == 4.0
-        finally:
-            monkeypatch.undo()
-            _tzset()
+        """The same row ages the same whatever zone the reader runs in.
+
+        ``_utc_now`` is left real, and only ``datetime`` is substituted, so
+        the assertion turns on which clock ``cache`` reads. The faked wall
+        clock runs nine hours ahead of UTC, so a reader that took the naive
+        local value would call the four-hour-old row thirteen hours old (or
+        fail outright, comparing a naive instant with an aware one). The
+        clock is faked in-process, so the test needs no ``time.tzset`` and
+        runs on Windows too (#447).
+        """
+        monkeypatch.setattr(cache_module, "datetime", _LocalSkewedClock)
+        cache = PricingCache(db_path=tmp_path / "pricing.db")
+        cache.upsert(_price("infracost", "2026-01-15T04:00:00"))
+        assert cache.status()["sources"]["infracost"]["ageHours"] == 4.0
 
 
 class TestLiveAgeHours:
@@ -241,6 +266,22 @@ class TestPricingStatusCommand:
 
         assert json.loads(capsys.readouterr().out)["stale"] is True
 
+    def test_text_output_agrees_with_the_gate(self, cache_at, capsys):
+        """The line a human reads says what the exit code says (#447).
+
+        The gate verdict is printed only when it was computed, so the text
+        report and the status agree on both sides of the limit.
+        """
+        cache_at.upsert(_price("infracost", "2026-01-14T07:00:00+00:00"))
+
+        assert main(["pricing-status", "--max-age-hours", "24"]) == 1
+        assert "stale: yes (max age 24.0h)" in capsys.readouterr().out
+
+        cache_at.upsert(_price("infracost", "2026-01-15T07:00:00+00:00", "M2"))
+
+        assert main(["pricing-status", "--max-age-hours", "24"]) == 0
+        assert "stale: no (max age 24.0h)" in capsys.readouterr().out
+
     def test_max_age_hours_fails_when_nothing_was_fetched(
         self, cache_at, capsys
     ):
@@ -268,8 +309,18 @@ def _all_rows(cache: PricingCache) -> list[dict]:
         conn.close()
 
 
-def _tzset() -> None:
-    """Re-read TZ, so `datetime.now()` follows it."""
-    import time
+class _LocalSkewedClock(datetime):
+    """A clock whose local time runs nine hours ahead of UTC.
 
-    time.tzset()
+    ``cache`` compares against UTC through ``datetime.now(timezone.utc)``; a
+    reader that reached for the naive local value instead would age every row
+    by the zone's offset. Substituting this class in place of ``datetime``
+    proves which one the cache reads, without the process-wide ``TZ`` variable
+    and ``time.tzset`` that only exist on Unix.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return cls(NOW.year, NOW.month, NOW.day, NOW.hour + 9, NOW.minute)
+        return NOW.astimezone(tz)

@@ -349,20 +349,27 @@ class PricingCache:
         """Check if cached prices are older than TTL."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.execute(
-            "SELECT MAX(fetched_at) FROM prices WHERE vendor = ? AND service = ?",
+            "SELECT fetched_at FROM prices WHERE vendor = ? AND service = ?",
             (vendor, service)
         )
-        result = cursor.fetchone()[0]
+        stamps = [row[0] for row in cursor.fetchall()]
         conn.close()
 
-        if not result:
+        if not stamps:
             return True
 
-        fetched = parse_fetched_at(result)
-        if fetched is None:
+        # MAX() in SQL would sort the timestamps as text, and a naive value
+        # and one with an offset don't compare that way, so the newest is
+        # chosen from the parsed instants, as status() does (#447).
+        newest = max(
+            (moment for moment in (parse_fetched_at(v) for v in stamps)
+             if moment is not None),
+            default=None,
+        )
+        if newest is None:
             # A row nobody can date can't be shown to be fresh (#447).
             return True
-        return _utc_now() - fetched > timedelta(days=self.ttl_days)
+        return _utc_now() - newest > timedelta(days=self.ttl_days)
 
     def status(self) -> dict:
         """Report the rows each source wrote and how old the newest one is.
@@ -403,7 +410,9 @@ class PricingCache:
                 "rows": counts[source],
                 "newest": moment.isoformat() if moment else None,
                 "ageHours": (
-                    round((now - moment).total_seconds() / 3600, 1)
+                    # Never negative: a clock-skewed or hand-edited future
+                    # timestamp reads as fresh, not as a negative age (#447).
+                    max(0.0, round((now - moment).total_seconds() / 3600, 1))
                     if moment else None
                 ),
             }
