@@ -142,6 +142,16 @@ class TestTheCatalogCanPinItsSource:
         PricingCatalog(db_path=live_db, sources="seed")
         assert rows_by_source(live_db).get("seed") is None
 
+    def test_seed_catalogs_share_one_temporary_database(self, monkeypatch):
+        # Rows load with INSERT OR IGNORE, so a second catalog can share the
+        # first catalog's database. Building one per catalog would leave a
+        # temporary directory behind for every `--pricing seed` run in a
+        # process that prices several models (#446).
+        monkeypatch.setattr(cache_module, "_BUNDLED_DB_PATH", None)
+        first = PricingCatalog(sources="seed")
+        second = PricingCatalog(sources="seed")
+        assert first._cache.db_path == second._cache.db_path
+
     def test_an_empty_source_filter_matches_no_row(self, tmp_path):
         # An empty filter names no source, so it must read no row. Falling
         # through to every source would be the silent widening the filter

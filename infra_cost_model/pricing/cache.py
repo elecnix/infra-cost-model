@@ -620,6 +620,9 @@ class PricingCache:
         return prices[0]
 
 
+_BUNDLED_DB_PATH: Path | None = None
+
+
 def bundled_db_path() -> Path:
     """Return a private, empty database path for a bundled-rows-only catalog.
 
@@ -627,10 +630,18 @@ def bundled_db_path() -> Path:
     rows on every machine, so it takes neither the synced cache nor a path the
     caller named (#446). The directory is temporary; its removal is registered
     with `atexit`, which runs after the interpreter returns.
+
+    One path serves the whole process: the rows load with INSERT OR IGNORE,
+    so a later catalog reads what an earlier one wrote, and a process that
+    prices several models leaves one directory behind rather than one per
+    catalog.
     """
-    folder = Path(tempfile.mkdtemp(prefix="infra-cost-model-bundled-"))
-    atexit.register(shutil.rmtree, folder, ignore_errors=True)
-    return folder / "pricing.db"
+    global _BUNDLED_DB_PATH
+    if _BUNDLED_DB_PATH is None:
+        folder = Path(tempfile.mkdtemp(prefix="infra-cost-model-bundled-"))
+        atexit.register(shutil.rmtree, folder, ignore_errors=True)
+        _BUNDLED_DB_PATH = folder / "pricing.db"
+    return _BUNDLED_DB_PATH
 
 
 def _hash_attributes(attrs: dict) -> str:
