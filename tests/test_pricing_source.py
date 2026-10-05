@@ -260,6 +260,30 @@ class TestComputePricingLive:
         assert total(capsys.readouterr().out) == pytest.approx(
             MONTHLY_REQUESTS * LIVE_RATE)
 
+    def test_a_partly_synced_node_charges_nothing_for_it(
+            self, tmp_path, capsys, monkeypatch):
+        # A handler derives two quantities from one node (a Lambda's requests
+        # and GB-seconds). A sync that fetched one of the two rows leaves the
+        # node half-priced, so the run prices no part of it: charging the row
+        # that did arrive would report a number from a partly-synced node
+        # (#446). The derived charges are dropped together, and the per-metric
+        # path does not re-add them.
+        partial = PricingCache(db_path=tmp_path / "partial" / "pricing.db")
+        partial.upsert(Price(
+            vendor="aws", service="AWSLambda", region="us-east-1",
+            product_family="Serverless", attributes={},
+            usage_metric="Lambda-Request", unit="requests", price_usd=LIVE_RATE,
+            source="infracost", effective_date="2026-01-01",
+            fetched_at="2026-01-01T00:00:00"))
+        monkeypatch.setattr(cache_module, "DB_PATH", partial.db_path)
+        model_path = write(tmp_path, lambda_model())
+
+        assert main(["compute", model_path, "--monthly", "--pricing", "live"]) == 1
+        err = capsys.readouterr().err
+        listed = err.split("Run sync-pricing")[0]
+        assert "Lambda-GB-Second" in listed
+        assert "Lambda-Request" not in listed
+
 
 class TestComputePricingDb:
     """`--pricing-db` points the run at a named cache file."""
