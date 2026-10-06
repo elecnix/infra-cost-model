@@ -258,6 +258,15 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="Output nodes as JSON (default: YAML)")
     p_import.set_defaults(func=cmd_import_infracost)
 
+    # billing-lines (the bill line each usage metric lands on — #442)
+    p_lines = sub.add_parser(
+        "billing-lines",
+        help="Print the cloud bill line each node's usage metrics map to")
+    p_lines.add_argument("yaml_file", metavar="<yaml-file>",
+                         help="Path to cost model YAML file")
+    p_lines.add_argument("--json", action="store_true", help="Output in JSON format")
+    p_lines.set_defaults(func=cmd_billing_lines)
+
     return parser
 
 
@@ -474,6 +483,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     )
     errors = errors + catalog_location_errors(model)
 
+    # A bill line naming a service the bill does not have matches zero bill
+    # rows, which reads as $0 rather than as the typo it is (#442).
+    from infra_cost_model.billing import billing_line_errors
+    errors = errors + billing_line_errors(model)
+
     # A metric whose edgeType no edge into its node carries counts no calls.
     # The model is still valid, so this is a warning, from the rule that
     # `compute` warns with (#322).
@@ -487,6 +501,64 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     print(f"✓ Valid cost model: {yaml_path}")
+    return 0
+
+
+def cmd_billing_lines(args: argparse.Namespace) -> int:
+    """Print the bill line each usage metric of each node lands on (#442).
+
+    A node's `billingLines` entry wins; otherwise the known-names list
+    resolves the line from the node's provider, service and the catalog
+    metric its handler prices. A metric no known line covers is listed
+    as unmapped rather than left to read as $0.
+    """
+    yaml_path = Path(args.yaml_file)
+    if not yaml_path.exists():
+        _print_stderr(f"File not found: {yaml_path}")
+        return 1
+
+    from infra_cost_model.sdk import parse_yaml_dsl
+    from infra_cost_model.billing import (
+        resolve_billing_lines,
+        unmapped_billing_lines,
+    )
+
+    with open(yaml_path) as f:
+        content = f.read()
+
+    try:
+        model = parse_yaml_dsl(content)
+    except ValueError as e:
+        _print_stderr(f"Error: {e}")
+        return 1
+
+    lines = resolve_billing_lines(model)
+    unmapped = unmapped_billing_lines(model)
+
+    if args.json:
+        print(json.dumps({
+            "workflow": _model_name(model),
+            "lines": [line.to_dict() for line in lines],
+            "unmapped": unmapped,
+        }, indent=2))
+        return 0
+
+    print(f"Billing lines: {_model_name(model)}")
+    print("=" * 60)
+    if lines:
+        print(f"{'NODE':<28} {'METRIC':<18} {'SERVICE':<30} USAGE TYPE")
+        for line in lines:
+            print(f"{line.node:<28} {line.metric:<18} {line.service:<30} "
+                  f"{line.usage_type or '-'}")
+    else:
+        print("No usage metric maps to a known bill line.")
+
+    if unmapped:
+        print()
+        print("No known bill line (state it in the node's billingLines):")
+        for entry in unmapped:
+            print(f"  {entry['node']}.{entry['metric']} ({entry['service']})")
+
     return 0
 
 

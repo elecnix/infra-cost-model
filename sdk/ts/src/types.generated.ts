@@ -103,6 +103,12 @@ export interface Node {
     [k: string]: UsageMetric;
   };
   /**
+   * The cloud bill line each usage metric lands on, for comparing the model with the bill (#442). Keyed by usage metric; a metric the node does not carry is a validation error. Only needed where the default from the engine's known-names list is wrong: the default already names the line the catalog service code bills under, with the usage type its region prefixes.
+   */
+  billingLines?: {
+    [k: string]: BillingLine;
+  };
+  /**
    * Pricing model type. Percentage: fixed + percentage of transaction volume (e.g., Stripe: 2.9% + $0.30).
    */
   pricingModel?: "tiered" | "flat" | "token_based" | "percentage";
@@ -156,6 +162,20 @@ export interface UsageMetric {
    * Flat fee per transaction for transactional shapes, multiplied by the quantity
    */
   fixed_per_transaction?: number;
+}
+export interface BillingLine {
+  /**
+   * Bill the line comes from, such as aws-cost-explorer. Defaults to the bill provider of the node's provider.
+   */
+  provider?: string;
+  /**
+   * The bill's service name, as the bill prints it: "Amazon Virtual Private Cloud", not the catalog service code "AmazonVPC". The engine carries the known names, and validate refuses one it does not know.
+   */
+  service: string;
+  /**
+   * The bill's usage type, with the region prefix the bill prints: "USW2-NatGateway-Hours" for a node in us-west-2. Optional when the line is one service with no usage-type grain.
+   */
+  usageType?: string;
 }
 export interface Edge {
   /**
