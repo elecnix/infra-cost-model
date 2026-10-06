@@ -110,6 +110,9 @@ def _line_of(keys: list) -> Optional[tuple[str, Optional[str]]]:
 
         --group-by Type=DIMENSION,Key=SERVICE Type=DIMENSION,Key=USAGE_TYPE
 
+    An empty usage type means the exporter named none, so the line covers the
+    service as a whole. The joined form `SERVICE/` reads the same way.
+
     One key is a service, or the joined `SERVICE/USAGE_TYPE` form.
     """
     if not keys or not isinstance(keys[0], str):
