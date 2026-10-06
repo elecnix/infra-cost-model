@@ -703,3 +703,36 @@ def test_cli_reconcile_without_actuals_is_an_error(tmp_path, capsys):
     model_path.write_text(CLI_MODEL)
 
     assert main(["reconcile", str(model_path)]) == 1
+
+# --- default lines (#461) ----------------------------------------------------
+
+def test_a_default_nat_hours_line_reconciles_against_ec2_other(tmp_path):
+    """The bill prints NAT gateway hours under `EC2 - Other`, beside the bytes.
+
+    The default line for the hours metric comes from the known-names list. A
+    model that declares it as it stands must find the rows the bill carries.
+    """
+    from infra_cost_model.billing import resolve_billing_lines
+
+    days = month_days(30)
+    nat = {"nodeType": "routing", "resourceAddress": "aws_nat_gateway.main",
+           "provider": "aws", "service": "AmazonVPC", "region": "us-west-2",
+           "usageMetrics": {"natHours": {"unit": "hours", "value": 730,
+                                         "fixed": True}}}
+    default = resolve_billing_lines(
+        model_with({"aws_nat_gateway.main": nat}))[0]
+    assert (default.service, default.usage_type) == (
+        "EC2 - Other", "USW2-NatGateway-Hours")
+
+    nat["billingLines"] = {"natHours": {"provider": default.provider,
+                                        "service": default.service,
+                                        "usageType": default.usage_type}}
+    actuals = load_actuals(write_json(
+        tmp_path, "actuals.json",
+        ce_payload(days, key="EC2 - Other/USW2-NatGateway-Hours")))
+
+    report = run(model_with({"aws_nat_gateway.main": nat}),
+                 {"aws_nat_gateway.main": 12.34}, actuals)
+
+    assert report.groups[0].projected == pytest.approx(1.0 * DAYS_PER_MONTH)
+    assert report.groups[0].bill_lines[0].billed_days == 30

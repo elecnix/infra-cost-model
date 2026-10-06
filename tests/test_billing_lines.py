@@ -1,8 +1,8 @@
 """Bill-line identity per node and usage metric (Issue #442).
 
 A model that prices a NAT gateway knows nothing about the two lines the
-gateway's money lands on: hours bill under `Amazon Virtual Private Cloud`,
-bytes processed bill under `EC2 - Other`. Without that, a user compares the
+gateway's money lands on: hours and bytes processed both bill under
+`EC2 - Other`, told apart by the usage type. Without that, a user compares the
 model with the bill from a mapping file kept by hand.
 
 These tests cover the three things that make the mapping live in the model:
@@ -58,13 +58,10 @@ def lines_for(node: dict) -> dict[str, tuple[str, str]]:
 
 class TestDefaults:
     def test_each_metric_resolves_to_its_own_line(self):
-        """Hours and bytes bill under different services, so the metric decides."""
+        """Hours and bytes bill under one service, so the usage type tells them apart (#461)."""
         lines = lines_for(NAT_NODE)
 
-        assert lines["natHours"] == (
-            "Amazon Virtual Private Cloud",
-            "USW2-NatGateway-Hours",
-        )
+        assert lines["natHours"] == ("EC2 - Other", "USW2-NatGateway-Hours")
         assert lines["dataProcessedGb"] == ("EC2 - Other", "USW2-NatGateway-Bytes")
 
     def test_the_region_prefix_follows_the_node(self):
@@ -221,11 +218,11 @@ class TestKnownNames:
         assert len(prefixes) == len(set(prefixes))
 
     def test_the_bill_name_is_not_the_catalog_service_code(self):
-        """The catalog says `AmazonVPC`; the bill says
-        `Amazon Virtual Private Cloud`. The list carries the bill's name."""
+        """The catalog says `AmazonVPC`; the bill says `EC2 - Other`. The list
+        carries the bill's name."""
         line = known_line("aws", "AmazonVPC", "NAT-Gateway-Hour")
 
-        assert line["service"] == "Amazon Virtual Private Cloud"
+        assert line["service"] == "EC2 - Other"
 
     def test_a_catalog_service_the_bill_names_differently_is_still_known(self):
         line = known_line("aws", "AmazonECR", "ECR-Storage")
@@ -407,7 +404,7 @@ class TestCommand:
         assert exit_code == 0
         output = json.loads(capsys.readouterr().out)
         by_metric = {line["metric"]: line for line in output["lines"]}
-        assert by_metric["natHours"]["service"] == "Amazon Virtual Private Cloud"
+        assert by_metric["natHours"]["service"] == "EC2 - Other"
         assert by_metric["natHours"]["usageType"] == "USW2-NatGateway-Hours"
         assert by_metric["dataProcessedGb"]["usageType"] == "USW2-NatGateway-Bytes"
 
@@ -416,7 +413,7 @@ class TestCommand:
 
         assert exit_code == 0
         out = capsys.readouterr().out
-        assert "Amazon Virtual Private Cloud" in out
+        assert "USW2-NatGateway-Hours" in out
         assert "USW2-NatGateway-Bytes" in out
 
     def test_a_metric_with_no_known_line_is_reported_as_unmapped(
