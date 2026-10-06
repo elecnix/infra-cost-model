@@ -302,6 +302,45 @@ class TestValidation:
 
         assert billing_line_errors(model) == []
 
+    @pytest.mark.parametrize("service", [
+        "Amazon Elastic Load Balancing",
+        "Amazon Kinesis",
+        "Amazon Kinesis Firehose",
+        "Amazon Inspector",
+    ])
+    def test_a_name_a_real_bill_prints_validates(self, service):
+        """A Cost Explorer export names these four in its SERVICE dimension."""
+        node = dict(NAT_NODE, billingLines={
+            "natHours": {"provider": "aws-cost-explorer", "service": service},
+        })
+
+        assert billing_line_errors(model_with({"aws_nat_gateway.main": node})) == []
+
+    def test_the_old_load_balancing_spelling_still_validates(self):
+        """Models written against the first list keep validating."""
+        node = dict(NAT_NODE, billingLines={
+            "natHours": {
+                "provider": "aws-cost-explorer",
+                "service": "AWS Elastic Load Balancing",
+            },
+        })
+
+        assert billing_line_errors(model_with({"aws_nat_gateway.main": node})) == []
+
+    def test_the_load_balancing_default_is_the_name_the_bill_prints(self):
+        line = known_line("aws", "AmazonALB", "ALB-Hour")
+
+        assert line["service"] == "Amazon Elastic Load Balancing"
+
+    def test_a_refusal_lists_the_names_a_bill_prints_not_the_aliases(self):
+        node = dict(NAT_NODE, billingLines={
+            "natHours": {"provider": "aws-cost-explorer", "service": "Nope"},
+        })
+        errors = billing_line_errors(model_with({"aws_nat_gateway.main": node}))
+
+        assert "Amazon Elastic Load Balancing" in errors[0]
+        assert "AWS Elastic Load Balancing" not in errors[0]
+
     def test_a_node_without_lines_is_never_an_error(self):
         assert billing_line_errors(model_with({"aws_nat_gateway.main": NAT_NODE})) == []
 

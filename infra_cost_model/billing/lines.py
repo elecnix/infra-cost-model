@@ -326,7 +326,7 @@ def _node_billing_line_errors(address: str, node: dict) -> list[str]:
                 f"Known bill providers: {known}."
             )
             continue
-        if service not in _service_names(entry):
+        if service not in _accepted_service_names(entry):
             known = ", ".join(sorted(_service_names(entry)))
             errors.append(
                 f"{where}: unknown bill service "
@@ -351,6 +351,18 @@ def _service_names(entry: dict) -> set[str]:
         line["service"] for line in entry.get("lines") or []
         if isinstance(line, dict) and isinstance(line.get("service"), str)
     }
+
+
+def _accepted_service_names(entry: dict) -> set[str]:
+    """The names ``validate`` accepts: the bill's names plus each line's aliases."""
+    accepted = _service_names(entry)
+    for line in entry.get("lines") or []:
+        if isinstance(line, dict):
+            accepted.update(
+                alias for alias in line.get("aliases") or []
+                if isinstance(alias, str)
+            )
+    return accepted
 
 
 def _usage_type_errors(where: str, entry: dict, node: dict,
