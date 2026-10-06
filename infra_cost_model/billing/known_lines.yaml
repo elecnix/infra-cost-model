@@ -16,7 +16,8 @@
 #
 # The usage-type suffixes and region prefixes are the names AWS Cost Explorer
 # publishes, not names this project invents. A name this file does not carry is
-# one a node has to state for itself.
+# one a node has to state for itself. A line may carry `aliases`: older or
+# variant spellings that `validate` still accepts but no default ever uses.
 
 aws:
   billProvider: aws-cost-explorer
@@ -109,7 +110,11 @@ aws:
     - service: "Amazon Relational Database Service"
       catalogServices: [AmazonRDS]
 
-    - service: "AWS Elastic Load Balancing"
+    # The bill prints "Amazon Elastic Load Balancing". The first version of
+    # this list said "AWS ...", so that spelling stays an accepted alias and a
+    # model written against it keeps validating.
+    - service: "Amazon Elastic Load Balancing"
+      aliases: ["AWS Elastic Load Balancing"]
       catalogServices: [AmazonALB, AmazonELB]
 
     - service: "Amazon CloudFront"
@@ -141,3 +146,11 @@ aws:
 
     - service: "Amazon Bedrock"
       catalogServices: [AmazonBedrock]
+
+    # Names a real bill prints that the catalog has no service code for yet. A
+    # node states the exact usage type in its own `billingLines`.
+    - service: "Amazon Kinesis"
+
+    - service: "Amazon Kinesis Firehose"
+
+    - service: "Amazon Inspector"
