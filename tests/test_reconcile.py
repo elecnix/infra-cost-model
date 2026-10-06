@@ -789,3 +789,26 @@ def test_parse_actuals_flags_rows_with_no_start_date_as_unreadable():
     assert not actuals.readable
     assert "start date" in actuals.error
 
+
+
+def test_parse_actuals_flags_a_start_that_is_not_a_date_as_unreadable():
+    payload = cli_payload()
+    payload["ResultsByTime"][0]["TimePeriod"]["Start"] = "not-a-date"
+
+    actuals = parse_actuals(payload)
+
+    assert not actuals.readable
+    assert "not-a-date" in actuals.error
+    assert actuals.days == []
+
+
+def test_parse_actuals_flags_one_bad_start_among_good_rows():
+    payload = cli_payload()
+    bad = {"TimePeriod": {"Start": "2026-13-45", "End": "2026-13-46"}, "Groups": []}
+    payload["ResultsByTime"].append(bad)
+
+    actuals = parse_actuals(payload)
+
+    assert not actuals.readable
+    assert "2026-13-45" in actuals.error
+    assert actuals.days == ["2026-01-01"]

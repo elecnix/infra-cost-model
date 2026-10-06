@@ -8,6 +8,7 @@ zero spend and missing data must not look the same (#444, trap 5).
 """
 
 import json
+from datetime import date
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -118,11 +119,20 @@ def _error_from(payload: dict) -> Optional[str]:
     return None
 
 
+def _is_iso_date(text: str) -> bool:
+    """True when `text` is a calendar date written `YYYY-MM-DD`."""
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        return False
+    return len(text) == 10
+
+
 def _period_start(period: dict) -> Optional[str]:
     """The day a `ResultsByTime` row covers.
 
     The CLI writes it under `TimePeriod`. `Time` stays accepted for files built
-    by hand.
+    by hand. The caller checks that the value is an ISO date.
     """
     for name in ("TimePeriod", "Time"):
         span = period.get(name)
@@ -155,6 +165,11 @@ def parse_actuals(payload: dict) -> Actuals:
         start = _period_start(period)
         if start is None:
             continue
+        if not _is_iso_date(start):
+            unreadable = unreadable or (
+                f"a ResultsByTime row starts on {start!r}, which is not an ISO date (YYYY-MM-DD)"
+            )
+            continue
         days.append(start)
         for group in period.get("Groups") or []:
             keys = group.get("Keys") or []
@@ -174,7 +189,7 @@ def parse_actuals(payload: dict) -> Actuals:
             amounts[start] = amounts.get(start, 0.0) + amount
 
     actuals.days = sorted(set(days))
-    if results and not days and actuals.error is None:
+    if results and not days and actuals.error is None and unreadable is None:
         # Rows with no start date are another layout, not an empty export.
         unreadable = (
             "no row in ResultsByTime carries a start date under TimePeriod or Time"
