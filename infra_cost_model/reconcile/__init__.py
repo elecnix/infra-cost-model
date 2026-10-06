@@ -21,25 +21,25 @@ Six traps the comparison has to survive (#444):
 2. Cost Explorer omits a group on days it didn't bill. Those days are still
    days the line was alive, so a sparse line projects a full month of its own
    rate instead of three times it.
-3. A line that started billing mid-window was alive for fewer days. Its first
-   billed day is read from every day the file carries, not just the window, so
-   the line projects at its true monthly run-rate. Export more history and the
-   divisor reaches the whole window, which is how a user tells "new" from
-   "billed $0 before".
+3. A line that started billing mid-window was alive for fewer days. A
+   billing-shape rule (#462) tells a new line from a rare charge. A line is new
+   only if no earlier day in the file billed it and it bills on every day from
+   its first billed day on, for at least `--new-line-days` days (default 7).
+   It then divides by the days since its first billed day. Any other line
+   zero-fills and divides by the whole window, so a quarterly or annual charge
+   projects at its share of the window, not at a run-rate.
 4. Several nodes can map to one bill line. Nodes and lines are grouped into
    connected components and each group is compared once.
 5. A failed or truncated payload reports ``unreadable``. It never reads as $0.
 6. Bill lines the model deliberately leaves out go in an ``unmodelled``
    allowlist, each with a written reason.
 
-One residual follows from traps 1 to 3. A periodic charge whose charge day falls
-inside the window was "alive" for the days after it, not for the whole window,
-so it projects slightly high — a monthly charge billed on day 3 of a 30-day
-window projects about 13% above its own size. Exporting more history removes it:
-the wider the file, the more often the first billed day sits at or before the
-window start. `--window-days 30` over a file of at least that many days is the
-shape the issue recommends, and the per-line `divisorDays` in the report shows
-the number each line was projected over.
+A periodic charge never counts as new, because it has gaps after its first billed
+day. The per-line `divisorDays` and `divisorRule` in the report show the number
+and the rule each line was projected with. A window shorter than the charge
+period still cannot show the charge at its true size: a monthly charge in a
+7-day window projects at 30.4 divided by 7. `--window-days 30` over a file of
+at least that many days is the shape the issue recommends.
 """
 
 from infra_cost_model.reconcile.actuals import DAYS_PER_MONTH, Actuals, load_actuals

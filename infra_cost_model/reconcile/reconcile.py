@@ -13,17 +13,26 @@ happened to bill (#444, traps 1 to 3):
 
     projected = window_sum / divisor_days * 30.4375
 
-The divisor runs from the line's first billed day — read from every day the
-actuals file carries, not just the window — to the end of the window.
+A billing-shape rule picks the divisor, and the report names the rule per line
+(#462):
+
+* `new` divides by the days since the line's first billed day. A line is new
+  only if both hold: no earlier day in the whole actuals file billed it, and it
+  bills on every day from its first billed day to the end of the file, for at
+  least `new_line_days` days (default 7). Every day the file carries counts as
+  settled.
+* `zero-fill` divides by the whole window. Every other line takes it, so a
+  charge that bills once a quarter or once a year projects at its share of the
+  window, not at a run-rate.
 
 * A line that bills once a month, reporting `$0.00` for the other days, divides
   by the window rather than by the one day it charged. That is the difference
   between a charge at its own size and a charge at 30.4 times its size.
 * A day Cost Explorer omits is still a day in the window, so a sparse line
   divides by the days it could have billed, not by the few it reported.
-* A line that started billing inside the window divides by the days since it
-  started. Export more history and the same line divides by the whole window,
-  which is how a user tells "new" from "billed $0 before".
+* A resource that started inside the window and bills daily divides by the days
+  since it started. A rare charge that lands inside the window does not,
+  because it has gaps after its first billed day.
 """
 
 from dataclasses import dataclass, field
@@ -39,6 +48,9 @@ from infra_cost_model.reconcile.billing import BillLine, node_billing_lines
 from infra_cost_model.reconcile.config import ReconcileConfig
 
 DEFAULT_WINDOW_DAYS = 30
+DEFAULT_NEW_LINE_DAYS = 7
+
+RULE_NEW, RULE_ZERO_FILL = "new", "zero-fill"
 
 _OK, _WARN, _FAIL, _UNREADABLE = "ok", "warn", "fail", "unreadable"
 _RANK = {_OK: 0, _WARN: 1, _FAIL: 2, _UNREADABLE: 3}
@@ -51,6 +63,7 @@ class BillLineResult:
     key: BillLineKey
     projected: float
     divisor_days: int
+    rule: str
     billed_days: int
     zero_days: int
     absent_days: int
@@ -65,6 +78,7 @@ class BillLineResult:
             "label": self.key.label(),
             "projected": self.projected,
             "divisorDays": self.divisor_days,
+            "divisorRule": self.rule,
             "billedDays": self.billed_days,
             "zeroDays": self.zero_days,
             "absentDays": self.absent_days,
@@ -234,22 +248,30 @@ def _window(actuals: Actuals, window_days: int) -> list[str]:
 
 
 def _project(actuals_daily: dict[str, float], all_days: list[str],
-             window: list[str]) -> BillLineResult:
+             window: list[str],
+             new_line_days: int = DEFAULT_NEW_LINE_DAYS) -> BillLineResult:
     """Project a bill line's window spend out to a month.
 
-    The divisor runs from the line's first billed day to the end of the window.
-    Reading the first billed day from every day the file carries is what tells
-    a line that started billing inside the window from one that billed nothing
-    because it didn't exist yet, and a wider export sharpens the same number.
+    The billing-shape rule picks the divisor (#462). A line is new when no
+    earlier day in the file billed it and it bills on every day from its first
+    billed day to the end of the file, for at least `new_line_days` days. A new
+    line divides by the days since its first billed day. Any other line
+    zero-fills: it divides by the whole window.
     """
     billed = [day for day in window if actuals_daily.get(day, 0.0) != 0.0]
     ever_billed = [day for day in all_days if actuals_daily.get(day, 0.0) != 0.0]
     zero_days = sum(1 for day in window
                     if day in actuals_daily and actuals_daily[day] == 0.0)
-    window_start = window[0] if window else None
+    rule = RULE_ZERO_FILL
     divisor_days = 0
-    if ever_billed and window_start is not None:
-        alive_from = max(ever_billed[0], window_start)
+    if ever_billed and window:
+        first = ever_billed[0]
+        since_first = [day for day in all_days if day >= first]
+        steady = all(actuals_daily.get(day, 0.0) != 0.0 for day in since_first)
+        alive_from = window[0]
+        if steady and len(since_first) >= new_line_days:
+            rule = RULE_NEW
+            alive_from = max(first, window[0])
         divisor_days = sum(1 for day in window if day >= alive_from)
     total = sum(actuals_daily.get(day, 0.0) for day in window)
     projected = (total / divisor_days * DAYS_PER_MONTH) if divisor_days else 0.0
@@ -257,6 +279,7 @@ def _project(actuals_daily: dict[str, float], all_days: list[str],
         key=None,
         projected=projected,
         divisor_days=divisor_days,
+        rule=rule,
         billed_days=len(billed),
         zero_days=zero_days,
         absent_days=len(window) - len(billed) - zero_days,
@@ -282,7 +305,8 @@ def _status(drift_usd: float, projected: float, config: ReconcileConfig) -> tupl
 
 def reconcile(model: dict, costs: dict, actuals: Actuals,
               config: Optional[ReconcileConfig] = None,
-              window_days: int = DEFAULT_WINDOW_DAYS) -> Reconciliation:
+              window_days: int = DEFAULT_WINDOW_DAYS,
+              new_line_days: int = DEFAULT_NEW_LINE_DAYS) -> Reconciliation:
     """Compare a model's monthly cost with what the bill says.
 
     Args:
@@ -293,14 +317,19 @@ def reconcile(model: dict, costs: dict, actuals: Actuals,
         actuals: per-day spend read from an actuals file.
         config: thresholds and accepted gaps; defaults apply when None.
         window_days: the trailing days of the actuals file to compare.
+        new_line_days: the fewest consecutive billed days, ending at the end of
+            the file, that make a line new rather than zero-filled (#462).
 
     Returns:
         A Reconciliation, one group per connected component.
     """
     config = config or ReconcileConfig()
     window = _window(actuals, window_days)
+    if new_line_days <= 0:
+        raise ReconcileError("--new-line-days must be a positive number of days")
 
-    dropped, unmodelled = _split_allowlisted(model, actuals, config, window)
+    dropped, unmodelled = _split_allowlisted(model, actuals, config, window,
+                                             new_line_days)
     remaining = Actuals(
         lines={line: amounts for line, amounts in actuals.lines.items()
                if line not in dropped},
@@ -340,7 +369,8 @@ def reconcile(model: dict, costs: dict, actuals: Actuals,
             # if that invariant ever breaks.
             continue
         modelled = sum(costs.get(address, 0.0) for address in nodes)
-        results = [_project(remaining.daily(key), remaining.days, window)
+        results = [_project(remaining.daily(key), remaining.days, window,
+                           new_line_days)
                    for key in lines]
         for key, result in zip(lines, results):
             result.key = key
@@ -376,7 +406,7 @@ def reconcile(model: dict, costs: dict, actuals: Actuals,
 
 
 def _split_allowlisted(model: dict, actuals: Actuals, config: ReconcileConfig,
-                       window: list[str]):
+                       window: list[str], new_line_days: int = DEFAULT_NEW_LINE_DAYS):
     """Take the allowlisted lines out of the comparison, with their reasons.
 
     An allowlist entry that a node also maps to is refused rather than applied:
@@ -404,6 +434,6 @@ def _split_allowlisted(model: dict, actuals: Actuals, config: ReconcileConfig,
         unmodelled.append(UnmodelledResult(
             service=service, usage_type=usage_type, reason=entry.reason,
             projected=_project(actuals.lines[(service, usage_type)],
-                               actuals.days, window).projected,
+                               actuals.days, window, new_line_days).projected,
         ))
     return dropped, unmodelled

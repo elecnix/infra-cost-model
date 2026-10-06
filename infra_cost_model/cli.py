@@ -240,6 +240,10 @@ def _build_parser() -> argparse.ArgumentParser:
                              help="Path to a Cost Explorer `get-cost-and-usage` payload")
     p_reconcile.add_argument("--window-days", type=int, default=30, metavar="<days>",
                              help="Trailing days of the actuals file to compare (default: 30)")
+    p_reconcile.add_argument("--new-line-days", type=int, default=7, metavar="<days>",
+                             help="Fewest consecutive billed days, ending at the end of the "
+                                  "file, that make a line new (default: 7). Other lines "
+                                  "divide by the whole window")
     p_reconcile.add_argument("--config", metavar="<reconcile-yaml>",
                              help="Thresholds and accepted gaps "
                                   "(default: reconcile.yaml beside the model, if present)")
@@ -397,7 +401,8 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
         return 1
 
     report = reconcile(model, costs, actuals, config=config,
-                       window_days=args.window_days)
+                       window_days=args.window_days,
+                       new_line_days=args.new_line_days)
 
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
@@ -430,6 +435,9 @@ def _print_reconciliation(report) -> None:
               f"${group.drift_usd:>11.4f} {pct:>9}  {labels}")
         if group.nodes:
             print(f"{'':<7} nodes: {', '.join(group.nodes)}")
+        for line in group.bill_lines:
+            print(f"{'':<7} {line.key.label()}: {line.rule}, "
+                  f"{line.divisor_days} days")
     if report.unmodelled:
         print("-" * 78)
         print("Unmodelled bill lines (accepted gaps):")
