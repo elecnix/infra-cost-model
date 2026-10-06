@@ -1,9 +1,9 @@
 # Cloud bill line names, carried with the package (#442).
 #
 # A model prices a NAT gateway from the catalog service code `AmazonVPC`, while
-# the bill calls the gateway's hours "Amazon Virtual Private Cloud" and its
-# bytes "EC2 - Other". Nothing in the model says so, so a user comparing the
-# two keeps a mapping file by hand. This file is the mapping, and `validate`
+# the bill calls both the gateway's hours and its bytes "EC2 - Other". Nothing
+# in the model says so, so a user comparing the two keeps a mapping file by
+# hand. This file is the mapping, and `validate`
 # checks a model's own `billingLines` against it so a misspelled name fails
 # instead of matching zero bill rows and reading as $0.
 #
@@ -88,18 +88,19 @@ aws:
     - service: "Amazon EC2 Container Registry (ECR)"
       catalogServices: [AmazonECR]
 
-    # A NAT gateway's hours bill here and its bytes bill under `EC2 - Other`
-    # below. One node, two lines, told apart only by the usage type.
+    # Kept for a node that states this line itself. A NAT gateway's hours and
+    # bytes both bill under `EC2 - Other` below.
     - service: "Amazon Virtual Private Cloud"
       catalogServices: [AmazonVPC]
-      usageTypes:
-        NAT-Gateway-Hour: NatGateway-Hours
 
     # A public IPv4 address bills here rather than under the service that holds
     # it, which is what makes a mapping file necessary in the first place.
+    # A NAT gateway's hours and bytes bill here together, told apart only by
+    # the usage type.
     - service: "EC2 - Other"
       catalogServices: [AmazonVPC, AmazonEC2]
       usageTypes:
+        NAT-Gateway-Hour: NatGateway-Hours
         NAT-Gateway-DataProcessed: NatGateway-Bytes
         IPv4-InUse-Hours: IP-Hours
         IPv4-Idle-Hours: IP-Hours

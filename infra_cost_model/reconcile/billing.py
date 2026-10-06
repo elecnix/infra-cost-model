@@ -5,7 +5,7 @@ line the charge appears on:
 
 ```yaml
 billingLines:
-  natHours: { provider: aws-cost-explorer, service: "Amazon Virtual Private Cloud", usageType: "USW2-NatGateway-Hours" }
+  natHours: { provider: aws-cost-explorer, service: "EC2 - Other", usageType: "USW2-NatGateway-Hours" }
 ```
 
 The reconciler reads exactly that field. It does not resolve the handler

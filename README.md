@@ -93,14 +93,13 @@ An unknown parameter name, an operator outside `+ - * /`, and a division by zero
 ## Bill lines
 
 A model prices a node from a catalog service code, and the bill names the
-same money differently. A NAT gateway's hours bill under `Amazon Virtual
-Private Cloud` and its processed bytes under `EC2 - Other`, and nothing in a
-node's service code says so. The engine carries the known names, so the
+same money differently. A NAT gateway's hours and its processed bytes both
+bill under `EC2 - Other`, and nothing in a node's service code says so. The engine carries the known names, so the
 defaults already resolve, and `billing-lines` prints them:
 
 ```text
 NODE                  METRIC            SERVICE                       USAGE TYPE
-aws_nat_gateway.main  natHours          Amazon Virtual Private Cloud  USW2-NatGateway-Hours
+aws_nat_gateway.main  natHours          EC2 - Other                   USW2-NatGateway-Hours
 aws_nat_gateway.main  dataProcessedGb   EC2 - Other                   USW2-NatGateway-Bytes
 ```
 
@@ -114,7 +113,7 @@ nodes:
     # ...
     billingLines:
       natHours:
-        service: "Amazon Virtual Private Cloud"
+        service: "EC2 - Other"
         usageType: "USW2-NatGateway-Hours"
 ```
 
