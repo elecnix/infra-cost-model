@@ -48,6 +48,17 @@ class _CLIError(Exception):
         self.code = code
 
 
+def _positive_days(text: str) -> int:
+    """argparse type: a whole number of days, at least 1."""
+    try:
+        days = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number of days") from None
+    if days < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1 day, got {days}")
+    return days
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with subcommands and per-command help."""
     parser = argparse.ArgumentParser(
@@ -240,7 +251,7 @@ def _build_parser() -> argparse.ArgumentParser:
                              help="Path to a Cost Explorer `get-cost-and-usage` payload")
     p_reconcile.add_argument("--window-days", type=int, default=30, metavar="<days>",
                              help="Trailing days of the actuals file to compare (default: 30)")
-    p_reconcile.add_argument("--new-line-days", type=int, default=7, metavar="<days>",
+    p_reconcile.add_argument("--new-line-days", type=_positive_days, default=7, metavar="<days>",
                              help="Fewest consecutive billed days, ending at the end of the "
                                   "file, that make a line new (default: 7). Other lines "
                                   "divide by the whole window")

@@ -978,3 +978,16 @@ def test_the_cli_exposes_the_threshold():
     args = _build_parser().parse_args(
         ["reconcile", "m.yaml", "--actuals", "a.json", "--new-line-days", "3"])
     assert args.new_line_days == 3
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "two"])
+def test_the_cli_rejects_a_new_line_days_below_one(tmp_path, capsys, value):
+    model_path = tmp_path / "model.yaml"
+    model_path.write_text(CLI_MODEL)
+    actuals_path = cli_actuals(tmp_path, ON_RATE)
+
+    code = main(["reconcile", str(model_path), "--actuals", str(actuals_path),
+                 "--new-line-days", value])
+
+    assert code == 1
+    assert "--new-line-days" in capsys.readouterr().err
