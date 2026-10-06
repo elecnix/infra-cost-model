@@ -1,7 +1,7 @@
 """Read an actuals file exported from AWS Cost Explorer (#444).
 
 The payload is what `aws ce get-cost-and-usage` prints: `ResultsByTime` holds
-one entry per day, each with groups keyed by `SERVICE` or `SERVICE/USAGE_TYPE`.
+one entry per day, each with a `TimePeriod` and groups keyed by `SERVICE` or `SERVICE/USAGE_TYPE`.
 Nothing here calls AWS. A payload that failed, came back truncated, or reports
 no results at all is recorded as unreadable rather than as zero spend, because
 zero spend and missing data must not look the same (#444, trap 5).
@@ -118,6 +118,19 @@ def _error_from(payload: dict) -> Optional[str]:
     return None
 
 
+def _period_start(period: dict) -> Optional[str]:
+    """The day a `ResultsByTime` row covers.
+
+    The CLI writes it under `TimePeriod`. `Time` stays accepted for files built
+    by hand.
+    """
+    for name in ("TimePeriod", "Time"):
+        span = period.get(name)
+        if isinstance(span, dict) and isinstance(span.get("Start"), str):
+            return span["Start"]
+    return None
+
+
 def parse_actuals(payload: dict) -> Actuals:
     """Turn a decoded `get-cost-and-usage` payload into per-line per-day spend."""
     if not isinstance(payload, dict):
@@ -139,8 +152,8 @@ def parse_actuals(payload: dict) -> Actuals:
     for period in results:
         if not isinstance(period, dict):
             continue
-        start = ((period.get("Time") or {}).get("Start"))
-        if not isinstance(start, str):
+        start = _period_start(period)
+        if start is None:
             continue
         days.append(start)
         for group in period.get("Groups") or []:
@@ -161,6 +174,11 @@ def parse_actuals(payload: dict) -> Actuals:
             amounts[start] = amounts.get(start, 0.0) + amount
 
     actuals.days = sorted(set(days))
+    if results and not days and actuals.error is None:
+        # Rows with no start date are another layout, not an empty export.
+        unreadable = (
+            "no row in ResultsByTime carries a start date under TimePeriod or Time"
+        )
     if unreadable is not None:
         actuals.error = unreadable
     return actuals
