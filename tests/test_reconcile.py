@@ -867,3 +867,18 @@ def test_joined_single_key_form_still_works():
     actuals = parse_actuals(payload)
 
     assert list(actuals.lines) == [("EC2 - Other", "USW2-NatGateway-Bytes")]
+
+
+def test_an_empty_second_key_is_the_service_wide_line():
+    payload = two_key_payload()
+    payload["ResultsByTime"][0]["Groups"] = [
+        {
+            "Keys": ["EC2 - Other", ""],
+            "Metrics": {"UnblendedCost": {"Amount": "4.00", "Unit": "USD"}},
+        }
+    ]
+
+    actuals = parse_actuals(payload)
+
+    assert actuals.error is None
+    assert list(actuals.lines) == [("EC2 - Other", None)]
