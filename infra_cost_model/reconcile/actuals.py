@@ -1,7 +1,9 @@
 """Read an actuals file exported from AWS Cost Explorer (#444).
 
 The payload is what `aws ce get-cost-and-usage` prints: `ResultsByTime` holds
-one entry per day, each with a `TimePeriod` and groups keyed by `SERVICE` or `SERVICE/USAGE_TYPE`.
+one entry per day, each with a `TimePeriod` and groups keyed by `SERVICE`,
+`SERVICE/USAGE_TYPE`, or two keys grouped by `SERVICE` then `USAGE_TYPE`, in
+that order.
 Nothing here calls AWS. A payload that failed, came back truncated, or reports
 no results at all is recorded as unreadable rather than as zero spend, because
 zero spend and missing data must not look the same (#444, trap 5).
@@ -99,6 +101,24 @@ def _amount(group: dict) -> tuple[Optional[float], object]:
     return None, None
 
 
+def _line_of(keys: list) -> Optional[tuple[str, Optional[str]]]:
+    """The bill line a group's `Keys` name, or None when they name nothing.
+
+    Two keys read as `(service, usage_type)`, service first. The payload does
+    not record the `GroupBy` order, so a query must group by `SERVICE` and then
+    `USAGE_TYPE`:
+
+        --group-by Type=DIMENSION,Key=SERVICE Type=DIMENSION,Key=USAGE_TYPE
+
+    One key is a service, or the joined `SERVICE/USAGE_TYPE` form.
+    """
+    if not keys or not isinstance(keys[0], str):
+        return None
+    if len(keys) >= 2 and isinstance(keys[1], str):
+        return keys[0], keys[1] or None
+    return _split_key(keys[0])
+
+
 def _split_key(key: str) -> tuple[str, Optional[str]]:
     """`SERVICE/USAGE_TYPE` splits into its two parts.
 
@@ -173,16 +193,16 @@ def parse_actuals(payload: dict) -> Actuals:
         days.append(start)
         for group in period.get("Groups") or []:
             keys = group.get("Keys") or []
-            if not keys or not isinstance(keys[0], str):
+            line = _line_of(keys)
+            if line is None:
                 continue
             amount, raw = _amount(group)
             if amount is None:
                 amount = 0.0
                 unreadable = unreadable or (
-                    f"{start}: the group for {keys[0]} carries no readable amount "
+                    f"{start}: the group for {'/'.join(map(str, keys))} carries no readable amount "
                     f"in UnblendedCost or BlendedCost (found {raw!r})"
                 )
-            line = _split_key(keys[0])
             amounts = actuals.lines.setdefault(line, {})
             # Two pages can carry the same line for the same day. The exporter
             # already paid for both, so the day's spend is their sum.
