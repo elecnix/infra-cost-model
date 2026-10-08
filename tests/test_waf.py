@@ -1,7 +1,8 @@
 """Tests for the AWS WAFv2 web ACL resource handler (Issue #234)."""
 import pytest
 from infra_cost_model.pricing.catalog import PricingCatalog
-from infra_cost_model.resources.waf import WAFv2WebACL, _waf_cost
+from infra_cost_model.resources.waf import WAFv2WebACL
+from live_pricing import resource_cost
 
 
 class TestWAFAddress:
@@ -126,38 +127,34 @@ class TestWAFNodeAndMetrics:
         assert waf.catalog_metrics["requests"] == "WAF-Request"
 
 
+def _cost(**usage):
+    """Price a web ACL through the handler's declared catalog metrics."""
+    return resource_cost("aws_wafv2_web_acl.acl", "AWSWAF", "us-east-1",
+                          catalog=PricingCatalog(seed=True), **usage)
+
+
 class TestWAFPricing:
     def test_pricing_single_web_acl(self):
-        catalog = PricingCatalog(seed=True)
-        cost = _waf_cost(web_acls=1, rules=0, requests=0,
-                         catalog=catalog, region="us-east-1")
+        cost = _cost(webAcls=1, rules=0, requests=0)
         assert cost == pytest.approx(5.00, rel=0.01)
 
     def test_pricing_rules(self):
-        catalog = PricingCatalog(seed=True)
         # 1 web ACL ($5) + 4 rules ($4) = $9
-        cost = _waf_cost(web_acls=1, rules=4, requests=0,
-                         catalog=catalog, region="us-east-1")
+        cost = _cost(webAcls=1, rules=4, requests=0)
         assert cost == pytest.approx(9.00, rel=0.01)
 
     def test_pricing_requests(self):
-        catalog = PricingCatalog(seed=True)
         # 1M requests at $0.60/million
-        cost = _waf_cost(web_acls=0, rules=0, requests=1_000_000,
-                         catalog=catalog, region="us-east-1")
+        cost = _cost(webAcls=0, rules=0, requests=1_000_000)
         assert cost == pytest.approx(0.60, rel=0.01)
 
     def test_pricing_combined(self):
-        catalog = PricingCatalog(seed=True)
         # 1 web ACL ($5) + 4 rules ($4) + 1M requests ($0.60) = $9.60
-        cost = _waf_cost(web_acls=1, rules=4, requests=1_000_000,
-                         catalog=catalog, region="us-east-1")
+        cost = _cost(webAcls=1, rules=4, requests=1_000_000)
         assert cost == pytest.approx(9.60, rel=0.01)
 
     def test_pricing_zero_usage(self):
-        catalog = PricingCatalog(seed=True)
-        cost = _waf_cost(web_acls=0, rules=0, requests=0,
-                         catalog=catalog, region="us-east-1")
+        cost = _cost(webAcls=0, rules=0, requests=0)
         assert cost == 0.0
 
 

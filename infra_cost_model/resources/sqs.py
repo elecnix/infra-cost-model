@@ -14,7 +14,6 @@ Dead-letter queues are modeled as separate SQS nodes with their own cost.
 
 from typing import Optional
 
-from infra_cost_model.pricing.catalog import PricingCatalog
 
 from .types import RoutingResource, ResourceExtract
 
@@ -104,33 +103,3 @@ class SQSQueue(RoutingResource):
                 "redrivePolicy": properties.get("RedrivePolicy"),
             },
         )
-
-
-def _sqs_cost(
-    messages_sent: float = 0,
-    messages_received: float = 0,
-    fifo: bool = False,
-    *,
-    catalog=None,
-    provider: str = "aws",
-    region: str,
-) -> float:
-    """Calculate SQS cost using catalog pricing.
-
-    Standard: $0.40/1M requests (free tier 1M/month).
-    FIFO: $0.50/1M requests (free tier 1M/month).
-    """
-    if catalog is None:
-        catalog = PricingCatalog()
-
-    total = 0.0
-    total_requests = messages_sent + messages_received
-
-    if total_requests > 0:
-        metric = "SQS-FIFO-Request" if fifo else "SQS-Standard-Request"
-        result = catalog.query(provider, "AmazonSQS", region, metric,
-                               total_requests)
-        if result and hasattr(result, "total_cost"):
-            total += result.total_cost
-
-    return total

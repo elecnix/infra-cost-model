@@ -1,7 +1,10 @@
 """Tests for Amazon EventBridge Rule resource model (Issue #18)."""
+from functools import partial
+
 import pytest
-from infra_cost_model.resources.eventbridge import EventBridgeRule, _eventbridge_cost
+from infra_cost_model.resources.eventbridge import EventBridgeRule
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
 
 class TestEventBridgeAddressParsing:
     def test_from_address_terraform_cloudwatch(self):
@@ -36,30 +39,38 @@ class TestEventBridgeExtraction:
         assert result.config["name"] == "order-processor" and result.config["eventPattern"] is not None and result.config["isEnabled"] is True
 
 class TestEventBridgePricing:
-    def setup_method(self): self.catalog = PricingCatalog(seed=True)
+    def setup_method(self):
+        self.catalog = PricingCatalog(seed=True)
+        self.cost = partial(resource_cost, "aws_cloudwatch_event_rule.daily",
+                            "AmazonEventBridge", "us-east-1", catalog=self.catalog)
     def test_custom_event_pricing(self):
-        cost = _eventbridge_cost(events_published=3_000_000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(eventsPublished=3_000_000)
         assert cost == pytest.approx(3.00, rel=0.01)
     def test_scheduled_rule_is_free(self):
         """A scheduled rule on the default event bus costs nothing (#326)."""
-        cost = _eventbridge_cost(schedule_invocations=1_000_000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(scheduledInvocations=1_000_000)
         assert cost == 0.0
     def test_event_vs_schedule_difference(self):
-        assert _eventbridge_cost(events_published=500_000, catalog=self.catalog, region="us-east-1") == pytest.approx(0.50, rel=0.01)
-        assert _eventbridge_cost(schedule_invocations=500_000, catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.cost(eventsPublished=500_000) == pytest.approx(0.50, rel=0.01)
+        assert self.cost(scheduledInvocations=500_000) == 0.0
     def test_fan_out_multiple_rules(self):
-        cost = _eventbridge_cost(events_published=3_000_000, events_matched=6_000_000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(eventsPublished=3_000_000, eventsMatched=6_000_000)
         assert cost == pytest.approx(9.00, rel=0.01)
     def test_archive_replay(self):
-        cost = _eventbridge_cost(archive_replay_events=5_000_000, catalog=self.catalog, region="us-east-1")
-        assert cost == pytest.approx(5.00, rel=0.02)
+        # Replayed events have their own catalog row, which the handler does
+        # not yet declare a logical metric for; price that row directly.
+        replay = self.catalog.query(
+            "aws", "AmazonEventBridge", "us-east-1",
+            "EventBridge-ArchiveReplay", 5_000_000,
+        )
+        assert replay.total_cost == pytest.approx(5.00, rel=0.02)
     def test_content_filtering_reduces_cost(self):
-        cost = _eventbridge_cost(events_published=2_000_000, events_matched=200_000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(eventsPublished=2_000_000, eventsMatched=200_000)
         assert cost == pytest.approx(2.20, rel=0.01)
     def test_custom_events_have_no_free_tier(self):
-        assert _eventbridge_cost(events_published=500_000, events_matched=500_000, catalog=self.catalog, region="us-east-1") == pytest.approx(1.00, rel=0.01)
+        assert self.cost(eventsPublished=500_000, eventsMatched=500_000) == pytest.approx(1.00, rel=0.01)
     def test_zero_usage(self):
-        assert _eventbridge_cost(catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.cost() == 0.0
 
 class TestEventBridgeRoutingNode:
     def test_is_routing_node(self):

@@ -1,6 +1,9 @@
 """Tests for Amazon SNS Topic resource model (Issue #15)."""
+from functools import partial
+
 import pytest
-from infra_cost_model.resources.sns import SNSTopic, _sns_cost
+from infra_cost_model.resources.sns import SNSTopic
+from live_pricing import resource_cost
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 class TestSNSTopicAddressParsing:
@@ -37,25 +40,31 @@ class TestSNSTopicExtraction:
         assert result.config["name"] == "my-event-bus"
 
 class TestSNSPricing:
-    def setup_method(self): self.catalog = PricingCatalog(seed=True)
+    def setup_method(self):
+        self.catalog = PricingCatalog(seed=True)
+        self.cost = partial(resource_cost, "aws_sns_topic.events",
+                            "AmazonSNS", "us-east-1", catalog=self.catalog)
     def test_fan_out_basic(self):
-        cost = _sns_cost(publishes=2_000_000, sqs_deliveries=2_000_000, lambda_deliveries=2_000_000, http_deliveries=2_000_000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(publishes=2_000_000, sqsDeliveries=2_000_000, lambdaDeliveries=2_000_000, httpDeliveries=2_000_000)
         expected = 0.50 + 0.0 + 0.0 + 1.14
         assert cost == pytest.approx(expected, rel=0.01)
     def test_delivery_type_differentiation(self):
-        sqs_only = _sns_cost(sqs_deliveries=2_000_000, catalog=self.catalog, region="us-east-1")
-        lambda_only = _sns_cost(lambda_deliveries=2_000_000, catalog=self.catalog, region="us-east-1")
-        http_only = _sns_cost(http_deliveries=2_000_000, catalog=self.catalog, region="us-east-1")
-        assert http_only > lambda_only == sqs_only == 0.0
+        sqs_only = self.cost(sqsDeliveries=2_000_000)
+        lambda_only = self.cost(lambdaDeliveries=2_000_000)
+        http_only = self.cost(httpDeliveries=2_000_000)
+        assert http_only > lambda_only
+        # SQS and Lambda deliveries are free; only HTTP bills.
+        assert sqs_only == 0.0
+        assert lambda_only == 0.0
     def test_within_free_tier(self):
-        assert _sns_cost(publishes=500_000, sqs_deliveries=500_000, catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.cost(publishes=500_000, sqsDeliveries=500_000) == 0.0
     def test_filtered_deliveries(self):
-        cost = _sns_cost(publishes=2_000_000, sqs_deliveries=2_000_000, lambda_deliveries=500_000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(publishes=2_000_000, sqsDeliveries=2_000_000, lambdaDeliveries=500_000)
         assert cost == pytest.approx(0.50, rel=0.01)
     def test_zero_usage(self):
-        assert _sns_cost(catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.cost() == 0.0
     def test_http_free_tier_differs(self):
-        cost = _sns_cost(http_deliveries=500_000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(httpDeliveries=500_000)
         assert cost == pytest.approx(0.24, rel=0.02)
 
 class TestSNSRoutingNode:

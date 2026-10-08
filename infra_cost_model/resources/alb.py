@@ -9,7 +9,6 @@ Network Load Balancer (type=network) is deferred to a follow-up.
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import RoutingResource, ResourceExtract
 
 
@@ -82,32 +81,3 @@ class ApplicationLoadBalancer(RoutingResource):
                 "idleTimeout": 60,
             },
         )
-
-
-def _alb_cost(alb_hours=730, processed_gb=0, new_connections=0,
-              active_connections=0, rule_evaluations=0, *,
-              catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if alb_hours > 0:
-        r = catalog.query(provider, "AmazonALB", region, "ALB-Hour", alb_hours)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if processed_gb > 0:
-        r = catalog.query(provider, "AmazonALB", region, "ALB-LCU-ProcessedBytes", processed_gb)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if new_connections > 0:
-        r = catalog.query(provider, "AmazonALB", region, "ALB-LCU-NewConnections", new_connections)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if active_connections > 0:
-        r = catalog.query(provider, "AmazonALB", region, "ALB-LCU-ActiveConnections", active_connections)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if rule_evaluations > 0:
-        r = catalog.query(provider, "AmazonALB", region, "ALB-LCU-RuleEvaluations", rule_evaluations)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total

@@ -1,7 +1,36 @@
 """Tests for Amazon CloudFront Distribution resource model (Issue #17)."""
 import pytest
-from infra_cost_model.resources.cloudfront import CloudFrontDistribution, _cloudfront_cost
+from infra_cost_model.resources.cloudfront import CloudFrontDistribution
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
+
+# The handler declares no logical metric for the HTTP request row.
+HTTP_REQUEST_METRIC = "CloudFront-HTTP-Request"
+
+
+def _cost(requests=0, https_ratio=1.0, data_out_gb=0, catalog=None):
+    """Price a distribution, splitting requests across the HTTP and HTTPS rows.
+
+    The handler maps ``requests`` to the HTTPS row, the protocol a
+    distribution serves by default, and declares no logical metric for the
+    HTTP row, so that row is named here. The 10 million free requests cover
+    both protocols together (#333), so each pays its share of the price of
+    all the requests.
+    """
+    catalog = catalog if catalog is not None else PricingCatalog(seed=True)
+    https_metric = CloudFrontDistribution().catalog_metrics["requests"]
+    total = 0.0
+    for metric, share in ((HTTP_REQUEST_METRIC, 1.0 - https_ratio),
+                          (https_metric, https_ratio)):
+        if requests > 0 and share > 0:
+            result = catalog.query("aws", "AmazonCloudFront", "global", metric, requests)
+            total += result.total_cost * share
+    if data_out_gb > 0:
+        total += resource_cost(
+            "aws_cloudfront_distribution.cdn", "AmazonCloudFront", "global",
+            catalog=catalog, dataOutGb=data_out_gb,
+        )
+    return total
 
 class TestCloudFrontAddressParsing:
     def test_from_address_terraform(self):
@@ -38,31 +67,31 @@ class TestCloudFrontPricing:
     so these cases price usage above the free tier."""
     def setup_method(self): self.catalog = PricingCatalog(seed=True)
     def test_http_request_pricing(self):
-        cost = _cloudfront_cost(requests=11_000_000, https_ratio=0.0, catalog=self.catalog, region="global")
+        cost = _cost(requests=11_000_000, https_ratio=0.0)
         assert cost == pytest.approx(0.75, rel=0.01)
     def test_https_request_pricing(self):
-        cost = _cloudfront_cost(requests=11_000_000, https_ratio=1.0, catalog=self.catalog, region="global")
+        cost = _cost(requests=11_000_000, https_ratio=1.0)
         assert cost == pytest.approx(1.00, rel=0.01)
     def test_https_more_expensive_than_http(self):
-        http = _cloudfront_cost(requests=11_000_000, https_ratio=0.0, catalog=self.catalog, region="global")
-        https = _cloudfront_cost(requests=11_000_000, https_ratio=1.0, catalog=self.catalog, region="global")
+        http = _cost(requests=11_000_000, https_ratio=0.0)
+        https = _cost(requests=11_000_000, https_ratio=1.0)
         assert https > http
     def test_mixed_http_https(self):
-        cost = _cloudfront_cost(requests=11_000_000, https_ratio=0.8, catalog=self.catalog, region="global")
+        cost = _cost(requests=11_000_000, https_ratio=0.8)
         assert cost == pytest.approx(0.95, rel=0.01)
     def test_data_transfer_first_tier(self):
-        cost = _cloudfront_cost(data_out_gb=5000, catalog=self.catalog, region="global")
+        cost = _cost(data_out_gb=5000)
         assert cost == pytest.approx((5000 - 1024) * 0.085, rel=0.01)
     def test_data_transfer_crossing_tiers(self):
-        cost = _cloudfront_cost(data_out_gb=15000, catalog=self.catalog, region="global")
+        cost = _cost(data_out_gb=15000)
         expected = (10240 - 1024) * 0.085 + 4760 * 0.080
         assert cost == pytest.approx(expected, rel=0.01)
     def test_combined_all_dimensions(self):
-        cost = _cloudfront_cost(requests=20_000_000, https_ratio=0.5, data_out_gb=1524, catalog=self.catalog, region="global")
+        cost = _cost(requests=20_000_000, https_ratio=0.5, data_out_gb=1524)
         expected = 3.75 + 5.00 + 42.50
         assert cost == pytest.approx(expected, rel=0.01)
     def test_zero_usage(self):
-        assert _cloudfront_cost(catalog=self.catalog, region="global") == 0.0
+        assert _cost() == 0.0
 
 class TestCloudFrontRoutingNode:
     def test_is_routing_node(self):

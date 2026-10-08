@@ -208,7 +208,7 @@ def test_sync_to_cache_kms_key_month_upserts(monkeypatch):
     assert n == 1  # WRONG-UNIT row filtered out by the descriptor's unit
     assert upserted[0].usage_metric == "KMS-Key-Month"
     # store_service remaps Infracost's lowercase "awskms" to the queried "AWSKMS"
-    # (the case the handler _kms_cost and the seed rows use).
+    # (the case the KMS handler and the seed rows use).
     assert upserted[0].service == "AWSKMS"
     assert upserted[0].price_usd == pytest.approx(1.0)
     assert upserted[0].source == "infracost"

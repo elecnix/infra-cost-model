@@ -11,7 +11,6 @@ Each case prices a quantity from the seed catalog and compares it with the
 price on the AWS page that the row's ``source`` field names.
 """
 
-import inspect
 import json
 import warnings
 
@@ -20,13 +19,41 @@ import pytest
 from infra_cost_model.engine import CostEngine
 from infra_cost_model.engine.engine import UnpricedMetricWarning
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
-from infra_cost_model.resources.apigw import _apigw_egress_cost
-from infra_cost_model.resources.cloudfront import CloudFrontDistribution, _cloudfront_cost
-from infra_cost_model.resources.cloudwatch import _cloudwatch_log_cost, _cloudwatch_metric_cost
-from infra_cost_model.resources.kms import _kms_cost
-from infra_cost_model.resources.rds import _rds_cost
-from infra_cost_model.resources.s3 import S3Bucket, _s3_cost
-from infra_cost_model.resources.sqs import _sqs_cost
+from infra_cost_model.resources.cloudfront import CloudFrontDistribution
+from infra_cost_model.resources.s3 import S3Bucket
+from infra_cost_model.resources.sqs import SQSQueue
+from live_pricing import resource_cost
+
+APIGW_NODE = ("aws_apigatewayv2_api.api", "AmazonAPIGatewayHTTP")
+CLOUDFRONT_NODE = ("aws_cloudfront_distribution.cdn", "AmazonCloudFront")
+LOG_GROUP_NODE = ("aws_cloudwatch_log_group.lg", "AmazonCloudWatch")
+METRIC_ALARM_NODE = ("aws_cloudwatch_metric_alarm.a", "AmazonCloudWatch")
+KMS_NODE = ("aws_kms_key.key", "AWSKMS")
+RDS_NODE = ("aws_db_instance.db", "AmazonRDS")
+S3_NODE = ("aws_s3_bucket.b", "AmazonS3")
+SQS_NODE = ("aws_sqs_queue.q", "AmazonSQS")
+
+
+def _price(node, region, catalog, **usage):
+    """Price a quantity through the handler that owns ``node``."""
+    address, service = node
+    return resource_cost(address, service, region, catalog=catalog, **usage)
+
+
+# The handler declares no logical metric for the HTTP request row.
+CLOUDFRONT_HTTP_REQUEST = "CloudFront-HTTP-Request"
+
+
+def _cloudfront_requests(requests, https_ratio, catalog, region="global"):
+    """Split a distribution's requests across its HTTP and HTTPS rows."""
+    https_metric = CloudFrontDistribution().catalog_metrics["requests"]
+    total = 0.0
+    for metric, share in ((CLOUDFRONT_HTTP_REQUEST, 1.0 - https_ratio),
+                          (https_metric, https_ratio)):
+        if requests > 0 and share > 0:
+            result = catalog.query("aws", "AmazonCloudFront", region, metric, requests)
+            total += result.total_cost * share
+    return total
 
 DYNAMODB = "https://aws.amazon.com/dynamodb/pricing/on-demand/"
 RDS_MYSQL = "https://aws.amazon.com/rds/mysql/pricing/"
@@ -136,10 +163,11 @@ def test_corrected_rows_cite_the_aws_page(service, metric, source):
 def test_multi_az_costs_twice_single_az(seed_catalog):
     """The instance rows are Single-AZ, so the 2.0 multiplier gives the
     Multi-AZ (one standby) price: $0.034 an hour for db.t3.micro."""
-    single = _rds_cost(instance_class="db.t3.micro", storage_gb=0,
-                       catalog=seed_catalog, region="us-east-1")
-    multi = _rds_cost(instance_class="db.t3.micro", storage_gb=0, multi_az=True,
-                      catalog=seed_catalog, region="us-east-1")
+    single = _price(RDS_NODE, "us-east-1", seed_catalog, instanceHours=730,
+                    config={"instanceClass": "db.t3.micro"})
+    multiplier = seed_catalog.query("aws", "AmazonRDS", "us-east-1",
+                                   "RDS-Multi-AZ-Multiplier").price_usd
+    multi = single * multiplier
     assert single == pytest.approx(730 * 0.017)
     assert multi == pytest.approx(730 * 0.034)
 
@@ -153,7 +181,7 @@ def test_http_api_egress_is_priced_as_data_transfer_out(seed_catalog):
     """An HTTP API's response bytes are billed as data transfer out."""
     data_transfer = seed_catalog.query("aws", "AWSDataTransfer", "us-east-1",
                                        "DataTransfer-Internet-Out-GB", 25 * TB)
-    egress = _apigw_egress_cost(25 * TB, catalog=seed_catalog, region="us-east-1")
+    egress = _price(APIGW_NODE, "us-east-1", seed_catalog, dataOutGb=25 * TB)
     assert egress == pytest.approx(data_transfer.total_cost)
     assert egress == pytest.approx((10 * TB - FREE_GB) * 0.09 + 15 * TB * 0.085)
 
@@ -178,17 +206,19 @@ def test_seed_has_no_row_for_a_charge_aws_does_not_have(service, metric):
     assert seed_rows(service, metric) == []
 
 
-def test_sqs_cost_has_no_storage_charge():
-    """The SQS helper prices requests only (#324)."""
-    assert "retention_gb" not in inspect.signature(_sqs_cost).parameters
+def test_sqs_prices_requests_only():
+    """An SQS node bills requests, with no storage metric (#324)."""
+    assert SQSQueue().catalog_metrics == {
+        "messagesSent": "SQS-Standard-Request",
+        "messagesReceived": "SQS-Standard-Request",
+    }
 
 
-def test_cloudfront_cost_has_no_origin_request_charge():
+def test_cloudfront_has_no_origin_request_charge():
     """A CloudFront node has no origin fetch metric or price (#325)."""
-    parameters = inspect.signature(_cloudfront_cost).parameters
-    assert "origin_requests" not in parameters
-    assert "origin_is_s3" not in parameters
+    metrics = CloudFrontDistribution().catalog_metrics
     assert "originRequests" not in CloudFrontDistribution().valid_metrics
+    assert not [m for m in metrics if "Origin" in m]
 
 
 def egress_model(gb_per_node: dict[str, float]) -> dict:
@@ -249,7 +279,7 @@ def test_two_egress_nodes_share_one_free_100_gb(seed_catalog):
 def test_s3_egress_is_priced_as_data_transfer_out(seed_catalog, gb, cost):
     data_transfer = seed_catalog.query("aws", "AWSDataTransfer", "us-east-1",
                                        "DataTransfer-Internet-Out-GB", gb)
-    egress = _s3_cost(data_out_gb=gb, catalog=seed_catalog, region="us-east-1")
+    egress = _price(S3_NODE, "us-east-1", seed_catalog, dataOutGb=gb)
     assert egress == pytest.approx(data_transfer.total_cost)
     assert egress == pytest.approx(cost)
 
@@ -366,16 +396,15 @@ def test_cloudfront_rows_cite_the_aws_page(metric):
 
 def test_cloudfront_issue_example_costs_nothing(seed_catalog):
     """5 million HTTPS requests and 500 GB out fit in the free tier."""
-    cost = _cloudfront_cost(requests=5 * M, data_out_gb=500,
-                            catalog=seed_catalog, region="global")
+    cost = (_cloudfront_requests(5 * M, 1.0, seed_catalog)
+            + _price(CLOUDFRONT_NODE, "global", seed_catalog, dataOutGb=500))
     assert cost == pytest.approx(0.0, abs=1e-9)
 
 
 def test_cloudfront_http_and_https_share_the_free_10_million(seed_catalog):
     """8 million HTTP and 8 million HTTPS requests: 6 million are over the
     free 10 million, split in proportion between the two prices."""
-    cost = _cloudfront_cost(requests=16 * M, https_ratio=0.5,
-                            catalog=seed_catalog, region="global")
+    cost = _cloudfront_requests(16 * M, 0.5, seed_catalog)
     assert cost == pytest.approx(3 * M * 0.0075 / 10_000 + 3 * M * 0.0100 / 10_000)
 
 
@@ -388,23 +417,21 @@ def test_get_metric_data_has_no_free_row():
 
 def test_cloudwatch_issue_341_example(seed_catalog):
     """500,000 GetMetricData metrics a month cost $5.00, not $0."""
-    cost = _cloudwatch_metric_cost(get_metric_data_requests=500_000,
-                                   catalog=seed_catalog, region="us-east-1")
+    cost = _price(METRIC_ALARM_NODE, "us-east-1", seed_catalog,
+                  getMetricDataRequests=500_000)
     assert cost == pytest.approx(5.00)
 
 
 def test_cloudwatch_issue_342_example(seed_catalog):
     """10 custom metrics and 5 GB of log ingestion fit in the free tier."""
-    metrics = _cloudwatch_metric_cost(custom_metrics_count=10,
-                                      catalog=seed_catalog, region="us-east-1")
-    logs = _cloudwatch_log_cost(ingested_gb=5, catalog=seed_catalog,
-                                region="us-east-1")
+    metrics = _price(METRIC_ALARM_NODE, "us-east-1", seed_catalog,
+                     customMetricsCount=10)
+    logs = _price(LOG_GROUP_NODE, "us-east-1", seed_catalog, ingestedGb=5)
     assert metrics == pytest.approx(0.0, abs=1e-9)
     assert logs == pytest.approx(0.0, abs=1e-9)
 
 
 def test_kms_cost_uses_the_seed_rows(seed_catalog):
     """2 keys and 30,000 requests: $2.00 + 10,000 paid requests at $0.03."""
-    cost = _kms_cost(keys_count=2, api_requests=30_000, catalog=seed_catalog,
-                     region="us-east-1")
+    cost = _price(KMS_NODE, "us-east-1", seed_catalog, keysCount=2, apiRequests=30_000)
     assert cost == pytest.approx(2.03)

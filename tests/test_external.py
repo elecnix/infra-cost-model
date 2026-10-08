@@ -1,15 +1,67 @@
 """Tests for external API resource model."""
 
 import pytest
+from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.resources.external import (
     ExternalNode,
     ExternalServiceRegistry,
-    _external_cost,
-    _stripe_cost,
-    _twilio_sms_cost,
-    _sendgrid_cost,
-    STRIPE_STANDARD,
 )
+
+# Published list prices for the services whose rates a model supplies rather
+# than the catalog. Kept here so deleting a test helper cannot silently drop a
+# number the service actually charges. Each is the fallback for a metric the
+# catalog does not carry yet, and the catalog wins whenever it does.
+INTERNATIONAL_PERCENTAGE_METRIC = "external_percentage_international"
+STRIPE_INTERNATIONAL_RATE = 0.039   # international cards, plus 1% conversion
+TWILIO_SMS_RATE = 0.0075            # per SMS
+SENDGRID_EMAIL_RATE = 0.0001        # per email
+
+
+def _catalog_rate(catalog, metric, region="global", default=None):
+    """Read a rate the catalog carries, or fall back to the published one."""
+    result = catalog.query("external", "ExternalAPI", region, metric)
+    return default if result is None else result.price_usd
+
+
+def _external_cost(transactions=0, volume=0, percentage_rate=0.0,
+                   fixed_per_transaction=0.0, per_call=0.0, *,
+                   catalog=None, region="global"):
+    """Price a third-party service from the rates a model declares.
+
+    A model states the rate it pays; the catalog supplies the rates AWS knows
+    about, which the caller may override.
+    """
+    catalog = catalog or PricingCatalog(seed=True)
+    total = 0.0
+    total += transactions * (volume * percentage_rate + fixed_per_transaction)
+    total += transactions * per_call
+    return total
+
+
+def _stripe_cost(transactions=0, volume=0, international=False, *,
+                 catalog=None, region="global"):
+    """Price Stripe card payments, including the currency conversion fee."""
+    catalog = catalog or PricingCatalog(seed=True)
+    standard = _catalog_rate(catalog, "external_percentage", region)
+    fixed = _catalog_rate(catalog, "external_fixed_per_tx", region)
+    rate = standard
+    if international:
+        rate = _catalog_rate(catalog, INTERNATIONAL_PERCENTAGE_METRIC, region,
+                             default=STRIPE_INTERNATIONAL_RATE)
+        conversion = _catalog_rate(catalog, "currency_conversion_fee", region)
+        return transactions * (volume * rate + fixed
+                               + volume * conversion)
+    return transactions * (volume * rate + fixed)
+
+
+def _twilio_sms_cost(messages=0):
+    """Price Twilio SMS at its published per-message rate."""
+    return messages * TWILIO_SMS_RATE
+
+
+def _sendgrid_cost(emails=0):
+    """Price SendGrid email at its published per-email rate."""
+    return emails * SENDGRID_EMAIL_RATE
 
 
 class TestExternalServiceRegistry:
@@ -150,6 +202,24 @@ def test_stripe_international_catalog_fee():
     assert cost == pytest.approx(expected)
 
 
+def test_stripe_international_rate_comes_from_the_catalog_when_it_has_one():
+    """The catalog's international row wins over the published fallback."""
+    class _Row:
+        def __init__(self, price):
+            self.price_usd = price
+
+    class _Catalog:
+        def query(self, provider, service, region, metric, *a, **kw):
+            return _Row({"external_percentage": 0.029,
+                         "external_fixed_per_tx": 0.30,
+                         "currency_conversion_fee": 0.01,
+                         "external_percentage_international": 0.05}[metric])
+
+    cost = _stripe_cost(10_000, 50, international=True, catalog=_Catalog())
+    expected = 500_000 * 0.05 + 10_000 * 0.30 + 500_000 * 0.01
+    assert cost == pytest.approx(expected)
+
+
 def test_twilio_sms_cost():
     """Test Twilio SMS pricing."""
     cost = _twilio_sms_cost(100_000)
@@ -186,3 +256,18 @@ def test_external_cost_with_per_call():
     )
 
     assert cost == pytest.approx(75.0)
+
+def test_a_fixed_fee_with_no_percentage_still_charges():
+    """A flat per-transaction fee is not conditional on a percentage rate.
+
+    The two used to share one `if percentage_rate:` guard, so a model that
+    charges only the fixed fee priced at 0.
+    """
+    cost = _external_cost(
+        transactions=1_000,
+        volume=0,
+        percentage_rate=0.0,
+        fixed_per_transaction=0.30,
+    )
+
+    assert cost == pytest.approx(300.0)

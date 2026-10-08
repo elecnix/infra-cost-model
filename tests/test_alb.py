@@ -1,6 +1,9 @@
 """Tests for Application Load Balancer resource model (Issue #183)."""
+from functools import partial
+
 import pytest
-from infra_cost_model.resources.alb import ApplicationLoadBalancer, _alb_cost
+from infra_cost_model.resources.alb import ApplicationLoadBalancer
+from live_pricing import resource_cost
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 
@@ -105,42 +108,40 @@ class TestALBExtraction:
 class TestALBPricing:
     def setup_method(self):
         self.catalog = PricingCatalog(seed=True)
+        self.cost = partial(resource_cost, "aws_lb.web",
+                            "AmazonALB", "us-east-1", catalog=self.catalog)
 
     def test_alb_hours_only(self):
-        cost = _alb_cost(alb_hours=730, processed_gb=0, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(albHours=730, processedGb=0)
         assert cost == pytest.approx(16.425, rel=0.01)
 
     def test_processed_gb_only(self):
-        cost = _alb_cost(alb_hours=0, processed_gb=100, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(albHours=0, processedGb=100)
         assert cost == pytest.approx(0.80, rel=0.01)
 
     def test_combined_hours_and_data(self):
-        cost = _alb_cost(alb_hours=730, processed_gb=100, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(albHours=730, processedGb=100)
         assert cost == pytest.approx(17.225, rel=0.01)
 
     def test_lcu_new_connections(self):
-        cost = _alb_cost(alb_hours=0, new_connections=50, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(albHours=0, newConnections=50)
         assert cost == pytest.approx(0.40, rel=0.01)
 
     def test_lcu_active_connections(self):
-        cost = _alb_cost(alb_hours=0, active_connections=200, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(albHours=0, activeConnections=200)
         assert cost == pytest.approx(1.60, rel=0.01)
 
     def test_lcu_rule_evaluations(self):
-        cost = _alb_cost(alb_hours=0, rule_evaluations=1000, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(albHours=0, ruleEvaluations=1000)
         assert cost == pytest.approx(8.00, rel=0.01)
 
     def test_all_dimensions(self):
-        cost = _alb_cost(
-            alb_hours=730, processed_gb=500,
-            new_connections=100, active_connections=200, rule_evaluations=50,
-            catalog=self.catalog, region="us-east-1",
-        )
+        cost = self.cost(albHours=730, processedGb=500, newConnections=100, activeConnections=200, ruleEvaluations=50)
         expected = 730 * 0.0225 + 500 * 0.008 + 100 * 0.008 + 200 * 0.008 + 50 * 0.008
         assert cost == pytest.approx(expected, rel=0.01)
 
     def test_zero_usage(self):
-        assert _alb_cost(alb_hours=0, processed_gb=0, catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.cost(albHours=0, processedGb=0) == 0.0
 
 
 class TestALBNodeType:

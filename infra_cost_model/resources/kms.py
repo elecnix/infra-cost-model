@@ -7,7 +7,6 @@ Native handler for AWS KMS customer-managed keys.
 """
 
 from typing import Optional
-from infra_cost_model.pricing.catalog import PricingCatalog
 from .types import StorageResource, ResourceExtract
 
 
@@ -68,21 +67,3 @@ class KMSKey(StorageResource):
                 "keyUsage": properties.get("KeyUsage", "ENCRYPT_DECRYPT"),
             },
         )
-
-
-def _kms_cost(keys_count=1, api_requests=0, *,
-              catalog=None, provider: str = "aws", region: str) -> float:
-    if catalog is None:
-        catalog = PricingCatalog()
-    total = 0.0
-    if keys_count > 0:
-        r = catalog.query(provider, "AWSKMS", region,
-                          "KMS-Key-Month", keys_count)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    if api_requests > 0:
-        r = catalog.query(provider, "AWSKMS", region,
-                          "KMS-API-Request", api_requests)
-        if r and hasattr(r, "total_cost"):
-            total += r.total_cost
-    return total

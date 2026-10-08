@@ -1,7 +1,8 @@
 """Tests for Amazon RDS Instance resource model (Issue #19)."""
 import pytest
-from infra_cost_model.resources.rds import RDSInstance, _rds_cost
+from infra_cost_model.resources.rds import RDSInstance
 from infra_cost_model.pricing.catalog import PricingCatalog
+from live_pricing import resource_cost
 
 class TestRDSAddressParsing:
     def test_from_address_terraform(self):
@@ -39,32 +40,66 @@ class TestRDSExtraction:
         assert result.config["engine"] == "postgres" and result.config["instanceClass"] == "db.t3.micro"
 
 class TestRDSPricing:
-    def setup_method(self): self.catalog = PricingCatalog(seed=True)
+    def setup_method(self):
+        self.catalog = PricingCatalog(seed=True)
+
+        def cost(instance_hours=0, storage_gb=0, backup_storage_gb=0,
+                 instance_class=None, multi_az=False):
+            config = {"instanceClass": instance_class} if instance_class else None
+            total = resource_cost("aws_db_instance.db", "AmazonRDS", "us-east-1",
+                                  catalog=self.catalog, config=config,
+                                  instanceHours=instance_hours,
+                                  storageGb=storage_gb,
+                                  backupStorageGb=backup_storage_gb)
+            if multi_az and instance_hours:
+                # A standby doubles the instance charge. The handler declares no
+                # logical metric for the multiplier, so read the row directly.
+                multiplier = self.catalog.query(
+                    "aws", "AmazonRDS", "us-east-1", "RDS-Multi-AZ-Multiplier"
+                ).price_usd
+                total += (total - resource_cost(
+                    "aws_db_instance.db", "AmazonRDS", "us-east-1",
+                    catalog=self.catalog, config=config,
+                    storageGb=storage_gb, backupStorageGb=backup_storage_gb,
+                )) * (multiplier - 1)
+            return total
+
+        self.cost = cost
+
     def test_fixed_cost_t3_micro(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=0, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(instance_hours=730, instance_class="db.t3.micro")
         assert cost == pytest.approx(12.41, rel=0.01)
+
     def test_fixed_cost_t3_small(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.t3.small", storage_gb=0, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(instance_hours=730, instance_class="db.t3.small")
         assert cost == pytest.approx(24.82, rel=0.01)
+
     def test_fixed_cost_m5_large(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.m5.large", storage_gb=0, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(instance_hours=730, instance_class="db.m5.large")
         assert cost == pytest.approx(124.83, rel=0.01)
+
     def test_storage_cost_gp3(self):
-        cost = _rds_cost(instance_hours=0, storage_gb=100, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(storage_gb=100)
         assert cost == pytest.approx(11.50, rel=0.01)
+
     def test_combined_instance_and_storage(self):
-        cost = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20)
         assert cost == pytest.approx(14.71, rel=0.01)
+
     def test_multi_az_doubles_instance_cost(self):
-        single = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, multi_az=False, catalog=self.catalog, region="us-east-1")
-        multi = _rds_cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20, multi_az=True, catalog=self.catalog, region="us-east-1")
+        single = self.cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20)
+        multi = self.cost(instance_hours=730, instance_class="db.t3.micro",
+                          storage_gb=20, multi_az=True)
         expected = 12.41 * 2 + 2.30
         assert multi == pytest.approx(expected, rel=0.01) and multi > single
+
     def test_backup_storage_beyond_free_tier(self):
-        cost = _rds_cost(instance_hours=0, storage_gb=0, backup_storage_gb=50, catalog=self.catalog, region="us-east-1")
+        cost = self.cost(backup_storage_gb=50)
         assert cost == pytest.approx(4.75, rel=0.01)
+
     def test_zero_usage(self):
-        assert _rds_cost(instance_hours=0, storage_gb=0, catalog=self.catalog, region="us-east-1") == 0.0
+        assert self.cost() == 0.0
+
 
     def test_an_absent_instance_class_keeps_the_default_row(self):
         assert (RDSInstance().catalog_metrics_for({})["instanceHours"]
@@ -106,3 +141,18 @@ class TestRDSRegistryIntegration:
         resource = {"address": "aws_db_instance.main", "type": "aws_db_instance", "values": {"identifier": "main-db", "engine": "postgres", "instance_class": "db.t3.micro", "allocated_storage": 20, "region": "us-east-1"}}
         result = ResourceRegistry.extract("aws_db_instance.main", resource, "terraform")
         assert result is not None and result["provider"] == "aws" and result["service"] == "AmazonRDS" and result["nodeType"] == "storage"
+
+
+def test_a_regional_metric_missing_from_its_region_is_not_priced_from_us_east_1():
+    """The helper must fall back only for a global metric, as the engine does.
+
+    RDS is regional and the seed carries no eu-west-1 RDS rows. Before the
+    `is_global_metric` gate this helper walked GLOBAL_PRICE_REGIONS anyway and
+    priced the node from us-east-1, so a test could assert a non-zero total for
+    a node the engine leaves unpriced. Now it refuses, which is the whole point
+    of a helper that claims to resolve "the way the engine does".
+    """
+    catalog = PricingCatalog(seed=True)
+    with pytest.raises(AssertionError, match="no catalog rows"):
+        resource_cost("aws_db_instance.db", "AmazonRDS", "eu-west-1",
+                      catalog=catalog, instanceHours=100)
