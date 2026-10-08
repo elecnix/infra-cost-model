@@ -48,7 +48,10 @@ def _evaluate(node: ast.AST, parameters: dict, text: str) -> float:
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
             raise ValueError(f"'{text}' is not a quantity")
-        return float(node.value)
+        try:
+            return float(node.value)
+        except OverflowError:
+            raise ValueError(f"'{text}' is too large to be a quantity") from None
 
     if isinstance(node, ast.Name):
         if node.id not in parameters:

@@ -178,6 +178,11 @@ class ResourceRegistry:
         if not handler and source_format == "pulumi":
             # A Pulumi `id` names no resource type; the URN carries it (#396).
             handler = cls.from_address(resource_data.get("urn", ""))
+        if (not handler and source_format == "terraform"
+                and resource_data.get("type") and resource_data.get("name")):
+            # A module's resource is addressed `module.<name>.<type>.<name>`,
+            # so its own type and name select the handler.
+            handler = cls.from_address(f"{resource_data['type']}.{resource_data['name']}")
         if not handler:
             return None
 
@@ -257,6 +262,20 @@ ResourceRegistry.register(WAFv2WebACL)
 ResourceRegistry.register(DataTransferNode)
 
 
+def _module_resources(module: dict) -> list:
+    """The resources of a `terraform show -json` module and of its child modules.
+
+    A plan keeps a module's resources under its own `child_modules` entry,
+    with addresses such as `module.store.aws_s3_bucket.data`, so reading the
+    root module alone dropped every resource a module declares.
+    """
+    resources = list(module.get("resources") or [])
+    for child in module.get("child_modules") or []:
+        if isinstance(child, dict):
+            resources.extend(_module_resources(child))
+    return resources
+
+
 def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
     """Extract all resources from Terraform show -json output.
 
@@ -272,7 +291,8 @@ def extract_resources_from_tf(tf_json: dict) -> dict[str, dict]:
     results = {}
     unsupported: list[str] = []
     # Terraform show -json structure
-    resources = tf_json.get("resource", []) or tf_json.get("values", {}).get("root_module", {}).get("resources", [])
+    resources = tf_json.get("resource", []) or _module_resources(
+        (tf_json.get("values") or {}).get("root_module") or {})
     # Function Apps need the SKU of their App Service plan (#382).
     plans = service_plans_from_tf(resources)
     # OpenAI deployments run in their account's region (#371).

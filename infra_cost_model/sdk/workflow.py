@@ -5,6 +5,7 @@ This module provides a fluent API for declaring cost models, mirroring the YAML 
 Addresses Principle 11: Three surfaces (YAML, TypeScript, Python) share one schema.
 """
 
+import math
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
@@ -88,6 +89,22 @@ class NodeUsage:
         return self
 
 
+def _refuse_non_finite(value, path: str) -> None:
+    """Raise ValueError at the first NaN or infinity in a parsed model.
+
+    YAML spells them `.nan` and `.inf`, and either one priced into a total
+    that compares false against every `--budget`, so the run passed.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{path} is {value}, which is not a quantity")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _refuse_non_finite(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _refuse_non_finite(item, f"{path}[{index}]")
+
+
 def parse_yaml_dsl(yaml_content: str) -> dict:
     """Parse YAML DSL with arrow syntax into cost model representation.
 
@@ -106,7 +123,11 @@ def parse_yaml_dsl(yaml_content: str) -> dict:
     Returns:
         Cost model representation dict.
     """
-    data = yaml.safe_load(yaml_content)
+    try:
+        data = yaml.safe_load(yaml_content)
+    except yaml.YAMLError as e:
+        raise ValueError(f"the model is not valid YAML: {e}") from None
+    _refuse_non_finite(data, "model")
     if not isinstance(data, dict):
         data = {}
 
