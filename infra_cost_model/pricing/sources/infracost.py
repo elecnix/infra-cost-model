@@ -174,6 +174,32 @@ _CLOUD_RUN_TIER_2_REGIONS = frozenset({
 # with other prices. germanywestcentral is the nearest Zone 1 region.
 AZURE_EGRESS_METER_FALLBACK = {"polandcentral": "germanywestcentral"}
 
+# The Cloud Storage locations that are not GCP regions (#397). A bucket's
+# location is the catalog region: `us`, `eu` and `asia` for a multi-region,
+# and the code of a pair of regions for a dual-region. Cloud Storage
+# defines six predefined dual-regions, asia1, eur4, eur5, eur7, eur8 and
+# nam4 (https://cloud.google.com/storage/docs/locations). A location that is
+# none of these has no rows. A configurable dual-region shares its location
+# code with a multi-region, so a bucket's `location` reads as that
+# multi-region; the dual-region rows price the code on their own.
+GCS_MULTI_REGIONS = ("us", "eu", "asia")
+GCS_DUAL_REGIONS = ("nam4", "eur4", "eur5", "eur7", "eur8", "asia1")
+GCS_LOCATIONS = GCS_MULTI_REGIONS + GCS_DUAL_REGIONS
+
+# The catalogue region that holds the product of each Cloud Storage location.
+# Infracost keeps multi-region storage under `us` and `asia` ("Standard
+# Storage US Multi-region") and a dual-region product under every GCP region,
+# beside the regional one ("Standard Storage Iowa Dual-region" in
+# us-central1), but it has no `eu` storage product. GCP gives the three
+# multi-regions one price (https://cloud.google.com/storage/pricing, checked
+# 2026-10-02, which states one rate under "Multi-region" for Asia, Europe
+# and the US) and one price to every dual-region (the same page: a
+# dual-region of Iowa and Oregon "will be billed at $0.022 per GB per month
+# for the us-central1 dual-region SKU and $0.022 per GB per month for the
+# us-west1 dual-region SKU"), so `eu` reads the `us` product and every
+# dual-region code reads Iowa's.
+GCS_LOCATION_QUERY = {"eu": "us", **dict.fromkeys(GCS_DUAL_REGIONS, "us-central1")}
+
 
 @dataclasses.dataclass(frozen=True)
 class TierBoundOverride:
@@ -225,11 +251,14 @@ def _with_published_bounds(rows: list, override: Optional[TierBoundOverride]) ->
 def sync_regions(vendor: str) -> list[str]:
     """The regions that ``sync-pricing`` syncs for *vendor* by default.
 
-    The AWS list ends with ``GLOBAL_REGION``.
+    The AWS list ends with ``GLOBAL_REGION``. The GCP list ends with the
+    Cloud Storage locations that are not regions (#397).
     """
     regions = {"azure": _AZURE_REGIONS, "gcp": _GCP_LOCATION}.get(vendor)
     if regions is None:
         return sorted(_REGION_PREFIX) + [GLOBAL_REGION]
+    if vendor == "gcp":
+        return sorted(regions) + list(GCS_LOCATIONS)
     return sorted(regions)
 
 
@@ -242,6 +271,19 @@ def _resolve_gcp_location(filters: Optional[list[dict]], region: str) -> Optiona
         return filters
     location = _GCP_LOCATION.get(region, "GCP_LOCATION")
     return [{**f, "value": f["value"].replace("GCP_LOCATION", location)} for f in filters]
+
+
+def _resolve_gcs_location(query_region: str, region: str) -> str:
+    """Replace ``GCS_LOCATION`` in a query region with the region that prices it.
+
+    A descriptor that prices a Cloud Storage location names ``GCS_LOCATION``
+    as its query region; *region* is the location code, such as ``eu`` or
+    ``nam4``. A code that is also a catalogue region reads itself, and a code
+    that isn't in the table queries a region that holds no such product.
+    """
+    if query_region != "GCS_LOCATION":
+        return query_region
+    return GCS_LOCATION_QUERY.get(region, region)
 
 
 def _resolve_cloud_run_tier(patterns: dict, region: str) -> dict:
@@ -383,7 +425,9 @@ DESCRIPTOR_FIELDS: dict[str, DescriptorField] = {
                                           doc="attributes a regex must fullmatch, for values only a pattern can select"),
     # Which catalogue to read
     "query_region": DescriptorField((str,),
-                                    doc="region to query; '' for the global catalogue"),
+                                    doc="region to query; '' for the global catalogue, GCS_LOCATION for a Cloud Storage location"),
+    "location_scope": DescriptorField((bool,),
+                                      doc="priced only in a Cloud Storage multi-region or dual-region"),
     "global_scope": DescriptorField((bool,),
                                     doc="the products sit in the global (region=\"\") catalogue"),
     "unprefixed_in_us_east_1": DescriptorField((bool,),
@@ -532,7 +576,8 @@ def parse_descriptor(usage_metric: str, region: str, vendor: str = "aws") -> Pri
     # globally, with region="". `query_region` lets a descriptor query that
     # global catalogue while the price is still stored under the caller's
     # `region`.
-    query_region = descriptor.get("query_region", region)
+    query_region = _resolve_gcs_location(
+        descriptor.get("query_region", region), region)
     attribute_filters = descriptor.get("attribute_filters")
     if region == GLOBAL_REGION:
         # The global products, such as those of a web ACL with the scope
@@ -1756,6 +1801,35 @@ for _class in ("Nearline", "Coldline", "Archive"):
         }
 
 
+# Cloud Storage in a multi-region or a dual-region (#397). The sync region is
+# the location code, and `GCS_LOCATION_QUERY` names the catalogue region that
+# holds the product. A storage product names its class and the kind of
+# location in its description ("Standard Storage Iowa Dual-region"), which the
+# pattern selects; the early-delete charge of a class is priced by the day,
+# which the unit leaves out. The operations are in the global catalogue, one
+# product per kind of location and class ("Multi-Region Standard Class A
+# Operations").
+for _kind, _label, _ops_label in (("MultiRegion", "Multi-region", "Multi-Region"),
+                                  ("DualRegion", "Dual-region", "Dual-Region")):
+    for _class in ("Standard", "Nearline", "Coldline", "Archive"):
+        METRIC_DESCRIPTORS[f"GCS-{_class}-{_kind}-GiB-Month"] = {
+            "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+            "query_region": "GCS_LOCATION", "location_scope": True,
+            "attribute_patterns": {
+                "description": rf"{_class} Storage .*{_label}.*",
+            },
+            "unit": "gibibyte month",
+        }
+        for _ops in ("A", "B"):
+            METRIC_DESCRIPTORS[f"GCS-{_class}-{_kind}-Class-{_ops}-Operation"] = {
+                "vendor": "gcp", "service": "Cloud Storage", "store_service": "CloudStorage",
+                "query_region": "global", "location_scope": True,
+                "attribute_filters": [{"key": "description",
+                                       "value": f"{_ops_label} {_class} Class {_ops} Operations"}],
+                "unit": "count",
+            }
+
+
 # App Service plans and the Functions plans other than consumption (#383):
 # the Infracost service, the stored service, and the product, SKU, meter and
 # unit of each metric. A dedicated plan bills each instance-hour of its SKU,
@@ -1877,6 +1951,16 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
                 continue
             if region == GLOBAL_REGION and not METRIC_DESCRIPTORS[metric].get("global_scope"):
                 continue
+            if vendor == "gcp":
+                # A Cloud Storage location is not a GCP region (#397). Only the
+                # Cloud Storage products have a row for one, and the rows of a
+                # multi-region or a dual-region belong to the location itself,
+                # which no GCP region stands in for.
+                if region in GCS_LOCATIONS:
+                    if METRIC_DESCRIPTORS[metric].get("store_service") != "CloudStorage":
+                        continue
+                elif METRIC_DESCRIPTORS[metric].get("location_scope"):
+                    continue
             try:
                 total += client.sync_to_cache(cache, metric, region, vendor)
             except (RuntimeError, requests.RequestException, KeyError) as exc:

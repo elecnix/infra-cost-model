@@ -496,12 +496,21 @@ def test_every_scaled_descriptor_names_its_stored_unit():
     assert [m for m, d in scaled.items() if "store_unit" not in d] == []
 
 
+def _is_gcs_location_metric(metric: str) -> bool:
+    """Whether *metric* prices a Cloud Storage multi-region or dual-region.
+
+    tests/test_gcs_dual_multi_region.py covers those descriptors (#397).
+    """
+    return metric.startswith("GCS-") and ("MultiRegion" in metric or "DualRegion" in metric)
+
+
 def test_every_azure_and_gcp_descriptor_is_covered():
     covered = {e[0] for e in EXPECTED}
     # test_azure_openai_models.py covers the Azure OpenAI descriptors (#371).
     new = {m for m, d in ic.METRIC_DESCRIPTORS.items() if d.get("vendor") in ("azure", "gcp")
            and d.get("store_service") != "AzureOpenAI" and m not in ic._SETTINGS_METERS
            and not m.startswith(("GCS-Nearline-", "GCS-Coldline-", "GCS-Archive-"))
+           and not _is_gcs_location_metric(m)
            and m not in ic._PLAN_METERS}
     # test_azure_resource_settings.py and test_gcp_resource_settings.py cover
     # the descriptors of #375.
@@ -544,7 +553,7 @@ def test_unknown_gcp_region_stores_nothing(creds):
 @pytest.mark.parametrize("vendor,expected", [
     ("aws", sorted(ic._REGION_PREFIX) + [ic.GLOBAL_REGION]),
     ("azure", sorted(ic._AZURE_REGIONS)),
-    ("gcp", sorted(ic._GCP_LOCATION)),
+    ("gcp", sorted(ic._GCP_LOCATION) + list(ic.GCS_LOCATIONS)),
 ])
 def test_sync_regions_per_vendor(vendor, expected):
     assert ic.sync_regions(vendor) == expected

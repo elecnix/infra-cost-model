@@ -1,9 +1,10 @@
 """GCP handlers price the product that the resource settings select (#375).
 
-Cloud Storage reads the storage class of a bucket, and warns for dual-region
-and multi-region locations, which have no catalog rows yet. A Cloud Run
-function (2nd gen) bills as a Cloud Run service: requests, vCPU-seconds and
-GiB-seconds at Cloud Run rates.
+Cloud Storage reads the storage class of a bucket. Its multi-region and
+dual-region locations have catalog rows of their own (#397), and a location
+that has none, such as a configurable dual-region, warns at extraction. A
+Cloud Run function (2nd gen) bills as a Cloud Run service: requests,
+vCPU-seconds and GiB-seconds at Cloud Run rates.
 """
 import pytest
 
@@ -58,14 +59,13 @@ def test_location_type(location, kind):
     assert gcs_location_type(location) == kind
 
 
-def test_multi_region_bucket_warns_and_gets_its_own_metrics():
+def test_multi_region_bucket_gets_its_own_metrics():
     resource = {"address": "google_storage_bucket.b", "type": "google_storage_bucket",
                 "values": {"location": "US", "storage_class": "STANDARD"}}
-    with pytest.warns(UserWarning, match=r"google_storage_bucket.b.*multi-region"):
-        node = extract_resources_from_tf({"resource": [resource]})["google_storage_bucket.b"]
+    node = extract_resources_from_tf({"resource": [resource]})["google_storage_bucket.b"]
     metrics = CloudStorage().catalog_metrics_for(node["config"])
     assert metrics["storageGb"] == "GCS-Standard-MultiRegion-GiB-Month"
-    assert metrics["storageGb"] not in ic.METRIC_DESCRIPTORS
+    assert metrics["storageGb"] in ic.METRIC_DESCRIPTORS
 
 
 def test_bucket_region_is_lower_case():
@@ -213,8 +213,5 @@ def test_parse_memory_mb(value, mb):
 def test_unknown_class_warns_for_a_multi_region_bucket_too():
     resource = {"address": "google_storage_bucket.b", "type": "google_storage_bucket",
                 "values": {"location": "EU", "storage_class": "GLACIAL"}}
-    with pytest.warns(UserWarning) as record:
+    with pytest.warns(UserWarning, match="GLACIAL"):
         extract_resources_from_tf({"resource": [resource]})
-    messages = [str(w.message) for w in record]
-    assert any("multi-region" in m for m in messages)
-    assert any("GLACIAL" in m for m in messages)
