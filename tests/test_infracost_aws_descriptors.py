@@ -117,6 +117,22 @@ CATALOGUE = [
                                 "instanceType": "db.r6g.large", "databaseEngine": "MySQL",
                                 "deploymentOption": "Single-AZ"},
           [("0.215", "Hrs", "0", INF)]),
+    # RDS for PostgreSQL (#481), beside its Multi-AZ products.
+    _use1("Database Instance", {"usagetype": "Multi-AZUsage:db.t3.micro",
+                                "instanceType": "db.t3.micro",
+                                "databaseEngine": "PostgreSQL",
+                                "deploymentOption": "Multi-AZ"},
+          [("0.036", "Hrs", "0", INF)]),
+    _use1("Database Instance", {"usagetype": "InstanceUsage:db.r6g.large",
+                                "instanceType": "db.r6g.large",
+                                "databaseEngine": "PostgreSQL",
+                                "deploymentOption": "Single-AZ"},
+          [("0.225", "Hrs", "0", INF)]),
+    _use1("Database Instance", {"usagetype": "Multi-AZUsage:db.r6g.large",
+                                "instanceType": "db.r6g.large",
+                                "databaseEngine": "PostgreSQL",
+                                "deploymentOption": "Multi-AZ"},
+          [("0.45", "Hrs", "0", INF)]),
     _use1("Database Storage", {"usagetype": "USE1-RDS:GP3-Storage", "databaseEngine": "MySQL",
                                "deploymentOption": "Single-AZ"},
           [("0.115", "GB-Mo", "0", INF)]),
@@ -262,6 +278,7 @@ EXPECTED = {
     "ECS-Fargate-GB-Hour": ("AmazonECS", "us-east-1", [(0.004445, 0)]),
     "EventBridge-CustomEvent": ("AmazonEventBridge", "us-east-1", [(0.000001, 0)]),
     "RDS-Instance-Hour-db.t3.micro": ("AmazonRDS", "us-east-1", [(0.017, 0)]),
+    "RDS-Instance-Hour-postgres-db.t3.micro": ("AmazonRDS", "us-east-1", [(0.018, 0)]),
     "RDS-Storage-gp3": ("AmazonRDS", "us-east-1", [(0.115, 0)]),
     "RDS-Backup-Storage": ("AmazonRDS", "us-east-1", [(0.095, 0)]),
     "S3-GetRequest": ("AmazonS3", "us-east-1", [(0.0000004, 0)]),
@@ -306,6 +323,7 @@ QUANTITIES = {
     "ECS-Fargate-GB-Hour": [0, 1460],
     "EventBridge-CustomEvent": [0, 3_000_000],
     "RDS-Instance-Hour-db.t3.micro": [0, 730],
+    "RDS-Instance-Hour-postgres-db.t3.micro": [0, 730],
     "RDS-Storage-gp3": [0, 100],
     "RDS-Backup-Storage": [0, 100],
     "S3-GetRequest": [0, 1_000_000],
@@ -366,6 +384,23 @@ def test_any_rds_instance_class_resolves_to_a_descriptor(creds, tmp_path):
     catalog = PricingCatalog(db_path=tmp_path / "pricing.db")
     _sync(catalog, metric, "us-east-1")
     assert _live_rows(catalog, metric, "us-east-1") == [("AmazonRDS", 0.215, 0.0)]
+
+
+def test_any_postgres_instance_class_resolves_to_a_postgres_descriptor(creds, tmp_path):
+    """The PostgreSQL rows (#481) name the engine before the class."""
+    metric = "RDS-Instance-Hour-postgres-db.r6g.large"
+    assert metric not in ic.METRIC_DESCRIPTORS
+    query = ic.parse_descriptor(metric, "us-east-1")
+    assert {"key": "instanceType", "value": "db.r6g.large"} in query.attribute_filters
+    assert {"key": "databaseEngine", "value": "PostgreSQL"} in query.attribute_filters
+    catalog = PricingCatalog(db_path=tmp_path / "pricing.db")
+    _sync(catalog, metric, "us-east-1")
+    assert _live_rows(catalog, metric, "us-east-1") == [("AmazonRDS", 0.225, 0.0)]
+
+
+@pytest.mark.parametrize("metric", ["RDS-Instance-Hour-postgres-", "RDS-Instance-Hour-"])
+def test_an_rds_metric_without_a_class_has_no_descriptor(metric):
+    assert ic.descriptor_for(metric) is None
 
 
 def test_a_named_rds_class_syncs_through_sync_pricing_catalog(creds, tmp_path,

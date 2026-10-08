@@ -20,6 +20,7 @@ from infra_cost_model.engine import CostEngine
 from infra_cost_model.engine.engine import UnpricedMetricWarning
 from infra_cost_model.pricing.cache import SEED_PRICES_PATH
 from infra_cost_model.resources.cloudfront import CloudFrontDistribution
+from infra_cost_model.resources.rds import RDSInstance
 from infra_cost_model.resources.s3 import S3Bucket
 from infra_cost_model.resources.sqs import SQSQueue
 from live_pricing import resource_cost
@@ -161,15 +162,15 @@ def test_corrected_rows_cite_the_aws_page(service, metric, source):
 
 
 def test_multi_az_costs_twice_single_az(seed_catalog):
-    """The instance rows are Single-AZ, so the 2.0 multiplier gives the
-    Multi-AZ (one standby) price: $0.034 an hour for db.t3.micro."""
+    """The instance rows are Single-AZ, so the handler maps a Multi-AZ
+    instance with a factor of 2 (#481): $0.034 an hour for db.t3.micro."""
     single = _price(RDS_NODE, "us-east-1", seed_catalog, instanceHours=730,
                     config={"instanceClass": "db.t3.micro"})
-    multiplier = seed_catalog.query("aws", "AmazonRDS", "us-east-1",
-                                   "RDS-Multi-AZ-Multiplier").price_usd
-    multi = single * multiplier
+    mapped = RDSInstance().catalog_metrics_for(
+        {"instanceClass": "db.t3.micro", "multiAz": True})["instanceHours"]
+    assert mapped == {"RDS-Instance-Hour-db.t3.micro": 2}
     assert single == pytest.approx(730 * 0.017)
-    assert multi == pytest.approx(730 * 0.034)
+    assert single * mapped["RDS-Instance-Hour-db.t3.micro"] == pytest.approx(730 * 0.034)
 
 
 def test_no_rows_under_the_rest_api_service_for_http_api_egress():
