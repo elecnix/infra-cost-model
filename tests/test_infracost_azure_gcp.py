@@ -619,21 +619,11 @@ def _handler_vendor(handler) -> str:
 # rather than left implicit, so the day one is priced this test says so.
 # The AWS handlers price these from the seed rows only (#470).
 KNOWN_DESCRIPTOR_GAPS = {
-    "APIGatewayHTTP": {"APIGateway-HTTP-Request"},
-    "ApplicationLoadBalancer": {"ALB-LCU-ActiveConnections", "ALB-LCU-NewConnections",
-                                "ALB-LCU-RuleEvaluations"},
     "BedrockModel": {"Bedrock-Cached-Input-Token", "Bedrock-Input-Token",
                      "Bedrock-Output-Token"},
-    "CloudFrontDistribution": {"CloudFront-DataTransfer", "CloudFront-HTTPS-Request"},
-    "DynamoDBTable": {"Dynamo-RCU-Hour", "Dynamo-Storage", "Dynamo-WCU-Hour"},
-    "ECSFargateService": {"ECS-Fargate-GB-Hour", "ECS-Fargate-vCPU-Hour"},
-    "EventBridgeRule": {"EventBridge-CustomEvent", "EventBridge-Schedule"},
-    "RDSInstance": {"RDS-Backup-Storage", "RDS-Instance-Hour-db.t3.micro",
-                    "RDS-Storage-gp3"},
-    "S3Bucket": {"S3-GetRequest", "S3-Storage"},
-    "SNSTopic": {"SNS-Delivery-HTTP", "SNS-Delivery-Lambda", "SNS-Delivery-SQS",
-                 "SNS-Publish"},
-    "SQSQueue": {"SQS-Standard-Request"},
+    # A scheduled rule on the default event bus is free, and the price list
+    # has no product for it. "ScheduledInvocation" is EventBridge Scheduler.
+    "EventBridgeRule": {"EventBridge-Schedule"},
     "SecretsManagerSecret": {"SecretsManager-API-Call"},
 }
 

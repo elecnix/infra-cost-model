@@ -244,8 +244,13 @@ def test_global_sync_region_only_runs_the_global_descriptors(creds, monkeypatch)
     assert synced_global == {"WAF-WebACL-Month", "WAF-Rule-Month", "WAF-Request",
                              "WAF-BotControl-Month", "WAF-BotControl-Request",
                              "WAF-BotControl-Targeted-Request",
-                             "WAF-FraudControl-Month", "WAF-FraudControl-Request"}
-    assert "Lambda-Request" in {m for m, r in calls if r == "us-east-1"}
+                             "WAF-FraudControl-Month", "WAF-FraudControl-Request",
+                             # CloudFront is priced under global alone (#470).
+                             "CloudFront-DataTransfer", "CloudFront-HTTP-Request",
+                             "CloudFront-HTTPS-Request"}
+    regional = {m for m, r in calls if r == "us-east-1"}
+    assert "Lambda-Request" in regional
+    assert not any(m.startswith("CloudFront-") for m in regional)
 
 
 def _acl(region, acls=1, rules=2, requests=1_000_000):
