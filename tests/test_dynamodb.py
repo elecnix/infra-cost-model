@@ -105,7 +105,7 @@ def test_dynamodb_on_demand_cost(seed_catalog):
     cost = _on_demand_cost(1_000_000, 1_000_000, 10.0, catalog=seed_catalog)
 
     # 1M reads = $0.125, 1M writes = $0.625, 10GB = $2.50
-    expected = 0.125 + 0.625 + 2.50  # $3.25
+    expected = 0.125 + 0.625  # $0.75; the 10 GB are inside the free 25 GB
 
     assert cost == pytest.approx(expected, rel=0.01)
 
@@ -120,8 +120,8 @@ def test_dynamodb_storage_only(seed_catalog):
     """Test storage-only cost."""
     cost = _on_demand_cost(0, 0, 100.0, catalog=seed_catalog)
 
-    # 100GB * $0.25 = $25
-    assert cost == pytest.approx(25.0, rel=0.01)
+    # 75 GB above the free 25 GB x $0.25 = $18.75
+    assert cost == pytest.approx(18.75, rel=0.01)
 
 
 def test_dynamodb_leaf_node_validation():
@@ -133,10 +133,11 @@ def test_dynamodb_leaf_node_validation():
 
 def test_dynamodb_provisioned_cost(seed_catalog):
     """Test provisioned cost from RCU/WCU hours."""
-    cost = _provisioned_cost(1000, 500, 10.0, catalog=seed_catalog)
+    cost = _provisioned_cost(20_000, 19_100, 30.0, catalog=seed_catalog)
 
-    # 1000 RCU-hours * $0.00013, 500 WCU-hours * $0.00065, 10GB * $0.25
-    expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
+    # Above the free 18,600 unit-hours and 25 GB: 1,400 RCU-hours x $0.00013,
+    # 500 WCU-hours x $0.00065 and 5 GB x $0.25.
+    expected = 1400 * 0.00013 + 500 * 0.00065 + 5 * 0.25
 
     assert cost == pytest.approx(expected, rel=0.01)
 
@@ -158,19 +159,32 @@ def test_dynamodb_gsi_on_demand_cost(seed_catalog):
         gsi_read_requests=500_000,
         gsi_write_requests=250_000, catalog=seed_catalog)
 
-    expected = (
-        1_500_000 * 0.125e-6
-        + 1_250_000 * 0.625e-6
-        + 10 * 0.25
-    )
+    # The 10 GB are inside the free 25 GB.
+    expected = 1_500_000 * 0.125e-6 + 1_250_000 * 0.625e-6
 
     assert cost == pytest.approx(expected, rel=0.01)
 
 
 def test_dynamodb_gsi_provisioned_cost(seed_catalog):
     """Global secondary indexes add their own provisioned capacity-unit hours."""
-    cost = _provisioned_cost(1000 + 100, 500 + 50, 10.0, catalog=seed_catalog)
+    cost = _provisioned_cost(20_000 + 100, 19_100 + 50, 30.0, catalog=seed_catalog)
 
-    expected = 1100 * 0.00013 + 550 * 0.00065 + 10 * 0.25
+    expected = 1500 * 0.00013 + 550 * 0.00065 + 5 * 0.25
 
     assert cost == pytest.approx(expected, rel=0.01)
+
+
+@pytest.mark.parametrize("metric,free,rate,used", [
+    # https://aws.amazon.com/dynamodb/pricing/provisioned/ (checked 2026-10-08):
+    # 25 GB of storage and 25 RCUs and 25 WCUs, per Region, per payer account.
+    # The price list states the capacity allowance as 18,600 unit-hours, 25
+    # units for a 744-hour month.
+    ("Dynamo-Storage", 25, 0.25, 125),
+    ("Dynamo-RCU-Hour", 18_600, 0.00013, 20_000),
+    ("Dynamo-WCU-Hour", 18_600, 0.00065, 20_000),
+])
+def test_the_seed_states_the_dynamodb_free_tier(seed_catalog, metric, free, rate, used):
+    assert seed_catalog.query("aws", "AmazonDynamoDB", "us-east-1", metric,
+                              free).total_cost == pytest.approx(0.0)
+    assert seed_catalog.query("aws", "AmazonDynamoDB", "us-east-1", metric,
+                              used).total_cost == pytest.approx((used - free) * rate)
