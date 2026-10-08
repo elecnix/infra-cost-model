@@ -9,10 +9,20 @@ This eliminates the 16 flaky failures caused by catalog hermeticity
 import atexit
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+# Test modules import their helpers by bare name (`from live_pricing import
+# resource_cost`, `from _wheel import ...`). pytest's default prepend import
+# mode happens to put tests/ on sys.path because tests/ has no __init__.py;
+# stating it here keeps those imports working under importlib mode and any
+# runner that imports the modules as `tests.test_x` (#441).
+_TESTS_DIR = str(Path(__file__).resolve().parent / "tests")
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
 # Create an isolated HOME directory before any infra_cost_model modules are imported.
 # pytest imports conftest first, so setting HOME here is early enough to affect

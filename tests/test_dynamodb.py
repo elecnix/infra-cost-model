@@ -19,32 +19,20 @@ def _on_demand_cost(read_requests=0, write_requests=0, storage_gb=0,
     )
 
 
-def _provisioned_dynamodb_cost(rcu_hours=0, wcu_hours=0, storage_gb=0,
-                               gsi_rcu_hours=0, gsi_wcu_hours=0, *,
-                               catalog=None, region="us-east-1"):
-    """Price a provisioned table from its RCU- and WCU-hour rows.
+def _provisioned_cost(rcu_hours=0, wcu_hours=0, storage_gb=0, *,
+                      catalog=None, region="us-east-1"):
+    """Price a provisioned table from its capacity-unit hours (#441).
 
-    A provisioned table bills hours rather than requests. The handler declares
-    no logical metric for those two rows yet, so they are named directly here.
+    A provisioned table bills each hour of each read and write capacity unit
+    it provisions, its global secondary indexes' units included.
     """
-    catalog = catalog or PricingCatalog(seed=True)
-    total = 0.0
-    for metric, hours in (("Dynamo-RCU-Hour", rcu_hours + gsi_rcu_hours),
-                          ("Dynamo-WCU-Hour", wcu_hours + gsi_wcu_hours),
-                          ("Dynamo-Storage", storage_gb)):
-        if hours:
-            total += catalog.query(
-                "aws", "AmazonDynamoDB", region, metric, hours).total_cost
-    return total
-
-
-def _dynamodb_cost(read_requests=0, write_requests=0, storage_gb=0,
-                   billing_mode="PAY_PER_REQUEST", **usage):
-    """Price a table in whichever billing mode it declares."""
-    if billing_mode == "PROVISIONED":
-        return _provisioned_dynamodb_cost(
-            read_requests, write_requests, storage_gb, **usage)
-    return _on_demand_cost(read_requests, write_requests, storage_gb, **usage)
+    return resource_cost(
+        "aws_dynamodb_table.t", "AmazonDynamoDB", region,
+        catalog=catalog or PricingCatalog(seed=True),
+        readCapacityUnitHours=rcu_hours,
+        writeCapacityUnitHours=wcu_hours,
+        storageGb=storage_gb,
+    )
 
 
 def test_dynamodb_from_address_terraform():
@@ -124,7 +112,7 @@ def test_dynamodb_on_demand_cost(seed_catalog):
 
 def test_dynamodb_zero_cost():
     """Test zero cost for zero usage."""
-    cost = _dynamodb_cost(0, 0, 0)
+    cost = _on_demand_cost(0, 0, 0)
     assert cost == 0
 
 
@@ -145,7 +133,7 @@ def test_dynamodb_leaf_node_validation():
 
 def test_dynamodb_provisioned_cost(seed_catalog):
     """Test provisioned cost from RCU/WCU hours."""
-    cost = _provisioned_dynamodb_cost(1000, 500, 10.0)
+    cost = _provisioned_cost(1000, 500, 10.0)
 
     # 1000 RCU-hours * $0.00013, 500 WCU-hours * $0.00065, 10GB * $0.25
     expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
@@ -153,17 +141,17 @@ def test_dynamodb_provisioned_cost(seed_catalog):
     assert cost == pytest.approx(expected, rel=0.01)
 
 
-def test_dynamodb_dynamodb_cost_provisioned(seed_catalog):
-    """Test _dynamodb_cost with PROVISIONED billing mode."""
-    cost = _dynamodb_cost(1000, 500, 10.0, billing_mode="PROVISIONED")
+def test_dynamodb_provisioned_metrics_are_declared():
+    """A model can state provisioned capacity in the handler's own vocabulary."""
+    handler = DynamoDBTable()
+    assert {"readCapacityUnitHours", "writeCapacityUnitHours"} <= set(handler.valid_metrics)
+    assert handler.catalog_metrics["readCapacityUnitHours"] == "Dynamo-RCU-Hour"
+    assert handler.catalog_metrics["writeCapacityUnitHours"] == "Dynamo-WCU-Hour"
 
-    expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
-
-    assert cost == pytest.approx(expected, rel=0.01)
 
 def test_dynamodb_gsi_on_demand_cost(seed_catalog):
     """Global secondary indexes add read and write request charges."""
-    cost = _dynamodb_cost(
+    cost = _on_demand_cost(
         1_000_000,
         1_000_000,
         10.0,
@@ -181,14 +169,8 @@ def test_dynamodb_gsi_on_demand_cost(seed_catalog):
 
 
 def test_dynamodb_gsi_provisioned_cost(seed_catalog):
-    """Global secondary indexes add provisioned RCU/WCU-hour charges."""
-    cost = _provisioned_dynamodb_cost(
-        1000,
-        500,
-        10.0,
-        gsi_rcu_hours=100,
-        gsi_wcu_hours=50
-    )
+    """Global secondary indexes add their own provisioned capacity-unit hours."""
+    cost = _provisioned_cost(1000 + 100, 500 + 50, 10.0)
 
     expected = 1100 * 0.00013 + 550 * 0.00065 + 10 * 0.25
 
