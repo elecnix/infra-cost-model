@@ -535,3 +535,16 @@ def test_a_live_miss_at_a_swept_point_stops_the_run(tmp_path, capsys, command):
     assert main([command[0], model_path, *command[1:], "--pricing", "live",
                  "--pricing-db", str(cold)]) == 1
     assert "Lambda-Request" in capsys.readouterr().err
+
+
+def test_a_live_miss_in_the_compared_model_stops_the_run(tmp_path, live_db, capsys):
+    """`--pricing live` pins the whole run, the `--compare` model included."""
+    model_path = write(tmp_path, swept_model())
+    other = yaml.safe_load(swept_model())
+    other["nodes"]["fn"]["region"] = "us-west-2"
+    other_path = tmp_path / "other.yaml"
+    other_path.write_text(yaml.safe_dump(other))
+    assert main(["what-if", model_path, "--param", "scale", "--values", "1,2",
+                 "--compare", str(other_path), "--pricing", "live",
+                 "--pricing-db", str(live_db)]) == 1
+    assert "us-west-2" in capsys.readouterr().err

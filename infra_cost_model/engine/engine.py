@@ -2313,6 +2313,8 @@ class SensitivityAnalyzer:
                                                time_basis=self.time_basis)
         results_a = self.sweep_explicit(parameter, values)
         results_b = other_analyzer.sweep_explicit(parameter, values)
+        # The compared model's points are priced in this run too.
+        self._engines.extend(other_analyzer._engines)
 
         return [
             {
