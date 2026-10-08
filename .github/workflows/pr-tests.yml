@@ -95,11 +95,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # importlib mode keeps tests/ off sys.path, so a helper import that
+      # works only because pytest's default mode prepends it fails here
+      # (#441). The test job above runs the default mode.
       - name: Run each test file alone
         run: |
           failed=""
           for f in tests/test_*.py; do
-            python -m pytest -q -p no:cacheprovider "$f" || failed="$failed $f"
+            python -m pytest -q -p no:cacheprovider --import-mode=importlib "$f" || failed="$failed $f"
           done
           if [ -n "$failed" ]; then
             echo "These test files fail when run alone:$failed" >&2

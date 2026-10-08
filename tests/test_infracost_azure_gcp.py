@@ -625,7 +625,7 @@ KNOWN_DESCRIPTOR_GAPS = {
     "BedrockModel": {"Bedrock-Cached-Input-Token", "Bedrock-Input-Token",
                      "Bedrock-Output-Token"},
     "CloudFrontDistribution": {"CloudFront-DataTransfer", "CloudFront-HTTPS-Request"},
-    "DynamoDBTable": {"Dynamo-Storage"},
+    "DynamoDBTable": {"Dynamo-RCU-Hour", "Dynamo-Storage", "Dynamo-WCU-Hour"},
     "ECSFargateService": {"ECS-Fargate-GB-Hour", "ECS-Fargate-vCPU-Hour"},
     "EventBridgeRule": {"EventBridge-CustomEvent", "EventBridge-Schedule"},
     "RDSInstance": {"RDS-Backup-Storage", "RDS-Instance-Hour-db.t3.micro",
