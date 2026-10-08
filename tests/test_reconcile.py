@@ -736,3 +736,79 @@ def test_a_default_nat_hours_line_reconciles_against_ec2_other(tmp_path):
 
     assert report.groups[0].projected == pytest.approx(1.0 * DAYS_PER_MONTH)
     assert report.groups[0].bill_lines[0].billed_days == 30
+
+# --- the CLI's own payload layout (#458) ------------------------------------
+
+from infra_cost_model.reconcile.actuals import parse_actuals  # noqa: E402
+
+
+def cli_payload():
+    """A `get-cost-and-usage` payload as the CLI writes it, with invented values."""
+    return {
+        "ResultsByTime": [
+            {
+                "TimePeriod": {"Start": "2026-01-01", "End": "2026-01-02"},
+                "Total": {},
+                "Groups": [
+                    {
+                        "Keys": ["Amazon Simple Storage Service"],
+                        "Metrics": {"UnblendedCost": {"Amount": "12.34", "Unit": "USD"}},
+                    }
+                ],
+                "Estimated": False,
+            }
+        ],
+        "DimensionValueAttributes": [],
+    }
+
+
+def test_parse_actuals_reads_the_cli_time_period_key():
+    actuals = parse_actuals(cli_payload())
+
+    assert actuals.error is None
+    assert actuals.days == ["2026-01-01"]
+    assert actuals.lines[("Amazon Simple Storage Service", None)] == {"2026-01-01": 12.34}
+
+
+def test_parse_actuals_still_accepts_time_as_an_alias():
+    payload = cli_payload()
+    payload["ResultsByTime"][0]["Time"] = payload["ResultsByTime"][0].pop("TimePeriod")
+
+    actuals = parse_actuals(payload)
+
+    assert actuals.error is None
+    assert actuals.days == ["2026-01-01"]
+
+
+def test_parse_actuals_flags_rows_with_no_start_date_as_unreadable():
+    payload = cli_payload()
+    payload["ResultsByTime"][0].pop("TimePeriod")
+
+    actuals = parse_actuals(payload)
+
+    assert not actuals.readable
+    assert "start date" in actuals.error
+
+
+
+def test_parse_actuals_flags_a_start_that_is_not_a_date_as_unreadable():
+    payload = cli_payload()
+    payload["ResultsByTime"][0]["TimePeriod"]["Start"] = "not-a-date"
+
+    actuals = parse_actuals(payload)
+
+    assert not actuals.readable
+    assert "not-a-date" in actuals.error
+    assert actuals.days == []
+
+
+def test_parse_actuals_flags_one_bad_start_among_good_rows():
+    payload = cli_payload()
+    bad = {"TimePeriod": {"Start": "2026-13-45", "End": "2026-13-46"}, "Groups": []}
+    payload["ResultsByTime"].append(bad)
+
+    actuals = parse_actuals(payload)
+
+    assert not actuals.readable
+    assert "2026-13-45" in actuals.error
+    assert actuals.days == ["2026-01-01"]
