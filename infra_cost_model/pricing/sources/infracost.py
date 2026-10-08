@@ -419,6 +419,8 @@ DESCRIPTOR_FIELDS: dict[str, DescriptorField] = {
                                       doc="priced only in a Cloud Storage multi-region or dual-region"),
     "global_scope": DescriptorField((bool,),
                                     doc="the products sit in the global (region=\"\") catalogue"),
+    "global_only": DescriptorField((bool,),
+                                   doc="priced under the region global alone; a regional sync skips it"),
     "unprefixed_in_us_east_1": DescriptorField((bool,),
                                                doc="us-east-1 names its usagetype without the region prefix"),
     "region_pair_source": DescriptorField((bool,),
@@ -508,6 +510,8 @@ def _cross_field_problems(metric: str, descriptor: dict) -> list[str]:
             f"per unit of the API's block unit")
     if descriptor.get("regionless_usagetype") and not descriptor.get("usagetype_base"):
         problems.append(f"{metric}: 'regionless_usagetype' needs 'usagetype_base'")
+    if descriptor.get("global_only") and not descriptor.get("global_scope"):
+        problems.append(f"{metric}: 'global_only' needs 'global_scope'")
     if descriptor.get("region_pair_source") and descriptor.get("regionless_usagetype"):
         problems.append(
             f"{metric}: 'region_pair_source' and 'regionless_usagetype' select "
@@ -552,12 +556,16 @@ def parse_descriptor(usage_metric: str, region: str, vendor: str = "aws") -> Pri
     below take one value each instead of re-deriving it. ``REGION_PREFIX`` and
     ``GCP_LOCATION`` still resolve at query time, in ``query_prices``.
 
-    Raises ``KeyError`` when the metric has no descriptor, or when the region is
-    the global one and the descriptor has no global product.
+    Raises ``KeyError`` when the metric has no descriptor, when the region is
+    the global one and the descriptor has no global product, or when the
+    descriptor is ``global_only`` and the region is not the global one.
     """
-    descriptor = METRIC_DESCRIPTORS.get(usage_metric)
+    descriptor = descriptor_for(usage_metric)
     if descriptor is None:
         raise KeyError(f"No Infracost descriptor for usage_metric '{usage_metric}'")
+    if descriptor.get("global_only") and region != GLOBAL_REGION:
+        raise KeyError(f"The descriptor for '{usage_metric}' is priced under "
+                       f"'{GLOBAL_REGION}' only, not '{region}'")
     # Azure and GCP descriptors name their vendor (#226).
     vendor = descriptor.get("vendor", vendor)
 
@@ -1121,6 +1129,8 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "unprefixed_in_us_east_1": True,
         "unit": "Hrs",
     },
+    # The four LCU dimensions bill the one LCU-hour product (#470), so
+    # `_ALB_LCU_DIMENSIONS` below gives each the same descriptor.
     "ALB-LCU-ProcessedBytes": {
         "service": "AWSELB", "store_service": "AmazonALB",
         "product_family": "Load Balancer-Application",
@@ -1366,6 +1376,149 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "regionless_usagetype": True,
         "usagetype_base": "DataTransfer-Regional-Bytes",
     },
+    # --- AWS metrics that a live sync skipped until #470 ------------------------
+    # The products and prices were read from the live API for us-east-1 on
+    # 2026-10-08. Each `store_unit` is the unit of the seed row.
+    # API Gateway HTTP APIs: $1.00 per million for the first 300 million a
+    # month, $0.90 after. The REST API product shares the family.
+    "APIGateway-HTTP-Request": {
+        "service": "AmazonApiGateway", "store_service": "AmazonAPIGatewayHTTP",
+        "product_family": "API Calls",
+        "attribute_filters": [{"key": "usagetype",
+                               "value": "REGION_PREFIX-ApiGatewayHttpRequest"}],
+        "purchase_option": "on_demand", "unit": "Requests", "store_unit": "requests",
+    },
+    # CloudFront has no AWS region (#385). The global catalogue names each
+    # product by edge location, and the seed rows price the United States,
+    # Mexico and Canada ("US-"). `FREE_ALLOWANCES` adds the always-free tier.
+    "CloudFront-DataTransfer": {
+        "service": "AmazonCloudFront", "product_family": "Data Transfer",
+        "query_region": "", "global_scope": True, "global_only": True,
+        "attribute_filters": [{"key": "usagetype", "value": "US-DataTransfer-Out-Bytes"}],
+        "purchase_option": "on_demand", "unit": "GB",
+    },
+    "CloudFront-HTTPS-Request": {
+        "service": "AmazonCloudFront", "product_family": "Request",
+        "query_region": "", "global_scope": True, "global_only": True,
+        "attribute_filters": [{"key": "usagetype", "value": "US-Requests-Tier2-HTTPS"}],
+        "purchase_option": "on_demand", "unit": "Requests", "store_unit": "requests",
+    },
+    "CloudFront-HTTP-Request": {
+        "service": "AmazonCloudFront", "product_family": "Request",
+        "query_region": "", "global_scope": True, "global_only": True,
+        "attribute_filters": [{"key": "usagetype", "value": "US-Requests-Tier1"}],
+        "purchase_option": "on_demand", "unit": "Requests", "store_unit": "requests",
+    },
+    # DynamoDB Standard table class. The us-east-1 storage usagetype is bare
+    # beside a USE1- duplicate. Each regional product starts with the free
+    # tier of 25 GB, 25 RCU and 25 WCU, which AWS gives in each region.
+    "Dynamo-Storage": {
+        "service": "AmazonDynamoDB", "product_family": "Database Storage",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-TimedStorage-ByteHrs"}],
+        "unprefixed_in_us_east_1": True,
+        "purchase_option": "on_demand", "unit": "GB-Mo",
+    },
+    "Dynamo-RCU-Hour": {
+        "service": "AmazonDynamoDB", "product_family": "Provisioned IOPS",
+        "attribute_filters": [{"key": "group", "value": "DDB-ReadUnits"}],
+        "purchase_option": "on_demand", "unit": "ReadCapacityUnit-Hrs",
+        "store_unit": "RCU-Hours",
+    },
+    "Dynamo-WCU-Hour": {
+        "service": "AmazonDynamoDB", "product_family": "Provisioned IOPS",
+        "attribute_filters": [{"key": "group", "value": "DDB-WriteUnits"}],
+        "purchase_option": "on_demand", "unit": "WriteCapacityUnit-Hrs",
+        "store_unit": "WCU-Hours",
+    },
+    # Fargate x86, the siblings of the ARM products above.
+    "ECS-Fargate-vCPU-Hour": {
+        "service": "AmazonECS", "product_family": "Compute",
+        "attribute_filters": [{"key": "usagetype",
+                               "value": "REGION_PREFIX-Fargate-vCPU-Hours:perCPU"}],
+        "purchase_option": "on_demand", "unit": "hours", "store_unit": "vCPU-Hours",
+    },
+    "ECS-Fargate-GB-Hour": {
+        "service": "AmazonECS", "product_family": "Compute",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Fargate-GB-Hours"}],
+        "purchase_option": "on_demand", "unit": "hours", "store_unit": "GB-Hours",
+    },
+    # EventBridge custom events, priced per 64 KB chunk. Partner events share
+    # the usagetype, so the operation selects the custom ones.
+    "EventBridge-CustomEvent": {
+        "service": "AWSEvents", "store_service": "AmazonEventBridge",
+        "product_family": "EventBridge",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Event-64K-Chunks"},
+                              {"key": "operation", "value": "PutEvents"}],
+        "purchase_option": "on_demand", "unit": "64K-Chunks", "store_unit": "requests",
+    },
+    # RDS for MySQL, Single-AZ, the engine and deployment of the seed rows.
+    # The instance-hour descriptors follow `_rds_instance_descriptor` below.
+    "RDS-Storage-gp3": {
+        "service": "AmazonRDS", "product_family": "Database Storage",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-RDS:GP3-Storage"},
+                              {"key": "databaseEngine", "value": "MySQL"},
+                              {"key": "deploymentOption", "value": "Single-AZ"}],
+        "purchase_option": "on_demand", "unit": "GB-Mo",
+    },
+    "RDS-Backup-Storage": {
+        "service": "AmazonRDS", "product_family": "Storage Snapshot",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-RDS:ChargedBackupUsage"},
+                              {"key": "databaseEngine", "value": "MySQL"}],
+        "unprefixed_in_us_east_1": True,
+        "purchase_option": "on_demand", "unit": "GB-Mo",
+    },
+    # S3: GET and SELECT requests are Tier 2. Standard storage shares its
+    # usagetype with the Intelligent-Tiering overhead products.
+    "S3-GetRequest": {
+        "service": "AmazonS3", "product_family": "API Request",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-Requests-Tier2"}],
+        "unprefixed_in_us_east_1": True,
+        "purchase_option": "on_demand", "unit": "Requests", "store_unit": "requests",
+    },
+    "S3-Storage": {
+        "service": "AmazonS3", "product_family": "Storage",
+        "attribute_filters": [{"key": "usagetype", "value": "REGION_PREFIX-TimedStorage-ByteHrs"},
+                              {"key": "volumeType", "value": "Standard"}],
+        "unprefixed_in_us_east_1": True,
+        "purchase_option": "on_demand", "unit": "GB-Mo",
+    },
+    # SNS publishes and deliveries. The products state the free tiers.
+    "SNS-Publish": {
+        "service": "AmazonSNS", "product_family": "API Request",
+        "attribute_filters": [{"key": "group", "value": "SNS-Requests-Tier1"}],
+        "purchase_option": "on_demand", "unit": "Requests", "store_unit": "requests",
+    },
+    "SNS-Delivery-HTTP": {
+        "service": "AmazonSNS", "product_family": "Message Delivery",
+        "attribute_filters": [{"key": "endpointType", "value": "HTTP"}],
+        "purchase_option": "on_demand", "unit": "Notifications", "store_unit": "requests",
+    },
+    "SNS-Delivery-SQS": {
+        "service": "AmazonSNS", "product_family": "Message Delivery",
+        "attribute_filters": [{"key": "endpointType", "value": "Amazon SQS"}],
+        "purchase_option": "on_demand", "unit": "Notifications", "store_unit": "requests",
+    },
+    "SNS-Delivery-Lambda": {
+        "service": "AmazonSNS", "product_family": "Message Delivery",
+        "attribute_filters": [{"key": "endpointType", "value": "AWS Lambda"}],
+        "purchase_option": "on_demand", "unit": "Notifications", "store_unit": "requests",
+    },
+    # SQS requests. The us-east-1 usagetypes ("Requests-RBP") differ from the
+    # other regions' ("EU-Requests-Tier1"), so the queue type selects them.
+    "SQS-Standard-Request": {
+        "service": "AWSQueueService", "store_service": "AmazonSQS",
+        "product_family": "API Request",
+        "attribute_filters": [{"key": "group", "value": "SQS-APIRequest-Tier1"},
+                              {"key": "queueType", "value": "Standard"}],
+        "purchase_option": "on_demand", "unit": "Requests", "store_unit": "requests",
+    },
+    "SQS-FIFO-Request": {
+        "service": "AWSQueueService", "store_service": "AmazonSQS",
+        "product_family": "API Request",
+        "attribute_filters": [{"key": "group", "value": "SQS-APIRequest-Tier1"},
+                              {"key": "queueType", "value": "FIFO (first-in, first-out)"}],
+        "purchase_option": "on_demand", "unit": "Requests", "store_unit": "requests",
+    },
     # --- Azure (#226) ------------------------------------------------------------
     # Rows are stored under the service the Azure handler names, since Infracost
     # names the services differently ("Functions", "Azure Cosmos DB", "Storage").
@@ -1592,6 +1745,55 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "unit": "gibibyte month",
     },
 }
+
+
+_ALB_LCU_DIMENSIONS = ("ALB-LCU-NewConnections", "ALB-LCU-ActiveConnections",
+                       "ALB-LCU-RuleEvaluations")
+METRIC_DESCRIPTORS.update({
+    metric: METRIC_DESCRIPTORS["ALB-LCU-ProcessedBytes"] for metric in _ALB_LCU_DIMENSIONS
+})
+
+
+# RDS instance-hours (#470). The RDS handler names its metric after the
+# instance class ("RDS-Instance-Hour-db.t3.micro"), so one descriptor per
+# class would never cover them all. `descriptor_for` builds the descriptor
+# of any class from the metric name, and the table holds the classes of the
+# seed rows, which a default sync covers.
+RDS_INSTANCE_HOUR_PREFIX = "RDS-Instance-Hour-"
+_RDS_SEED_INSTANCE_CLASSES = ("db.t3.micro", "db.t3.small", "db.m5.large")
+
+
+def _rds_instance_descriptor(instance_class: str) -> dict:
+    """RDS for MySQL, Single-AZ, on demand: the product of the seed rows."""
+    return {
+        "service": "AmazonRDS", "product_family": "Database Instance",
+        "attribute_filters": [{"key": "instanceType", "value": instance_class},
+                              {"key": "databaseEngine", "value": "MySQL"},
+                              {"key": "deploymentOption", "value": "Single-AZ"}],
+        "purchase_option": "on_demand", "unit": "Hrs", "store_unit": "Hours",
+    }
+
+
+METRIC_DESCRIPTORS.update({
+    RDS_INSTANCE_HOUR_PREFIX + c: _rds_instance_descriptor(c)
+    for c in _RDS_SEED_INSTANCE_CLASSES
+})
+
+
+def descriptor_for(usage_metric: str) -> Optional[dict]:
+    """The descriptor of *usage_metric*, or ``None`` when no product prices it.
+
+    A metric in ``METRIC_DESCRIPTORS`` has its entry. An RDS instance-hour
+    metric of any other class gets a descriptor built from its name, checked
+    against ``DESCRIPTOR_FIELDS`` like the table.
+    """
+    descriptor = METRIC_DESCRIPTORS.get(usage_metric)
+    if descriptor is None and usage_metric.startswith(RDS_INSTANCE_HOUR_PREFIX):
+        instance_class = usage_metric[len(RDS_INSTANCE_HOUR_PREFIX):]
+        if instance_class:
+            descriptor = _rds_instance_descriptor(instance_class)
+            validate_descriptors({usage_metric: descriptor})
+    return descriptor
 
 
 # Azure OpenAI token prices (#371), one product for each model, deployment
@@ -2147,11 +2349,14 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
     failures: list[str] = []
     for region in regions:
         for metric in metrics:
-            if metric not in METRIC_DESCRIPTORS:
+            descriptor = descriptor_for(metric)
+            if descriptor is None:
                 continue
-            if METRIC_DESCRIPTORS[metric].get("vendor", "aws") != vendor:
+            if descriptor.get("vendor", "aws") != vendor:
                 continue
-            if region == GLOBAL_REGION and not METRIC_DESCRIPTORS[metric].get("global_scope"):
+            if region == GLOBAL_REGION and not descriptor.get("global_scope"):
+                continue
+            if region != GLOBAL_REGION and descriptor.get("global_only"):
                 continue
             if vendor == "gcp":
                 # A Cloud Storage location is not a GCP region (#397). Only the
@@ -2159,9 +2364,9 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
                 # multi-region or a dual-region belong to the location itself,
                 # which no GCP region stands in for.
                 if region in GCS_LOCATIONS:
-                    if METRIC_DESCRIPTORS[metric].get("store_service") != "CloudStorage":
+                    if descriptor.get("store_service") != "CloudStorage":
                         continue
-                elif METRIC_DESCRIPTORS[metric].get("location_scope"):
+                elif descriptor.get("location_scope"):
                     continue
             try:
                 total += client.sync_to_cache(cache, metric, region, vendor)

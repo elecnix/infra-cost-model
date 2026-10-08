@@ -138,6 +138,11 @@ def free_tier_scope(vendor: str | None, service: str | None,
 FREE_ALLOWANCES: dict[tuple[str, str, str], float] = {
     ("aws", "AWSDataTransfer", "DataTransfer-Internet-Out-GB"): 100,
     ("aws", "AWSLambda", "Lambda-Request"): 1_000_000,
+    # DynamoDB gives 25 GB and 25 RCUs and WCUs per Region; the price list
+    # states the capacity as 18,600 unit-hours (#470).
+    ("aws", "AmazonDynamoDB", "Dynamo-Storage"): 25,
+    ("aws", "AmazonDynamoDB", "Dynamo-RCU-Hour"): 18_600,
+    ("aws", "AmazonDynamoDB", "Dynamo-WCU-Hour"): 18_600,
     ("aws", "AWSLambda", "Lambda-GB-Second"): 400_000,
     ("aws", "AWSKMS", "KMS-API-Request"): 20_000,
     ("aws", "AmazonCloudFront", "CloudFront-DataTransfer"): 1024,

@@ -106,11 +106,11 @@ MONTHLY_TOTALS = {
     # DynamoDB 43.83M reads x $0.125/M = $5.48; NAT 730 h x $0.045 + 2,191.5
     # GB x $0.045 = $131.47; one secret $0.40.
     "always-on-infrastructure.yaml": (250.87, 257.75),
-    # S3 1,500 GB x $0.023 + 30,437.5 puts x $5/M = $34.65; DynamoDB 3 GB x
-    # $0.25 + 30,437.5 writes x $0.625/M = $0.77; RDS 730 h x $0.017
+    # S3 1,500 GB x $0.023 + 30,437.5 puts x $5/M = $34.65; DynamoDB 30,437.5
+    # writes x $0.625/M = $0.02, its 3 GB inside the free 25 GB; RDS 730 h x $0.017
     # (Single-AZ) = $12.41; EventBridge 30,437.5 custom events x $1/M = $0.03
     # (no free tier); reports $0.01. Every Lambda quantity is in a free tier.
-    "data-pipeline.yaml": (47.86, 50.47),
+    "data-pipeline.yaml": (47.11, 49.72),
     # Stripe 175,320 orders x (2.9% of $50 + $0.30) = $306,810.00; API 438,300
     # requests x $1/M = $0.44, and the 8.77 GB of egress is inside the free
     # 100 GB; DynamoDB 788,940 reads x $0.125/M + 341,874 writes x $0.625/M =

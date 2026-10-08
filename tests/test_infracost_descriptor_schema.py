@@ -134,6 +134,7 @@ def test_an_unknown_field_is_rejected_before_the_value_is_read():
     ("unit_scale", "10000"),
     ("unit_scale", True),
     ("global_scope", "yes"),
+    ("global_only", "yes"),
     ("unprefixed_in_us_east_1", 1),
     ("regionless_usagetype", "true"),
     ("region_pair_source", "true"),
@@ -188,6 +189,11 @@ def test_a_scale_of_one_needs_no_stored_unit():
 def test_a_regionless_usagetype_needs_its_base():
     assert "'regionless_usagetype' needs 'usagetype_base'" in _problems(
         regionless_usagetype=True)
+
+
+def test_a_global_only_descriptor_needs_its_global_product():
+    """``global_only`` without ``global_scope`` would sync in no region at all."""
+    assert "'global_only' needs 'global_scope'" in _problems(global_only=True)
 
 
 def test_a_descriptor_selects_rows_one_way_only():
