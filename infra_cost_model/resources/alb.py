@@ -3,13 +3,14 @@
 ALB is the routing node that fronts most AWS web services.
 Pricing: ALB-hour (always-on) + LCU consumption across four dimensions.
 LCU dimensions: processed bytes (primary), new connections, active connections,
-rule evaluations. AWS bills the max LCU across all dimensions per hour.
+rule evaluations. AWS bills the max LCU across all dimensions per hour, so
+``derive_catalog_usage`` prices the largest dimension once (#480).
 
 Network Load Balancer (type=network) is deferred to a follow-up.
 """
 
 from typing import Optional
-from .types import RoutingResource, ResourceExtract
+from .types import DerivedCatalogUsage, RoutingResource, ResourceExtract
 
 
 class ApplicationLoadBalancer(RoutingResource):
@@ -26,6 +27,44 @@ class ApplicationLoadBalancer(RoutingResource):
                 "newConnections": "ALB-LCU-NewConnections",
                 "activeConnections": "ALB-LCU-ActiveConnections",
                 "ruleEvaluations": "ALB-LCU-RuleEvaluations"}
+
+    LCU_DIMENSIONS = ("processedGb", "newConnections", "activeConnections",
+                      "ruleEvaluations")
+
+    def derive_catalog_usage(self, usage: dict[str, float],
+                             config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
+        """Price the largest LCU dimension once, the way AWS bills it.
+
+        Each LCU metric counts LCU-hours of its own dimension. AWS bills
+        an hour for the dimension that used the most LCUs that hour, not for
+        all four. Summing the dimensions, as one catalog row per metric did,
+        overstated the bill (#480).
+
+        The engine passes quantities per node invocation, and multiplies the
+        result by the month's invocations. The largest quantity per
+        invocation therefore picks the largest monthly total. That equals the
+        hourly maximum AWS bills when the load is spread evenly over the
+        month, so each hour sees the same mix of dimensions. A spiky load
+        can make a different dimension the largest in different hours. AWS
+        can then bill more than this estimate, but never more than the sum.
+
+        The four LCU rows share one price, so the maximum prices through the
+        ``ALB-LCU-ProcessedBytes`` row. With one LCU dimension, the handler
+        derives nothing and the metric keeps its own row.
+
+        Only usage-driven metrics reach this method. An LCU metric marked
+        ``fixed`` goes through the per-metric path, so its cost adds to the
+        maximum of the others. Model every LCU dimension as usage-driven. To
+        state LCUs as a fixed monthly total, list only the largest dimension.
+        """
+        present = [name for name in self.LCU_DIMENSIONS if name in usage]
+        if len(present) < 2:
+            return None
+        return DerivedCatalogUsage(
+            consumed=frozenset(present),
+            quantities={"ALB-LCU-ProcessedBytes":
+                        max(usage[name] for name in present)},
+        )
 
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["ApplicationLoadBalancer"]:

@@ -369,3 +369,50 @@ def test_every_example_adds_up_on_every_time_basis(example, time_basis, capsys):
             if metric["quantity"]:
                 assert metric["unitPrice"] == pytest.approx(
                     metric["cost"] / metric["quantity"], rel=1e-5), (name, metric)
+
+
+ALB_MODEL = """
+version: "1.0"
+workflow:
+  name: snapshot-alb
+  entry: aws_lb.main
+  frequency:
+    unit: perMinute
+    value: 600
+nodes:
+  aws_lb.main:
+    nodeType: routing
+    resourceAddress: aws_lb.main
+    provider: aws
+    service: AmazonALB
+    region: us-east-1
+    usageMetrics:
+      albHours: { unit: hours, value: 730, fixed: true }
+      processedGb: { unit: LCU-hours, value: 0.000001 }
+      newConnections: { unit: LCU-hours, value: 0.000003 }
+edges: []
+"""
+
+
+def test_snapshot_names_the_largest_lcu_dimension(tmp_path, capsys,
+                                                  seed_catalog, monkeypatch):
+    """An ALB with two LCU dimensions prices the larger one, once (#480).
+
+    600 requests a minute is 26,298,000 a month. New connections are the
+    larger dimension: 0.000003 x 26,298,000 = 78.894 LCU-hours, at $0.008
+    that is $0.631152. The processed bytes dimension is not billed on top.
+    """
+    monkeypatch.setattr(cli, "PricingCatalog", lambda *a, **k: seed_catalog)
+    path = tmp_path / "alb.yaml"
+    path.write_text(ALB_MODEL)
+    report, _ = snapshot(path, capsys, "--time-basis", "monthly", catalog=True)
+    node = report["nodes"]["aws_lb.main"]
+    metrics = node["metrics"]
+    assert set(metrics) == {"albHours", "ALB-LCU-ProcessedBytes"}
+    lcu = metrics["ALB-LCU-ProcessedBytes"]
+    assert lcu["quantity"] == pytest.approx(78.894, rel=1e-6)
+    assert lcu["cost"] == pytest.approx(78.894 * 0.008, rel=1e-6)
+    assert lcu["fixed"] is False
+    assert metrics["albHours"]["cost"] == pytest.approx(730 * 0.0225, rel=1e-6)
+    assert sum(m["cost"] for m in metrics.values()) == pytest.approx(
+        node["total"], abs=1e-6)
