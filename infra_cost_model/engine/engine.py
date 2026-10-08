@@ -8,6 +8,7 @@ This module implements Principles 1, 2, 3, 5:
 - Resource x Cost Model join: Combine representations to produce costs
 """
 
+import math
 import warnings
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
@@ -226,6 +227,22 @@ class SilentZeroError(ValueError):
     """
 
 
+def _quantity(value, what: str) -> float:
+    """``value`` as a float, or a ValueError when it isn't a finite count.
+
+    A frequency, an edge rate and a usage metric's value count something, so
+    each is a finite number of at least zero. NaN or an infinity priced into a
+    total that compares false against every budget, and a negative one priced
+    below zero.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{what} is {value!r}, which is not a number")
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{what} is {value}, which is not a finite count "
+                         f"of at least 0")
+    return float(value)
+
+
 def _percentage_metric(node: dict) -> Optional[tuple[str, dict]]:
     """The usage metric a percentage node prices from, or None if it has none.
 
@@ -416,6 +433,13 @@ class DAGValidator:
     def validate(self) -> bool:
         """Run all validations. Returns True if valid."""
         self.errors = []
+        if not isinstance(self.nodes, dict):
+            self.errors.append("'nodes' must map each node's address to its definition")
+            return False
+        if not isinstance(self.edges, list) or not all(
+                isinstance(edge, dict) for edge in self.edges):
+            self.errors.append("'edges' must be a list of edges, each with 'from' and 'to'")
+            return False
         self._check_all_edges_exist()
         self._check_cycles()
         return len(self.errors) == 0
@@ -519,7 +543,8 @@ class WorkloadDeriver:
 
             for edge in outgoing.get(node, []):
                 child = edge["to"]
-                call_rate = self._resolve_value(edge["rate"])
+                call_rate = _quantity(self._resolve_value(edge["rate"]),
+                                      f"the rate of the edge to '{child}'")
                 child_invocations = parent_invocations * call_rate
 
                 # Accumulate data_in from edge dataSize
@@ -591,8 +616,13 @@ class WorkloadDeriver:
     def _get_entry_frequency(self) -> float:
         """Convert entry frequency to per-second rate."""
         freq = self.workflow["frequency"]
-        value = freq["value"]
-        unit = freq["unit"]
+        if not isinstance(freq, dict):
+            raise ValueError("the workflow's frequency must state a value and a unit")
+        value = freq.get("value")
+        if isinstance(value, str):
+            value = self._resolve_value(value)
+        value = _quantity(value, "the workflow's frequency")
+        unit = freq.get("unit")
 
         # Convert to per-second (canonical unit)
         divisors = {
@@ -1587,11 +1617,12 @@ class CostAggregator:
         Raises:
             ValueError: If the string is not arithmetic over the parameters.
         """
-        if isinstance(value, (int, float)):
-            return float(value)
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError(f"{value!r} is not a quantity: state a number, or "
+                             f"arithmetic over the workflow's parameters")
         if isinstance(value, str):
-            return evaluate_metric_expression(value, self.parameters)
-        return float(value)
+            value = evaluate_metric_expression(value, self.parameters)
+        return _quantity(value, "a usage metric's value")
 
     def _compute_token_cost(self, address: str, node: dict, usage: DerivedUsage) -> float:
         """Compute token-based cost for LLM models (DP#8).

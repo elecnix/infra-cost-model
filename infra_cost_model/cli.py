@@ -360,13 +360,27 @@ def _load_model(path) -> dict:
         raise _CLIError(1)
 
     from infra_cost_model.sdk import parse_yaml_dsl
-    content = model_path.read_text()
-
     try:
-        return parse_yaml_dsl(content)
-    except ValueError as e:
+        return parse_yaml_dsl(model_path.read_text())
+    except (ValueError, UnicodeDecodeError) as e:
         _print_stderr(f"Error: {e}")
         raise _CLIError(1)
+    except OSError as e:
+        _print_stderr(f"Error: cannot read {model_path}: {e.strerror}")
+        raise _CLIError(1)
+
+
+def _read_json(path: Path, what: str):
+    """Parse a JSON input file, or print one error line and raise _CLIError."""
+    try:
+        return json.loads(path.read_text())
+    except OSError as e:
+        _print_stderr(f"Error: cannot read {path}: {e.strerror}")
+    except json.JSONDecodeError as e:
+        _print_stderr(f"Error: invalid JSON in {path}: {e}")
+    except UnicodeDecodeError:
+        _print_stderr(f"Error: {path} is not UTF-8 text, so it isn't {what}")
+    raise _CLIError(1)
 
 
 def _print_stderr(msg: str) -> None:
@@ -1061,7 +1075,26 @@ def cmd_graph(args: argparse.Namespace) -> int:
     return 0
 
 
-def _extract_from_source(source_format: str, data: dict) -> dict:
+def _extract_from_source(source_format: str, data, path: Path) -> dict:
+    """The nodes of one IaC export, or one error line for a file of another shape.
+
+    The extractors read the export's own keys, so a file that is valid JSON
+    but not an export (a list, a number, a `values` that isn't an object)
+    is reported here instead of as a traceback from deep in a handler.
+    """
+    if not isinstance(data, dict):
+        _print_stderr(f"Error: {path} is not a {source_format} export: "
+                      f"expected a JSON object, found {type(data).__name__}")
+        raise _CLIError(1)
+    try:
+        return _extract_nodes(source_format, data)
+    except (AttributeError, TypeError) as e:
+        _print_stderr(f"Error: {path} is not a {source_format} export of the "
+                      f"expected shape ({e})")
+        raise _CLIError(1)
+
+
+def _extract_nodes(source_format: str, data: dict) -> dict:
     """Resource addresses and nodes from one IaC export, keyed by format.
 
     `extract` and `coverage` both read IaC JSON, so the format dispatch lives
@@ -1093,29 +1126,24 @@ def cmd_extract(args: argparse.Namespace) -> int:
         _print_stderr(f"File not found: {path}")
         return 1
 
-    try:
-        with open(path) as f:
-            data = json.load(f)
+    data = _read_json(path, f"a {args.source_format} export")
 
-        source_format = args.source_format
-        if source_format not in IAC_SOURCE_FORMATS:
-            _print_stderr(f"Unknown source format: {source_format}")
-            _print_stderr(f"Valid formats: {', '.join(IAC_SOURCE_FORMATS)}")
-            return 1
-
-        nodes = _extract_from_source(source_format, data)
-
-        if args.json:
-            print(json.dumps(nodes, indent=2))
-        else:
-            print(f"Extracted {len(nodes)} resource(s) from {source_format}:")
-            for addr, node in nodes.items():
-                print(f"  [{node.get('nodeType', '?')}] {addr}")
-
-        return 0
-    except json.JSONDecodeError as e:
-        _print_stderr(f"Invalid JSON in {path}: {e}")
+    source_format = args.source_format
+    if source_format not in IAC_SOURCE_FORMATS:
+        _print_stderr(f"Unknown source format: {source_format}")
+        _print_stderr(f"Valid formats: {', '.join(IAC_SOURCE_FORMATS)}")
         return 1
+
+    nodes = _extract_from_source(source_format, data, path)
+
+    if args.json:
+        print(json.dumps(nodes, indent=2))
+    else:
+        print(f"Extracted {len(nodes)} resource(s) from {source_format}:")
+        for addr, node in nodes.items():
+            print(f"  [{node.get('nodeType', '?')}] {addr}")
+
+    return 0
 
 
 def cmd_import_infracost(args: argparse.Namespace) -> int:
@@ -1124,15 +1152,14 @@ def cmd_import_infracost(args: argparse.Namespace) -> int:
     if not path.exists():
         _print_stderr(f"File not found: {path}")
         return 1
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except json.JSONDecodeError as e:
-        _print_stderr(f"Invalid JSON in {path}: {e}")
-        return 1
+    data = _read_json(path, "an `infracost breakdown --format json` file")
 
     from infra_cost_model.pricing.sources.infracost_breakdown import import_breakdown
-    nodes = import_breakdown(data)
+    try:
+        nodes = import_breakdown(data)
+    except ValueError as e:
+        _print_stderr(f"Error: {path}: {e}")
+        return 1
 
     if args.json:
         print(json.dumps({"nodes": nodes}, indent=2))
@@ -1408,19 +1435,14 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     nodes = model.get("nodes", {})
 
     # Extract resource addresses from IaC
-    try:
-        with open(iac_path) as f:
-            iac_data = json.load(f)
-    except json.JSONDecodeError as e:
-        _print_stderr(f"Invalid JSON in {iac_path}: {e}")
-        return 1
+    iac_data = _read_json(iac_path, f"a {args.source_format} export")
 
     source_format = args.source_format
     if source_format not in IAC_SOURCE_FORMATS:
         _print_stderr(f"Unknown source format: {source_format}")
         return 1
 
-    extracted = _extract_from_source(source_format, iac_data)
+    extracted = _extract_from_source(source_format, iac_data, iac_path)
 
     iac_addresses = set(extracted.keys())
 
