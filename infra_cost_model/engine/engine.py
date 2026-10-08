@@ -295,16 +295,23 @@ def silent_zero_error(address: str, node: dict) -> Optional[str]:
         found = _percentage_metric(node)
         name, metric = found if found is not None else (None, None)
         rates = node.get("pricingRates") or {}
-        has_rate = (metric is not None and "percentage_rate" in metric) \
+        has_percentage = (metric is not None and "percentage_rate" in metric) \
             or "percentageRate" in rates
-        if not has_rate:
+        # A per-call or per-transaction fee charges each transaction on its
+        # own, so a node that states only those prices without a percentage.
+        has_fee = (metric is not None and any(
+            k in metric for k in ("fixed_per_transaction", "per_call"))) \
+            or any(k in rates for k in ("fixedPerTransaction", "perCall"))
+        if not (has_percentage or has_fee):
             return (
                 f"Node '{address}' uses pricingModel 'percentage' but states "
-                f"no percentage rate. Declare 'percentage_rate' on the "
-                f"transaction usage metric, or 'percentageRate' in the node's "
-                f"pricingRates."
+                f"no rate. Declare 'percentage_rate', 'fixed_per_transaction' "
+                f"or 'per_call' on the transaction usage metric, or "
+                f"'percentageRate', 'fixedPerTransaction' or 'perCall' in the "
+                f"node's pricingRates."
             )
-        if metric is not None and not ("volume" in metric or "value" in metric):
+        if (has_percentage and metric is not None
+                and not ("volume" in metric or "value" in metric)):
             return (
                 f"Node '{address}' prices a transaction whose value is never "
                 f"stated. Declare 'volume' (or 'value') on usage metric "
