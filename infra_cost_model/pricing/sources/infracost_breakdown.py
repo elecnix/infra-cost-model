@@ -18,7 +18,9 @@ See https://www.infracost.io/docs/features/cli_commands/#json-output
 
 from __future__ import annotations
 
+import math
 import re
+import warnings
 
 # Terraform resource-type prefix → cost-model provider.
 _PROVIDER_PREFIX = {"aws": "aws", "google": "gcp", "azurerm": "azure", "azuread": "azure"}
@@ -40,23 +42,51 @@ def _to_float(value) -> float | None:
         return None
 
 
+def _monthly_cost(value, where: str) -> float | None:
+    """A component's monthly cost, or None, with a warning for one it drops.
+
+    Infracost leaves the cost out (None) for a component it can't price. Any
+    other value that isn't a finite, non-negative number would price a node
+    below zero or as NaN, so it is dropped and named.
+    """
+    if value is None or value == "":
+        return None
+    cost = _to_float(value)
+    if cost is None or not math.isfinite(cost) or cost < 0:
+        warnings.warn(f"{where}: monthlyCost {value!r} is not a price, so the "
+                      f"import leaves the component out.")
+        return None
+    return cost
+
+
 def _slug(text: str) -> str:
     """A YAML/metric-key-safe slug for a cost-component name."""
     return re.sub(r"[^0-9a-zA-Z_]+", "-", (text or "").strip()).strip("-").lower() or "component"
 
 
-def _iter_components(resource: dict, prefix: str = ""):
+def _iter_components(resource: dict, prefix: str = "", address: str = ""):
     """Yield (metric_key, monthly_cost) for a resource's components and, depth-first,
     its subresources'. Subresource keys are namespaced by the subresource name so
     same-named components (e.g. two "Storage" lines) never collide."""
-    for comp in resource.get("costComponents") or []:
-        cost = _to_float(comp.get("monthlyCost"))
+    for comp in _objects(resource.get("costComponents"), f"{address} costComponents"):
+        cost = _monthly_cost(comp.get("monthlyCost"),
+                             f"{address} {prefix}{comp.get('name')}".strip())
         if cost is None:
             continue
         yield f"{prefix}{_slug(comp.get('name'))}", cost
-    for sub in resource.get("subresources") or []:
+    for sub in _objects(resource.get("subresources"), f"{address} subresources"):
         sub_prefix = f"{prefix}{_slug(sub.get('name'))}."
-        yield from _iter_components(sub, sub_prefix)
+        yield from _iter_components(sub, sub_prefix, address)
+
+
+def _objects(value, where: str) -> list:
+    """A list of JSON objects from the breakdown, or a ValueError naming where."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+        raise ValueError(f"{where} is not a list of objects, so this is not an "
+                         f"`infracost breakdown --format json` file")
+    return value
 
 
 def import_breakdown(breakdown_json: dict) -> dict[str, dict]:
@@ -68,16 +98,22 @@ def import_breakdown(breakdown_json: dict) -> dict[str, dict]:
     ``fixed`` metrics carry the components' monthly costs (rate 1.0), so it
     prices to the resource's Infracost monthly total with no catalog lookup.
     """
+    if not isinstance(breakdown_json, dict):
+        raise ValueError("the file is not a JSON object, so this is not an "
+                         "`infracost breakdown --format json` file")
     nodes: dict[str, dict] = {}
-    for project in breakdown_json.get("projects") or []:
-        resources = (project.get("breakdown") or {}).get("resources") or []
-        for resource in resources:
+    for project in _objects(breakdown_json.get("projects"), "projects"):
+        breakdown = project.get("breakdown") or {}
+        if not isinstance(breakdown, dict):
+            raise ValueError("a project's breakdown is not an object, so this is not "
+                             "an `infracost breakdown --format json` file")
+        for resource in _objects(breakdown.get("resources"), "breakdown.resources"):
             address = resource.get("name")
             if not address:
                 continue
             metrics = {}
             rates = {}
-            for key, cost in _iter_components(resource):
+            for key, cost in _iter_components(resource, address=address):
                 # Disambiguate the rare within-resource key collision.
                 if key in metrics:
                     key = f"{key}-{len(metrics)}"

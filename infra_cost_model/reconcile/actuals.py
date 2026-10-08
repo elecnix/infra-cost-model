@@ -10,6 +10,7 @@ zero spend and missing data must not look the same (#444, trap 5).
 """
 
 import json
+import math
 from datetime import date
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,9 +96,12 @@ def _amount(group: dict) -> tuple[Optional[float], object]:
         if isinstance(metric, dict) and "Amount" in metric:
             raw = metric["Amount"]
             try:
-                return float(raw), raw
+                amount = float(raw)
             except (TypeError, ValueError):
                 return None, raw
+            # "NaN" and "Infinity" parse, but compare false against every
+            # threshold, so they would read as a match (#444, trap 5).
+            return (amount, raw) if math.isfinite(amount) else (None, raw)
     return None, None
 
 
