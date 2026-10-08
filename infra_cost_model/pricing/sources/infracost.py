@@ -1433,6 +1433,24 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
                               {"key": "meterName", "value": "Data Stored"}],
         "unit": "1 GB/Month", "store_unit": "GB-Mo",
     },
+    # Autoscale throughput (#399): $0.012 per 100 RU/s in eastus, 1.5 times the
+    # manual rate, on the "AP1 100 RUs" meter of the autoscale product. Every
+    # AP SKU of that product prices 100 RU/s the same, so AP1 names the meter.
+    # The Infracost catalogue has no autoscale product, so the sync reads the
+    # Azure Retail Prices API (`azure_retail`), whose meter is the source of the
+    # seed row. Checked 2026-10-02.
+    "CosmosDB-Autoscale-100RU-Hour": {
+        "vendor": "azure", "service": "Azure Cosmos DB", "store_service": "CosmosDB",
+        "azure_retail": True,
+        "attribute_filters": [{"key": "productName", "value": "Azure Cosmos DB autoscale"},
+                              {"key": "skuName", "value": "AP1"},
+                              {"key": "meterName", "value": "AP1 100 RUs"}],
+        # The Retail Prices API spells this meter's unit "1 Hour", the same as the
+        # provisioned Cosmos meters; Infracost's copy spells it "1/Hour". `_with_unit`
+        # takes the spellings in preference order and keeps the first that prices
+        # have, so name both rather than matching one and silently storing no rows.
+        "unit": ["1/Hour", "1 Hour"], "store_unit": "hours",
+    },
     # API Management consumption tier: $3.50 per million calls after a monthly
     # free 1M. The other tiers bill per unit-hour, which no handler metric models.
     "APIM-Consumption-Call": {

@@ -493,6 +493,179 @@ def cosmos_capacity_mode(capabilities: Any, capacity_mode: Any = None) -> str:
     return "serverless" if "enableserverless" in _capabilities(capabilities) else "provisioned"
 
 
+# Key that the `extract_resources_from_*` functions add to each resource: the
+# Cosmos DB databases and containers of the input, whose throughput the
+# account bills (#399).
+COSMOS_THROUGHPUT_KEY = "_cosmosThroughput"
+
+
+@dataclass(frozen=True)
+class CosmosThroughput:
+    """A Cosmos DB database or container of the input, and its throughput.
+
+    ``account`` names the account it belongs to and ``database`` the database
+    a container belongs to, which is ``None`` for a database. ``ru_per_second``
+    is a manual throughput and ``autoscale_max_ru`` the maximum of autoscale
+    settings; a serverless database or container sets neither.
+    """
+
+    account: Optional[str]
+    name: Optional[str]
+    database: Optional[str]
+    ru_per_second: Optional[float]
+    autoscale_max_ru: Optional[float]
+
+    def bills_throughput(self) -> bool:
+        return self.ru_per_second is not None or self.autoscale_max_ru is not None
+
+
+def _cosmos_ru(value: Any) -> Optional[float]:
+    """A throughput setting in RU/s, or ``None`` when the resource sets none."""
+    return value if isinstance(value, (int, float)) else None
+
+
+def _cosmos_entry(account: Any, name: Any, database: Any, throughput: Any,
+                  max_ru: Any) -> CosmosThroughput:
+    return CosmosThroughput(account=_text(account), name=_text(name),
+                            database=_text(database), ru_per_second=_cosmos_ru(throughput),
+                            autoscale_max_ru=_cosmos_ru(max_ru))
+
+
+def cosmos_units(config: dict) -> Optional[float]:
+    """The account's throughput in 100 RU/s units, the Azure billing unit.
+
+    Autoscale bills the highest RU/s of the hour, so its maximum is the
+    throughput of the account (#399). Gives ``None`` when the ``config``
+    gives no throughput, so the node counts the hours of 100 RU/s itself.
+    An autoscale maximum of 0 is a setting the input declares, so it wins
+    over a manual throughput; only an absent one falls back. An account
+    that sets both prices each on its own meter in
+    ``CosmosDB.catalog_metrics_for``.
+    """
+    ru = config.get("autoscaleMaxRuPerSecond")
+    if ru is None:
+        ru = config.get("throughputRuPerSecond")
+    return float(ru) / 100 if isinstance(ru, (int, float)) else None
+
+
+def cosmos_throughput(entries: list, account: Any) -> dict:
+    """The ``config`` throughput of a Cosmos DB account (#399).
+
+    ``entries`` are the databases and containers of the input and
+    ``account`` the account's name. Azure bills the throughput of every
+    database and container of an account, and a database shares its
+    throughput with its containers, so a container of a database that sets
+    a throughput is left out. Autoscale bills the highest RU/s of the
+    hour, so it contributes ``autoscaleMaxRuPerSecond``, which the
+    autoscale rows price beside the manual ``throughputRuPerSecond``.
+
+    Gives ``None`` for both keys when nothing sets a throughput, as on a
+    serverless account and on a database that shares another account's.
+    """
+    name = account.lower() if isinstance(account, str) else ""
+    mine = [e for e in entries if name and e.account and e.account.lower() == name]
+    shared = {(e.name or "").lower() for e in mine
+              if e.database is None and e.bills_throughput()}
+    billed = [e for e in mine
+              if e.database is None or (e.database or "").lower() not in shared]
+    autoscale = sum(e.autoscale_max_ru or 0.0 for e in billed)
+    manual = sum(e.ru_per_second or 0.0 for e in billed)
+    return {"throughputRuPerSecond": manual or None,
+            "autoscaleMaxRuPerSecond": autoscale or None}
+
+
+def cosmos_throughput_from_tf(resources: list) -> list:
+    """The ``azurerm_cosmosdb_sql_database`` and ``azurerm_cosmosdb_sql_container``."""
+    entries = []
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        values = resource.get("values") or {}
+        if resource.get("type") == "azurerm_cosmosdb_sql_database":
+            database, name = None, values.get("name")
+        elif resource.get("type") == "azurerm_cosmosdb_sql_container":
+            database, name = values.get("database"), values.get("name")
+        else:
+            continue
+        autoscale = _first_block(values.get("autoscale_settings"))
+        entries.append(_cosmos_entry(values.get("account"), name, database,
+                                     values.get("throughput"),
+                                     autoscale.get("max_throughput")))
+    return entries
+
+
+# Each Pulumi Cosmos DB SQL resource: the input that names the account, the
+# database a container belongs to (a database has none), and its own name.
+_PULUMI_COSMOS_SQL = {
+    "azure-native:documentdb:DatabaseAccountSqlDatabase": ("accountName", None, "databaseName"),
+    "azure-native:documentdb:DatabaseAccountSqlContainer": ("accountName", "databaseName",
+                                                            "containerName"),
+    "azure:cosmosdb:SqlDatabase": ("account", None, "name"),
+    "azure:cosmosdb:SqlContainer": ("account", "database_name", "container_name"),
+}
+
+_ARM_COSMOS_SQL_DATABASE = "microsoft.documentdb/databaseaccounts/sqldatabases"
+_ARM_COSMOS_SQL_CONTAINER = _ARM_COSMOS_SQL_DATABASE + "/sqlcontainers"
+
+
+def cosmos_throughput_from_pulumi(resources: list) -> list:
+    """The Cosmos DB databases and containers of a Pulumi stack export."""
+    entries = []
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        resource_type = resource.get("type", "")
+        names = _PULUMI_COSMOS_SQL.get(resource_type)
+        if names is None:
+            continue
+        inputs = resource.get("inputs") or {}
+        account, database, name = (inputs.get(key) if key else None for key in names)
+        if resource_type.startswith("azure-native:"):
+            options = inputs.get("options") or {}
+            autoscale = options.get("autoscaleSettings") or {}
+            throughput, max_ru = options.get("throughput"), autoscale.get("maxThroughput")
+        else:
+            autoscale = inputs.get("autoscale_settings") or {}
+            throughput, max_ru = inputs.get("throughput"), autoscale.get("max_throughput")
+        entries.append(_cosmos_entry(account, name, database, throughput, max_ru))
+    return entries
+
+
+def cosmos_throughput_from_arm(resources) -> list:
+    """The Cosmos DB databases and containers of ``(address, resource)`` pairs.
+
+    An ARM child names its account first: ``{account}/{database}`` for a
+    database, ``{account}/{database}/{container}`` for a container. A name
+    that a template builds cannot name the account, so the entry has none.
+    """
+    entries = []
+    for address, resource in resources:
+        arm_type, _, name = address.partition(":")
+        arm_type = arm_type.lower()
+        if arm_type not in (_ARM_COSMOS_SQL_DATABASE, _ARM_COSMOS_SQL_CONTAINER):
+            continue
+        container = arm_type == _ARM_COSMOS_SQL_CONTAINER
+        segments = name.split("/")
+        if len(segments) < (3 if container else 2):
+            account, database, name = None, None, None
+        elif container:
+            account, database, name = segments[0], segments[1], segments[2]
+        else:
+            account, database, name = segments[0], None, segments[1]
+        parameters = resource.get(ARM_PARAMETERS_KEY, {})
+        properties = _arm_properties(resource)
+        options = properties.get("options") or {}
+        autoscale = options.get("autoscaleSettings") or {}
+        # A template written before `options` existed states the throughput
+        # beside the other resource settings.
+        throughput = resolve_arm_value(
+            options.get("throughput", properties.get("throughput")), parameters)[0]
+        entries.append(_cosmos_entry(
+            account, name, database, throughput,
+            resolve_arm_value(autoscale.get("maxThroughput"), parameters)[0]))
+    return entries
+
+
 # Request units per operation on a 1 KB item, from "Request Units in Azure
 # Cosmos DB" (https://learn.microsoft.com/azure/cosmos-db/request-units): a
 # point read costs 1 RU, and a write about 5 RU with the default indexing
@@ -507,6 +680,14 @@ class CosmosDB(StorageResource):
     A serverless account bills request units. A provisioned account bills
     hours of 100 RU/s of throughput (the ``throughputHours`` metric, which is
     usually fixed), and its reads and writes cost nothing more (#375).
+
+    The throughput lives on the account's databases and containers, which the
+    extractors read into the node's ``config`` (#399). ``throughputHours``
+    then counts the hours of a month the account bills, and the handler
+    prices each of them at the account's throughput: an autoscale account
+    prices ``CosmosDB-Autoscale-100RU-Hour``, which costs 1.5 times the
+    manual rate, at its maximum RU/s. A node whose ``config`` gives no
+    throughput counts the hours of 100 RU/s itself.
     """
 
     @property
@@ -527,9 +708,23 @@ class CosmosDB(StorageResource):
         config = config or {}
         if (config.get("capacityMode") or "serverless") == "serverless":
             return self.catalog_metrics
-        throughput = ("CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour"
-                      if config.get("multiRegionWrites") else "CosmosDB-Provisioned-100RU-Hour")
-        return {"storageGb": "CosmosDB-Storage-GB-Month", "throughputHours": throughput}
+        autoscale = config.get("autoscaleMaxRuPerSecond")
+        manual = config.get("throughputRuPerSecond")
+        manual_row = ("CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour"
+                      if config.get("multiRegionWrites")
+                      else "CosmosDB-Provisioned-100RU-Hour")
+        # Autoscale bills 1.5 times the manual rate, at its maximum RU/s.
+        autoscale_row = "CosmosDB-Autoscale-100RU-Hour"
+        if isinstance(autoscale, (int, float)) and isinstance(manual, (int, float)):
+            # An account whose databases mix autoscale and manual throughput
+            # bills each on its own meter, so both are priced.
+            return {"storageGb": "CosmosDB-Storage-GB-Month",
+                    "throughputHours": {autoscale_row: autoscale / 100,
+                                        manual_row: manual / 100}}
+        throughput = autoscale_row if autoscale is not None else manual_row
+        units = cosmos_units(config)
+        return {"storageGb": "CosmosDB-Storage-GB-Month",
+                "throughputHours": {throughput: units} if units else throughput}
 
     def derive_catalog_usage(self, usage: dict[str, float],
                              config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
@@ -564,14 +759,28 @@ class CosmosDB(StorageResource):
         return None
 
     @classmethod
+    def _throughput(cls, address: str, resource: dict, account: Any) -> dict:
+        """The account's ``config`` throughput, from the input's children (#399)."""
+        entries = resource.get(COSMOS_THROUGHPUT_KEY, [])
+        unnamed = [e for e in entries if e.account is None and e.bills_throughput()]
+        if unnamed:
+            warnings.warn(
+                f"{address}: {len(unnamed)} Cosmos DB database or container resource(s) "
+                f"set a throughput but name no account, so this account is priced "
+                f"without it. Give each of them the account they belong to."
+            )
+        return cosmos_throughput(entries, account)
+
+    @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         values = resource.get("values", {})
+        address = resource.get("address", "")
         # azurerm 4.x names it `multiple_write_locations_enabled`, 3.x
         # `enable_multiple_write_locations`.
         multi_region = values.get("multiple_write_locations_enabled",
                                   values.get("enable_multiple_write_locations"))
         return ResourceExtract(
-            resource_address=resource.get("address", ""),
+            resource_address=address,
             node_type="storage",
             provider="azure",
             service="CosmosDB",
@@ -583,15 +792,19 @@ class CosmosDB(StorageResource):
                     "consistency_level"),
                 "capacityMode": cosmos_capacity_mode(values.get("capabilities")),
                 "multiRegionWrites": bool(multi_region),
+                **cls._throughput(address, resource, values.get("name")),
             },
         )
 
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
         inputs = resource.get("inputs", {})
+        address = resource.get("id", "")
         properties = inputs.get("properties") or {}
+        account = (inputs.get("accountName") or inputs.get("name")
+                   or _last_segment(address))
         return ResourceExtract(
-            resource_address=resource.get("id", ""),
+            resource_address=address,
             node_type="storage",
             provider="azure",
             service="CosmosDB",
@@ -603,6 +816,7 @@ class CosmosDB(StorageResource):
                     inputs.get("capabilities", properties.get("capabilities")),
                     inputs.get("capacityMode")),
                 "multiRegionWrites": bool(inputs.get("enableMultipleWriteLocations")),
+                **cls._throughput(address, resource, account),
             },
         )
 
@@ -625,8 +839,9 @@ class CosmosDB(StorageResource):
     @classmethod
     def extract_arm(cls, resource: dict) -> ResourceExtract:
         properties = _arm_properties(resource)
+        address = resource.get(ARM_ADDRESS_KEY, "")
         return ResourceExtract(
-            resource_address=resource.get(ARM_ADDRESS_KEY, ""),
+            resource_address=address,
             node_type="storage",
             provider="azure",
             service="CosmosDB",
@@ -639,6 +854,7 @@ class CosmosDB(StorageResource):
                 "capacityMode": cosmos_capacity_mode(properties.get("capabilities"),
                                                      properties.get("capacityMode")),
                 "multiRegionWrites": bool(properties.get("enableMultipleWriteLocations")),
+                **cls._throughput(address, resource, address.partition(":")[2]),
             },
         )
 
