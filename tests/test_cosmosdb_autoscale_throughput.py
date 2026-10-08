@@ -93,12 +93,24 @@ def test_container_throughput_reaches_the_account():
     assert config["throughputRuPerSecond"] == 1000
 
 
-def test_a_shared_database_replaces_its_containers():
-    """Azure bills a database's throughput once, shared by its containers."""
+def test_a_shared_database_bills_its_throughput_once():
+    """A database's throughput is shared by the containers that set none."""
+    nodes = extract_resources_from_tf({"resource": [
+        account(), sql_database(throughput=400), sql_container()]})
+    config = nodes["azurerm_cosmosdb_account.orders"]["config"]
+    assert config["throughputRuPerSecond"] == 400
+
+
+def test_a_container_with_its_own_throughput_in_a_shared_database_adds_it():
+    """Azure bills a container's dedicated RU/s on top of its database's.
+
+    https://learn.microsoft.com/en-us/azure/cosmos-db/set-throughput, "Set
+    throughput on a database and a container".
+    """
     nodes = extract_resources_from_tf({"resource": [
         account(), sql_database(throughput=400), sql_container(throughput=1000)]})
     config = nodes["azurerm_cosmosdb_account.orders"]["config"]
-    assert config["throughputRuPerSecond"] == 400
+    assert config["throughputRuPerSecond"] == 1400
 
 
 def test_databases_without_throughput_add_nothing():
@@ -197,9 +209,9 @@ def test_arm_container_autoscale_throughput():
          "name": "orders/db/items", "properties": {
              "options": {"autoscaleSettings": {"maxThroughput": 4000}}}}]}
     node = extract_resources_from_arm(template)["Microsoft.DocumentDB/databaseAccounts:orders"]
-    # The database's throughput is shared, so the autoscale container is left out.
+    # The container's dedicated autoscale bills beside the database's shared RU/s.
     assert node["config"]["throughputRuPerSecond"] == 400
-    assert node["config"]["autoscaleMaxRuPerSecond"] is None
+    assert node["config"]["autoscaleMaxRuPerSecond"] == 4000
 
 
 def test_an_unnamed_database_warns_rather_than_costing_nothing():
@@ -224,10 +236,6 @@ def test_manual_throughput_prices_each_hundred_request_units():
 @pytest.mark.parametrize("config,metric,units", [
     ({"capacityMode": "provisioned", "throughputRuPerSecond": 400}, MANUAL, 4),
     ({"capacityMode": "provisioned", "autoscaleMaxRuPerSecond": 4000}, AUTOSCALE, 40),
-    # Autoscale bills 1.5 times the manual rate on one meter, whatever the
-    # number of write regions.
-    ({"capacityMode": "provisioned", "autoscaleMaxRuPerSecond": 400,
-      "multiRegionWrites": True}, AUTOSCALE, 4),
 ])
 def test_autoscale_prices_the_autoscale_rows(config, metric, units):
     assert CosmosDB().catalog_metrics_for(config)["throughputHours"] == {metric: units}
@@ -319,11 +327,20 @@ def test_an_account_with_autoscale_and_manual_throughput_bills_both():
     assert metrics["throughputHours"] == {AUTOSCALE: 40, MANUAL: 4}
 
 
-def test_a_multi_region_account_bills_its_manual_part_at_the_write_rate():
+@pytest.mark.parametrize("config,expected", [
+    ({"autoscaleMaxRuPerSecond": 4000}, {MULTI_REGION: 40}),
+    ({"autoscaleMaxRuPerSecond": 1000, "throughputRuPerSecond": 400},
+     {MULTI_REGION: 14}),
+])
+def test_multi_region_writes_bill_autoscale_at_the_write_rate(config, expected):
+    """With multi-region writes, autoscale and manual share one rate.
+
+    https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-choose-offer:
+    "the rate per 100 RU/s is the same for both manual and autoscale".
+    """
     metrics = CosmosDB().catalog_metrics_for(
-        {"capacityMode": "provisioned", "multiRegionWrites": True,
-         "autoscaleMaxRuPerSecond": 1000, "throughputRuPerSecond": 400})
-    assert metrics["throughputHours"] == {AUTOSCALE: 10, MULTI_REGION: 4}
+        {"capacityMode": "provisioned", "multiRegionWrites": True, **config})
+    assert metrics["throughputHours"] == expected
 
 
 def test_mixed_throughput_is_priced(seed_catalog):
