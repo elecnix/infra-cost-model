@@ -3,7 +3,7 @@ from functools import partial
 
 import pytest
 from infra_cost_model.resources.alb import ApplicationLoadBalancer
-from live_pricing import resource_cost
+from live_pricing import derived_resource_cost, resource_cost
 from infra_cost_model.pricing.catalog import PricingCatalog
 
 
@@ -136,8 +136,14 @@ class TestALBPricing:
         assert cost == pytest.approx(8.00, rel=0.01)
 
     def test_all_dimensions(self):
-        cost = self.cost(albHours=730, processedGb=500, newConnections=100, activeConnections=200, ruleEvaluations=50)
-        expected = 730 * 0.0225 + 500 * 0.008 + 100 * 0.008 + 200 * 0.008 + 50 * 0.008
+        # AWS bills the largest LCU dimension, 500 LCU-hours, not the sum (#480).
+        lcu = derived_resource_cost(
+            "aws_lb.web", "AmazonALB", "us-east-1",
+            {"processedGb": 500, "newConnections": 100,
+             "activeConnections": 200, "ruleEvaluations": 50},
+            catalog=self.catalog)
+        cost = self.cost(albHours=730) + lcu
+        expected = 730 * 0.0225 + 500 * 0.008
         assert cost == pytest.approx(expected, rel=0.01)
 
     def test_zero_usage(self):
@@ -177,3 +183,33 @@ class TestALBRegistryIntegration:
         result = ResourceRegistry.extract("aws_lb.main", resource, "terraform")
         assert result is not None and result["provider"] == "aws" and result["service"] == "AmazonALB"
         assert result["nodeType"] == "routing"
+
+
+LCU_METRICS = ("processedGb", "newConnections", "activeConnections",
+               "ruleEvaluations")
+
+
+class TestALBLargestLCUDimension:
+    """AWS bills the largest of the four LCU dimensions each hour (#480)."""
+
+    def derive(self, **usage):
+        return ApplicationLoadBalancer().derive_catalog_usage(usage, {})
+
+    def test_two_dimensions_price_the_larger_once(self):
+        derived = self.derive(processedGb=2.0, newConnections=5.0)
+        assert derived.quantities == {"ALB-LCU-ProcessedBytes": 5.0}
+        assert derived.consumed == {"processedGb", "newConnections"}
+
+    def test_all_four_dimensions_price_the_largest_once(self):
+        derived = self.derive(albHours=1.0, processedGb=3.0, newConnections=1.0,
+                              activeConnections=7.0, ruleEvaluations=4.0)
+        assert derived.quantities == {"ALB-LCU-ProcessedBytes": 7.0}
+        # ALB-hours are not an LCU dimension: the per-metric path prices them.
+        assert derived.consumed == set(LCU_METRICS)
+
+    @pytest.mark.parametrize("metric", LCU_METRICS)
+    def test_one_dimension_keeps_its_own_row(self, metric):
+        assert self.derive(albHours=1.0, **{metric: 3.0}) is None
+
+    def test_no_dimension_derives_nothing(self):
+        assert self.derive(albHours=1.0) is None
