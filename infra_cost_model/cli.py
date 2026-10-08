@@ -931,10 +931,17 @@ def cmd_sync_pricing(args: argparse.Namespace) -> int:
     regions = args.regions if args.regions else sync_regions(args.vendor)
 
     try:
-        count, source = sync_pricing_catalog(
+        result = sync_pricing_catalog(
             vendor=args.vendor, services=services, regions=regions)
+        count, source = result
         if source == "infracost":
             print(f"✓ Synced {count} prices from {source} across {len(regions)} region(s)")
+            empty = getattr(result, "empty", ())
+            if empty:
+                # A skip, not a failure: a provider sells some products in
+                # some regions only. The pairs' stored rows were kept (#482).
+                print(f"  {len(empty)} metric/region pair(s) returned no prices; "
+                      "their stored rows were kept")
         else:
             # No live credential → sync_pricing_catalog fell back to the us-east-1
             # seed fixtures; don't claim the full region fan-out happened.

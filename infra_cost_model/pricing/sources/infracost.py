@@ -782,9 +782,10 @@ class InfracostClient:
         one transaction (#355). Rows from a product that the descriptor no
         longer selects go away, and rows from other sources stay. When the
         metric has a free allowance in ``FREE_ALLOWANCES``, the stored rows
-        start with it as a $0 tier (#356).
+        start with it as a $0 tier (#356). When the query selects no rows, the
+        stored rows stay as they are (#482).
 
-        Returns the number of rows stored.
+        Returns the number of rows stored, 0 when the query selected none.
         """
         query = parse_descriptor(usage_metric, region, vendor)
         prices = self._fetch_prices(query)
@@ -829,6 +830,12 @@ class InfracostClient:
         of the one product, the service and unit are the catalog's, and the free
         allowance and the published tier bounds are applied before the rows are
         written in one transaction.
+
+        When no row is left, nothing is written and the stored rows stay
+        (#482). An empty answer can be transient, or mean that the API renamed
+        the product, and the old rows still price the metric. Rows of a
+        product that the descriptor no longer selects still go away once the
+        query selects another one (#355).
         """
         now = cache_module.utc_now_iso()
         if query.mode == "region_pair":
@@ -853,6 +860,8 @@ class InfracostClient:
             rows = _without_free_tier(rows)
         rows = _with_free_tier(rows, FREE_ALLOWANCES.get(key),
                                SPEND_BASED_FREE_TIERS.get(key))
+        if not rows:
+            return 0
         # Rows from the Azure Retail Prices API replace Infracost rows too.
         with cache.replacing(query.vendor, query.store_service, query.region,
                              query.usage_metric,
@@ -2318,9 +2327,23 @@ def _live_auth_intended(client: "InfracostClient") -> bool:
     return client.is_authenticated()
 
 
+class SyncResult(tuple):
+    """What a sync stored: ``(count, source)``, plus the pairs that got nothing.
+
+    It unpacks as the pair ``(count, source)``. ``empty`` lists the
+    ``"region/metric"`` pairs whose query returned no prices, so their stored
+    rows were kept (#482).
+    """
+
+    def __new__(cls, count: int, source: str, empty=()):
+        result = super().__new__(cls, (count, source))
+        result.empty = tuple(empty)
+        return result
+
+
 def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
                          fallback: bool = False,
-                         regions: list[str] = None) -> tuple[int, str]:
+                         regions: list[str] = None) -> SyncResult:
     """Sync pricing into the cache, live from Infracost when authenticated.
 
     Fetches every descriptor's prices for each requested region (defaults to
@@ -2329,6 +2352,11 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
     back to the bundled seed price list when there is no credential, but emits a
     ``UserWarning`` when a credential WAS present and the live sync failed — so a
     broken live path is never silently mistaken for success.
+
+    A metric whose query returns no prices in a region keeps its stored rows
+    there, and the result's ``empty`` lists that pair (#482). That is a skip,
+    not a failure: a provider sells some products in some regions only, so a
+    full sync meets such pairs every time.
     """
     from infra_cost_model.pricing.cache import PricingCache
 
@@ -2347,6 +2375,7 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
         regions = ["us-east-1"]
     total = 0
     failures: list[str] = []
+    empty: list[str] = []
     for region in regions:
         for metric in metrics:
             descriptor = descriptor_for(metric)
@@ -2369,9 +2398,13 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
                 elif descriptor.get("location_scope"):
                     continue
             try:
-                total += client.sync_to_cache(cache, metric, region, vendor)
+                stored = client.sync_to_cache(cache, metric, region, vendor)
             except (RuntimeError, requests.RequestException, KeyError) as exc:
                 failures.append(f"{region}/{metric}: {exc}")
+                continue
+            total += stored
+            if not stored:
+                empty.append(f"{region}/{metric}")
 
     if total == 0:
         warnings.warn(
@@ -2386,7 +2419,7 @@ def sync_pricing_catalog(vendor: str = "aws", services: list[str] = None,
             f"{failures}",
             UserWarning,
         )
-    return total, "infracost"
+    return SyncResult(total, "infracost", empty)
 
 
 def seed_pricing_catalog(services: list[str] | None = None) -> tuple[int, str]:

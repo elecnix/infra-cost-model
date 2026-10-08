@@ -145,6 +145,8 @@ infra-cost-model sync-pricing                              # all services, all r
 infra-cost-model sync-pricing --region us-east-1 --region eu-west-1
 ```
 
+When a query matches no product in a region, `sync-pricing` keeps the metric's stored rows there and counts the pair as a skip, and the exit code stays 0 ([#482](https://github.com/elecnix/infra-cost-model/issues/482)). An empty answer can be transient or follow a product rename in the API. Either way the old rows still price the metric. A provider also sells some products in some regions only, so a full sync meets such pairs on every run. The summary states how many metric/region pairs returned no prices. The kept rows keep their old `fetched_at`, so `pricing-status` still reports the age of what the cache contains.
+
 The bundled `infra_cost_model/pricing/seed/seed_prices.json` is a small fixture, with AWS prices for us-east-1 and Azure prices for eastus, for the test suite and offline use. You don't need it to set up the tool. `seed-pricing` loads it into the local cache.
 
 Every timestamp the cache writes states its UTC offset, so the same row reports the same age on any machine. `pricing-status` reports the cache and how old the newest row of each source is:
