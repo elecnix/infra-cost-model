@@ -1,6 +1,5 @@
 """External API resource model for third-party services (Stripe, Twilio, SendGrid)."""
 
-from dataclasses import dataclass
 from typing import Optional
 
 
@@ -57,14 +56,6 @@ class ExternalServiceRegistry:
 
 # Register the built-in external services
 ExternalServiceRegistry.register_many(["external", "stripe", "twilio", "sendgrid"])
-
-
-@dataclass
-class ExternalPricing:
-    """External service pricing configuration."""
-    percentage_rate: float = 0.0  # e.g., 0.029 for 2.9%
-    fixed_per_transaction: float = 0.0  # e.g., 0.30 for $0.30 per transaction
-    per_call: float = 0.0  # Fixed per-call pricing (e.g., Twilio)
 
 
 class ExternalNode(ExternalResource):

@@ -10,7 +10,7 @@ registered through the ResourceRegistry with provider-based dispatch.
 """
 
 from .types import ResourceType, ComputeResource, StorageResource, RoutingResource, ExternalResource
-from .lambda_func import LambdaFunction, calculate_gb_seconds, apply_free_tier, get_lambda_free_tier_limits
+from .lambda_func import LambdaFunction, calculate_gb_seconds
 from .external import ExternalNode, ExternalServiceRegistry
 from .apigw import APIGatewayHTTP
 from .dynamodb import DynamoDBTable
@@ -39,8 +39,6 @@ __all__ = [
     "ExternalResource",
     "LambdaFunction",
     "calculate_gb_seconds",
-    "apply_free_tier",
-    "get_lambda_free_tier_limits",
     "ExternalNode",
     "ExternalServiceRegistry",
     "APIGatewayHTTP",

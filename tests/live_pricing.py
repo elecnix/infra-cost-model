@@ -7,9 +7,8 @@ way, so a test that calls it is asserting the production declaration rather
 than a private copy of it.
 """
 
-from infra_cost_model.engine.engine import is_global_metric
 from infra_cost_model.pricing.catalog import PricingCatalog
-from infra_cost_model.pricing.global_services import GLOBAL_PRICE_REGIONS
+from infra_cost_model.pricing.billing_scope import query_regions
 from infra_cost_model.resources.registry import ResourceRegistry
 
 # Catalog rows are filed under a vendor, and a handler's module is where it
@@ -25,19 +24,13 @@ def _vendor(handler):
 
 
 def _query(catalog, provider, service, region, metric, quantity):
-    """Query a node's region, then the global rows, as the engine does.
+    """Query the regions the engine queries, in its order.
 
-    A global service has one price everywhere, so a region with no rows of its
-    own falls back to the global rows. Only a *global* metric may: the engine
-    gates the same fallback on ``is_global_metric`` (engine.py:1300), and
-    without that gate a regional metric missing from its own region would
-    price here and stay unpriced in production, which is exactly the
-    divergence this helper exists to rule out.
+    ``query_regions`` is the engine's own resolver: a global metric falls
+    back from the node's region to the global rows, and a regional one
+    stays in its region, so a price found here is one production finds.
     """
-    candidates = [region]
-    if is_global_metric(provider, service, metric):
-        candidates += [r for r in GLOBAL_PRICE_REGIONS if r != region]
-    for candidate in candidates:
+    for candidate in query_regions(provider, service, metric, region):
         result = catalog.query(provider, service, candidate, metric, quantity)
         if result is not None:
             return result

@@ -103,12 +103,12 @@ describe("NodeUsage", () => {
 
   it("adds metrics that count one edge type's calls (#313)", () => {
     const usage = new NodeUsage()
-      .withMetric("Dynamo-ReadRequest", 1, "requests", "read")
-      .withMetric("Dynamo-WriteRequest", 1, undefined, "write");
+      .withMetric("readRequests", 1, "requests", "read")
+      .withMetric("writeRequests", 1, undefined, "write");
 
     expect(usage.metrics).toEqual({
-      "Dynamo-ReadRequest": { value: 1, unit: "requests", edgeType: "read" },
-      "Dynamo-WriteRequest": { value: 1, edgeType: "write" },
+      readRequests: { value: 1, unit: "requests", edgeType: "read" },
+      writeRequests: { value: 1, edgeType: "write" },
     });
   });
 

@@ -16,12 +16,9 @@ from typing import Optional
 from infra_cost_model.engine.expressions import evaluate_metric_expression
 from infra_cost_model.pricing.billing_scope import (
     BILLING_GLOBAL, BILLING_POOL, BILLING_REGION, BILLING_SHARED, BillingScope,
-    billing_scope,
+    billing_scope, query_regions,
 )
 from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
-from infra_cost_model.pricing.global_services import (
-    GLOBAL_PRICE_REGIONS, is_global_metric,
-)
 from infra_cost_model.saas.pricing_shapes import transactional
 from infra_cost_model.version_requirement import require_engine
 
@@ -1486,11 +1483,8 @@ class CostAggregator:
         that pay for the same metric (#332).
         """
         node = self._node_for_metric(node, metric)
-        regions = [node.get("region")]
-        if is_global_metric(node.get("provider"), node.get("service", ""), metric):
-            # A global service has one price everywhere, so a region with no
-            # rows of its own uses the global or us-east-1 rows (#384).
-            regions += [r for r in GLOBAL_PRICE_REGIONS if r != node.get("region")]
+        regions = query_regions(node.get("provider"), node.get("service", ""),
+                                metric, node.get("region"))
         result = None
         for region in regions:
             result = self.catalog.query(

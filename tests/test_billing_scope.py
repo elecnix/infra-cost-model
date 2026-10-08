@@ -213,3 +213,20 @@ class TestThePricingTablesAreUntouched:
 
     def test_price_pool_still_answers_for_a_region(self):
         assert price_pool(*AZURE_EGRESS, "eastus") is not None
+
+
+def test_a_global_metric_queries_its_region_then_the_global_rows():
+    """One resolver decides where a node's quantity is priced, and the pool."""
+    from infra_cost_model.pricing.billing_scope import query_regions
+    from infra_cost_model.pricing.global_services import GLOBAL_PRICE_REGIONS
+
+    regions = query_regions("aws", "AmazonRoute53", "Route53-HostedZone", "eu-west-1")
+    assert regions == ["eu-west-1", *GLOBAL_PRICE_REGIONS]
+    assert query_regions("aws", "AmazonRoute53", "Route53-HostedZone",
+                         GLOBAL_PRICE_REGIONS[0]) == list(GLOBAL_PRICE_REGIONS)
+
+
+def test_a_regional_metric_queries_its_own_region_only():
+    from infra_cost_model.pricing.billing_scope import query_regions
+
+    assert query_regions("aws", "AWSLambda", "Lambda-Request", "eu-west-1") == ["eu-west-1"]

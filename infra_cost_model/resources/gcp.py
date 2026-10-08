@@ -11,7 +11,7 @@ import re
 import warnings
 from typing import Any, Optional
 
-from infra_cost_model.pricing.sources.infracost import (
+from infra_cost_model.pricing.gcp_locations import (
     FUNCTIONS_GEN1_UNPRICED_REGIONS,
     GCS_LOCATIONS,
     GCS_MULTI_REGIONS,
