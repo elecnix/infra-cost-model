@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from infra_cost_model.pricing import cache as cache_module
+from infra_cost_model.pricing.gcp_locations import GCS_DUAL_REGIONS, GCS_LOCATIONS
 from infra_cost_model.pricing.free_tiers import (
     FREE_ALLOWANCES, FREE_ALLOWANCE_REGIONS, SPEND_BASED_FREE_TIERS,
 )
@@ -164,25 +165,6 @@ _CLOUD_RUN_TIER_2_REGIONS = frozenset({
     "southamerica-east1", "southamerica-west1", "us-west2", "us-west3", "us-west4",
 })
 
-# Synced GCP regions whose catalog holds no 1st gen Cloud Run functions row
-# (Infracost Cloud Pricing API, check date 2026-09-24). A
-# `google_cloudfunctions_function` in one of them has unpriced CPU and memory
-# usage (#375, #400), so the handler warns at extraction and points at the 2nd
-# gen resource, which is priced at Cloud Run rates.
-#
-# The set was derived from the provider's published region list, not read back
-# from a query: the credential the check needs was unavailable, so membership
-# is unverified in both directions. Treat a member as "we expect no rows" and
-# a non-member as unknown, not as proof that the region is supported. A
-# maintainer with a working credential should confirm the membership before
-# trusting it, and should widen or drop the set as the provider changes.
-FUNCTIONS_GEN1_UNPRICED_REGIONS = frozenset({
-    "africa-south1", "asia-south2", "australia-southeast2", "europe-southwest1",
-    "europe-west8", "europe-west9", "europe-west10", "europe-west12",
-    "me-central1", "me-central2", "me-west1", "northamerica-northeast2",
-    "southamerica-west1", "us-south1",
-})
-
 # Azure regions that lack the internet egress meter of the Microsoft global
 # network, mapped to a region of the same zone that has it (#392). Azure
 # bills egress by zone (https://azure.microsoft.com/pricing/details/bandwidth/),
@@ -192,18 +174,6 @@ FUNCTIONS_GEN1_UNPRICED_REGIONS = frozenset({
 # the "Routing Preference: Internet" meter there, a different routing option
 # with other prices. germanywestcentral is the nearest Zone 1 region.
 AZURE_EGRESS_METER_FALLBACK = {"polandcentral": "germanywestcentral"}
-
-# The Cloud Storage locations that are not GCP regions (#397). A bucket's
-# location is the catalog region: `us`, `eu` and `asia` for a multi-region,
-# and the code of a pair of regions for a dual-region. Cloud Storage
-# defines six predefined dual-regions, asia1, eur4, eur5, eur7, eur8 and
-# nam4 (https://cloud.google.com/storage/docs/locations). A location that is
-# none of these has no rows. A configurable dual-region shares its location
-# code with a multi-region, so a bucket's `location` reads as that
-# multi-region; the dual-region rows price the code on their own.
-GCS_MULTI_REGIONS = ("us", "eu", "asia")
-GCS_DUAL_REGIONS = ("nam4", "eur4", "eur5", "eur7", "eur8", "asia1")
-GCS_LOCATIONS = GCS_MULTI_REGIONS + GCS_DUAL_REGIONS
 
 # The catalogue region that holds the product of each Cloud Storage location.
 # Infracost keeps multi-region storage under `us` and `asia` ("Standard

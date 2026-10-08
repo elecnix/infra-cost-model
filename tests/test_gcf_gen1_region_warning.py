@@ -11,9 +11,8 @@ import warnings
 
 import pytest
 
-from infra_cost_model.pricing.sources.infracost import (
-    FUNCTIONS_GEN1_UNPRICED_REGIONS, sync_regions,
-)
+from infra_cost_model.pricing.gcp_locations import FUNCTIONS_GEN1_UNPRICED_REGIONS
+from infra_cost_model.pricing.sources.infracost import sync_regions
 from infra_cost_model.resources.gcp import (
     CloudFunction, CloudFunctionGen2, Gen1FunctionRegionWarning,
 )
@@ -109,3 +108,18 @@ def test_the_extraction_still_returns_the_resource():
     assert extract.resource_address == "google_cloudfunctions_function.api"
     assert extract.service == "CloudFunctions"
     assert extract.region == "us-south1"
+
+def test_the_gcp_handlers_load_without_the_infracost_adapter():
+    """Extraction reads location tables, not a price source's client.
+
+    The Cloud Storage and 1st gen tables are data; importing a resource
+    handler shouldn't open the GraphQL client or validate every descriptor.
+    """
+    import subprocess
+    import sys
+
+    code = ("import sys, infra_cost_model.resources.gcp; "
+            "print('infra_cost_model.pricing.sources.infracost' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         check=True).stdout.strip()
+    assert out == "False"
