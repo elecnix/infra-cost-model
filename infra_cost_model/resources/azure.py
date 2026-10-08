@@ -1471,8 +1471,10 @@ def blob_early_delete_months(tier: str, config: dict) -> float:
     0 by default, which charges the whole window.
     """
     stored = config.get("earlyDeleteDaysStored", 0)
-    if isinstance(stored, bool) or not isinstance(stored, (int, float)):
-        stored = 0
+    if (isinstance(stored, bool) or not isinstance(stored, (int, float))
+            or not math.isfinite(stored) or stored < 0):
+        raise ValueError(f"earlyDeleteDaysStored is {stored!r}; state the days a "
+                         f"deleted blob stayed in the tier as a number of at least 0")
     return max(_BLOB_COOL_TIERS[tier] - stored, 0) / 30
 # The access tier and redundancy that publish an early-deletion meter. Azure
 # gives each one a meter at the tier's storage price for the whole window,
