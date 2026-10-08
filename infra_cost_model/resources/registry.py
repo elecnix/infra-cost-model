@@ -490,6 +490,33 @@ def extract_resources_from_arm(arm_json: dict) -> dict[str, dict]:
     return results
 
 
+def vocabulary_warnings(model: dict) -> list[str]:
+    """One advisory per usage metric a node's handler doesn't declare (#427).
+
+    The engine still prices a metric named after a catalog row, so these
+    don't make a model invalid. They tell a model written before the
+    handlers' logical vocabulary which name replaces each metric.
+    """
+    messages = []
+    for address, node in (model.get("nodes") or {}).items():
+        if not isinstance(node, dict):
+            continue
+        resource_address = node.get("resourceAddress")
+        if not isinstance(resource_address, str):
+            continue
+        unknown = ResourceRegistry.unknown_metrics(
+            resource_address, list(node.get("usageMetrics") or {}))
+        if not unknown:
+            continue
+        allowed = ", ".join(ResourceRegistry.valid_metrics_for(resource_address))
+        for name in unknown:
+            messages.append(
+                f"Node '{address}': usage metric '{name}' is not one of its "
+                f"handler's metrics ({allowed}). A catalog row of that name still "
+                f"prices it, but the handler's own name is the stable one.")
+    return messages
+
+
 def known_node_types() -> list[str]:
     """Return list of known node types."""
     return ["compute", "storage", "routing", "external"]

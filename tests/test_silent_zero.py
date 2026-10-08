@@ -208,6 +208,34 @@ class TestPercentageReadsTheMetric:
         })).compute()
         assert costs["w"] == pytest.approx(50 * 0.029 / SECONDS_PER_MONTH)
 
+    def test_a_plain_number_is_the_value_of_a_transaction(self):
+        """The Python SDK may state a metric as a bare number, as main read it."""
+        costs = CostEngine(model({
+            "w": {
+                "nodeType": "external",
+                "pricingModel": "percentage",
+                "pricingRates": {"percentageRate": 0.029,
+                                 "fixedPerTransaction": 0.30},
+                "usageMetrics": {"transactionVolume": 50},
+            },
+        })).compute()
+        assert costs["w"] == pytest.approx(1.75 / SECONDS_PER_MONTH)
+
+    def test_the_fee_is_the_transactional_shape(self):
+        """The percentage model and the `transactional` shape charge one formula."""
+        from infra_cost_model.saas.pricing_shapes import transactional
+
+        params = {"percentage_rate": 0.029, "fixed_per_transaction": 0.30,
+                  "per_call": 0.10, "volume": 50}
+        costs = CostEngine(model({
+            "w": {
+                "nodeType": "external",
+                "pricingModel": "percentage",
+                "usageMetrics": {"transactionVolume": {"unit": "USD", **params}},
+            },
+        })).compute()
+        assert costs["w"] == pytest.approx(transactional(1, params) / SECONDS_PER_MONTH)
+
 
 class TestPercentageWithoutARateRefuses:
     def test_no_rate_anywhere(self):

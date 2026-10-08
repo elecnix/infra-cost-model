@@ -211,3 +211,22 @@ class TestCliReportsUnpricedMetrics:
         path = _write(tmp_path, model)
         with pytest.warns(UserWarning, match="unreachable"):
             assert main(["compute", "--no-catalog", path]) == 0
+
+
+def test_the_warning_survives_a_round_trip_through_its_args_and_pickle():
+    """pytest-xdist rebuilds a worker's warning as ``cls(*args)``.
+
+    A warning that only an ``UnpricedMetric`` could construct stopped a
+    parallel run with an internal error at the first unpriced metric.
+    """
+    import pickle
+
+    from infra_cost_model.engine.engine import UnpricedMetric, UnpricedMetricWarning
+    record = UnpricedMetric(node="n", metric="m", provider="aws", service="S3",
+                            region="us-east-1", quantity=1.0, time_basis="monthly")
+    warning = UnpricedMetricWarning(record)
+    rebuilt = type(warning)(*warning.args)
+    assert str(rebuilt) == str(warning)
+    unpickled = pickle.loads(pickle.dumps(warning))
+    assert str(unpickled) == str(warning)
+    assert unpickled.unpriced == record
