@@ -44,25 +44,13 @@ class TestRDSPricing:
         self.catalog = PricingCatalog(seed=True)
 
         def cost(instance_hours=0, storage_gb=0, backup_storage_gb=0,
-                 instance_class=None, multi_az=False):
+                 instance_class=None):
             config = {"instanceClass": instance_class} if instance_class else None
-            total = resource_cost("aws_db_instance.db", "AmazonRDS", "us-east-1",
-                                  catalog=self.catalog, config=config,
-                                  instanceHours=instance_hours,
-                                  storageGb=storage_gb,
-                                  backupStorageGb=backup_storage_gb)
-            if multi_az and instance_hours:
-                # A standby doubles the instance charge. The handler declares no
-                # logical metric for the multiplier, so read the row directly.
-                multiplier = self.catalog.query(
-                    "aws", "AmazonRDS", "us-east-1", "RDS-Multi-AZ-Multiplier"
-                ).price_usd
-                total += (total - resource_cost(
-                    "aws_db_instance.db", "AmazonRDS", "us-east-1",
-                    catalog=self.catalog, config=config,
-                    storageGb=storage_gb, backupStorageGb=backup_storage_gb,
-                )) * (multiplier - 1)
-            return total
+            return resource_cost("aws_db_instance.db", "AmazonRDS", "us-east-1",
+                                 catalog=self.catalog, config=config,
+                                 instanceHours=instance_hours,
+                                 storageGb=storage_gb,
+                                 backupStorageGb=backup_storage_gb)
 
         self.cost = cost
 
@@ -85,13 +73,6 @@ class TestRDSPricing:
     def test_combined_instance_and_storage(self):
         cost = self.cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20)
         assert cost == pytest.approx(14.71, rel=0.01)
-
-    def test_multi_az_doubles_instance_cost(self):
-        single = self.cost(instance_hours=730, instance_class="db.t3.micro", storage_gb=20)
-        multi = self.cost(instance_hours=730, instance_class="db.t3.micro",
-                          storage_gb=20, multi_az=True)
-        expected = 12.41 * 2 + 2.30
-        assert multi == pytest.approx(expected, rel=0.01) and multi > single
 
     def test_backup_storage_beyond_free_tier(self):
         cost = self.cost(backup_storage_gb=50)
@@ -156,3 +137,140 @@ def test_a_regional_metric_missing_from_its_region_is_not_priced_from_us_east_1(
     with pytest.raises(AssertionError, match="no catalog rows"):
         resource_cost("aws_db_instance.db", "AmazonRDS", "eu-west-1",
                       catalog=catalog, instanceHours=100)
+
+
+# --- Engine and deployment (#481) ----------------------------------------------
+#
+# Prices from the Infracost Cloud Pricing API on 2026-10-08, us-east-1, on
+# demand, matching https://aws.amazon.com/rds/mysql/pricing/ and
+# https://aws.amazon.com/rds/postgresql/pricing/. Multi-AZ (one standby) is
+# twice Single-AZ for the instance and for gp3 storage, in each engine.
+
+ADDRESS = "aws_db_instance.db"
+
+
+def _model(config, hours=730, storage_gb=20, backup_gb=0):
+    usage = {"instanceHours": {"unit": "hours", "value": hours, "fixed": True}}
+    if storage_gb:
+        usage["storageGb"] = {"unit": "GB-Mo", "value": storage_gb, "fixed": True}
+    if backup_gb:
+        usage["backupStorageGb"] = {"unit": "GB-Mo", "value": backup_gb, "fixed": True}
+    node = {"nodeType": "storage", "resourceAddress": ADDRESS, "provider": "aws",
+            "service": "AmazonRDS", "region": "us-east-1", "usageMetrics": usage,
+            "config": config}
+    return {"version": "1.0",
+            "workflow": {"name": "w", "entry": ADDRESS,
+                         "frequency": {"unit": "perMonth", "value": 1}},
+            "nodes": {ADDRESS: node}, "edges": []}
+
+
+def _compute(config, catalog, **kwargs):
+    import warnings
+    from infra_cost_model.engine.engine import CostEngine
+    engine = CostEngine(_model(config, **kwargs), catalog=catalog, time_basis="monthly")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        costs = engine.compute()
+    return costs[ADDRESS], engine
+
+
+@pytest.mark.parametrize("engine_name", [None, "mysql", "MySQL", "mariadb"])
+@pytest.mark.parametrize("instance_class,hourly", [
+    ("db.t3.micro", 0.017), ("db.t3.small", 0.034), ("db.m5.large", 0.171)])
+def test_mysql_and_mariadb_keep_the_mysql_rows(seed_catalog, engine_name,
+                                               instance_class, hourly):
+    """MariaDB and MySQL bill the same rate for each seed class."""
+    config = {"instanceClass": instance_class, "engine": engine_name}
+    assert (RDSInstance().catalog_metrics_for(config)["instanceHours"]
+            == f"RDS-Instance-Hour-{instance_class}")
+    cost, engine = _compute(config, seed_catalog)
+    assert cost == pytest.approx(730 * hourly + 20 * 0.115)
+    assert engine.unpriced_metrics == []
+
+
+@pytest.mark.parametrize("instance_class,hourly", [
+    ("db.t3.micro", 0.018), ("db.t3.small", 0.036), ("db.m5.large", 0.178)])
+def test_postgres_selects_and_prices_its_own_rows(seed_catalog, instance_class, hourly):
+    config = {"instanceClass": instance_class, "engine": "postgres"}
+    assert (RDSInstance().catalog_metrics_for(config)["instanceHours"]
+            == f"RDS-Instance-Hour-postgres-{instance_class}")
+    cost, engine = _compute(config, seed_catalog)
+    assert cost == pytest.approx(730 * hourly + 20 * 0.115)
+    assert engine.unpriced_metrics == []
+
+
+@pytest.mark.parametrize("engine_name,hourly", [("mysql", 0.017), ("postgres", 0.018)])
+def test_multi_az_doubles_the_instance_and_storage_cost(seed_catalog, engine_name, hourly):
+    """One standby: $0.034 (MySQL) and $0.036 (PostgreSQL) an hour for a
+    db.t3.micro, and $0.23 a GB-month of gp3. Backup storage is not doubled."""
+    single = {"instanceClass": "db.t3.micro", "engine": engine_name, "multiAz": False}
+    multi = {**single, "multiAz": True}
+    single_cost, _ = _compute(single, seed_catalog, backup_gb=50)
+    multi_cost, engine = _compute(multi, seed_catalog, backup_gb=50)
+    backup = 50 * 0.095
+    assert single_cost == pytest.approx(730 * hourly + 20 * 0.115 + backup)
+    assert multi_cost == pytest.approx(730 * hourly * 2 + 20 * 0.23 + backup)
+    assert engine.unpriced_metrics == []
+
+
+def test_multi_az_maps_the_rows_with_a_factor_of_two():
+    metrics = RDSInstance().catalog_metrics_for(
+        {"instanceClass": "db.m5.large", "engine": "postgres", "multiAz": True})
+    assert metrics["instanceHours"] == {"RDS-Instance-Hour-postgres-db.m5.large": 2}
+    assert metrics["storageGb"] == {"RDS-Storage-gp3": 2}
+    assert metrics["backupStorageGb"] == "RDS-Backup-Storage"
+
+
+def test_a_cloudformation_string_multi_az_counts():
+    metrics = RDSInstance().catalog_metrics_for({"multiAz": "true"})
+    assert metrics["instanceHours"] == {"RDS-Instance-Hour-db.t3.micro": 2}
+
+
+def test_no_seed_multiplier_row_is_left_unused():
+    """The handler states the factor, so no catalog row stands for it."""
+    import json
+    from infra_cost_model.pricing.cache import SEED_PRICES_PATH
+    rows = json.loads(SEED_PRICES_PATH.read_text())
+    assert not [r for r in rows if r["usage_metric"] == "RDS-Multi-AZ-Multiplier"]
+
+
+@pytest.mark.parametrize("engine_name", ["oracle-ee", "sqlserver-ex", "aurora-mysql",
+                                         "aurora-postgresql", "db2-se"])
+def test_another_engine_is_reported_unpriced_not_billed_at_the_mysql_rate(
+        seed_catalog, engine_name):
+    config = {"instanceClass": "db.m5.large", "engine": engine_name}
+    row = RDSInstance().catalog_metrics_for(config)["instanceHours"]
+    assert engine_name in row
+    assert not seed_catalog.query("aws", "AmazonRDS", "us-east-1", row)
+    from infra_cost_model.pricing.sources import infracost as ic
+    assert ic.descriptor_for(row) is None
+    cost, engine = _compute(config, seed_catalog, storage_gb=0)
+    assert cost == 0
+    assert [u.node for u in engine.unpriced_metrics] == [ADDRESS]
+
+
+def test_extraction_warns_about_an_engine_no_row_prices():
+    resource = {"address": "aws_db_instance.legacy", "type": "aws_db_instance",
+                "values": {"engine": "oracle-ee", "instance_class": "db.m5.large",
+                           "region": "us-east-1"}}
+    with pytest.warns(UserWarning, match="oracle-ee"):
+        RDSInstance.extract_tf(resource)
+
+
+@pytest.mark.parametrize("engine_name", [None, "mysql", "mariadb", "postgres"])
+def test_extraction_is_silent_for_a_priced_engine(engine_name):
+    import warnings
+    resource = {"address": "aws_db_instance.db", "type": "aws_db_instance",
+                "values": {"engine": engine_name, "instance_class": "db.t3.micro"}}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        RDSInstance.extract_tf(resource)
+
+
+def test_cdk_and_pulumi_warn_too():
+    with pytest.warns(UserWarning, match="sqlserver-se"):
+        RDSInstance.extract_cdk({"LogicalId": "Db", "Properties": {
+            "Engine": "sqlserver-se", "DBInstanceClass": "db.m5.large"}})
+    with pytest.warns(UserWarning, match="oracle-se2"):
+        RDSInstance.extract_pulumi({"id": "aws:rds:Instance:db", "inputs": {
+            "engine": "oracle-se2", "instanceClass": "db.m5.large"}})

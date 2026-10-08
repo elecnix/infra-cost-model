@@ -1461,6 +1461,8 @@ METRIC_DESCRIPTORS: dict[str, dict] = {
         "purchase_option": "on_demand", "unit": "64K-Chunks", "store_unit": "requests",
     },
     # RDS for MySQL, Single-AZ, the engine and deployment of the seed rows.
+    # MariaDB and PostgreSQL bill the same storage and backup rates, and
+    # Multi-AZ storage twice the rate, which the handler applies (#481).
     # The instance-hour descriptors follow `_rds_instance_descriptor` below.
     "RDS-Storage-gp3": {
         "service": "AmazonRDS", "product_family": "Database Storage",
@@ -1767,25 +1769,41 @@ METRIC_DESCRIPTORS.update({
 # instance class ("RDS-Instance-Hour-db.t3.micro"), so one descriptor per
 # class would never cover them all. `descriptor_for` builds the descriptor
 # of any class from the metric name, and the table holds the classes of the
-# seed rows, which a default sync covers.
+# seed rows, which a default sync covers. A MySQL (or MariaDB) row names the
+# class alone. A PostgreSQL row names the engine first
+# ("RDS-Instance-Hour-postgres-db.t3.micro", #481). Each descriptor selects
+# the Single-AZ product: the handler doubles it for a Multi-AZ instance.
 RDS_INSTANCE_HOUR_PREFIX = "RDS-Instance-Hour-"
+RDS_POSTGRES_INSTANCE_HOUR_PREFIX = RDS_INSTANCE_HOUR_PREFIX + "postgres-"
 _RDS_SEED_INSTANCE_CLASSES = ("db.t3.micro", "db.t3.small", "db.m5.large")
 
 
-def _rds_instance_descriptor(instance_class: str) -> dict:
-    """RDS for MySQL, Single-AZ, on demand: the product of the seed rows."""
+def _rds_instance_descriptor(instance_class: str, engine: str = "MySQL") -> dict:
+    """RDS for *engine*, Single-AZ, on demand: the product of the seed rows."""
     return {
         "service": "AmazonRDS", "product_family": "Database Instance",
         "attribute_filters": [{"key": "instanceType", "value": instance_class},
-                              {"key": "databaseEngine", "value": "MySQL"},
+                              {"key": "databaseEngine", "value": engine},
                               {"key": "deploymentOption", "value": "Single-AZ"}],
         "purchase_option": "on_demand", "unit": "Hrs", "store_unit": "Hours",
     }
 
 
+def _rds_instance_class_and_engine(usage_metric: str) -> Optional[tuple[str, str]]:
+    """The instance class and price-list engine an RDS instance-hour metric names."""
+    for prefix, engine in ((RDS_POSTGRES_INSTANCE_HOUR_PREFIX, "PostgreSQL"),
+                           (RDS_INSTANCE_HOUR_PREFIX, "MySQL")):
+        if usage_metric.startswith(prefix):
+            instance_class = usage_metric[len(prefix):]
+            return (instance_class, engine) if instance_class else None
+    return None
+
+
 METRIC_DESCRIPTORS.update({
-    RDS_INSTANCE_HOUR_PREFIX + c: _rds_instance_descriptor(c)
+    prefix + c: _rds_instance_descriptor(c, engine)
     for c in _RDS_SEED_INSTANCE_CLASSES
+    for prefix, engine in ((RDS_INSTANCE_HOUR_PREFIX, "MySQL"),
+                           (RDS_POSTGRES_INSTANCE_HOUR_PREFIX, "PostgreSQL"))
 })
 
 
@@ -1797,10 +1815,10 @@ def descriptor_for(usage_metric: str) -> Optional[dict]:
     against ``DESCRIPTOR_FIELDS`` like the table.
     """
     descriptor = METRIC_DESCRIPTORS.get(usage_metric)
-    if descriptor is None and usage_metric.startswith(RDS_INSTANCE_HOUR_PREFIX):
-        instance_class = usage_metric[len(RDS_INSTANCE_HOUR_PREFIX):]
-        if instance_class:
-            descriptor = _rds_instance_descriptor(instance_class)
+    if descriptor is None:
+        parsed = _rds_instance_class_and_engine(usage_metric)
+        if parsed is not None:
+            descriptor = _rds_instance_descriptor(*parsed)
             validate_descriptors({usage_metric: descriptor})
     return descriptor
 
