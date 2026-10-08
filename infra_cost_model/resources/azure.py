@@ -1452,11 +1452,28 @@ _BLOB_NO_WRITE_METER = {("Hot", "RA-GZRS"), ("Cool", "RA-GZRS")}
 # before deleting it costs: a Cool blob deleted under 30 days, a Cold one
 # under 90 and an Archive one under 180
 # (https://azure.microsoft.com/en-us/pricing/details/storage/blobs/). Azure
-# publishes one early-deletion meter per SKU, at the tier's storage price
-# for the whole window, and no meter per number of days, so `earlyDeleteGb`
-# counts the GB deleted before the window and no setting selects another
-# row.
+# publishes one early-deletion meter per SKU, priced at a month of the
+# tier's storage per GB, and bills it for the days left in the window, so
+# `earlyDeleteGb` counts the GB deleted early and `earlyDeleteDaysStored`
+# says how long they stayed.
 _BLOB_COOL_TIERS = {"Cool": 30, "Cold": 90, "Archive": 180}
+
+
+def blob_early_delete_months(tier: str, config: dict) -> float:
+    """Months of storage one GB deleted early pays, from the node's ``config``.
+
+    Azure charges the days left in the tier's window: a Cool blob deleted
+    after 21 days pays 9 days of Cool storage, an Archive one deleted after
+    45 days pays 135 (https://learn.microsoft.com/en-us/azure/storage/blobs/
+    access-tiers-overview). The meter's price is a month of storage per GB,
+    so the quantity is the GB times the days left over 30.
+    ``earlyDeleteDaysStored`` is the days a deleted blob stayed in the tier,
+    0 by default, which charges the whole window.
+    """
+    stored = config.get("earlyDeleteDaysStored", 0)
+    if isinstance(stored, bool) or not isinstance(stored, (int, float)):
+        stored = 0
+    return max(_BLOB_COOL_TIERS[tier] - stored, 0) / 30
 # The access tier and redundancy that publish an early-deletion meter. Azure
 # gives each one a meter at the tier's storage price for the whole window,
 # and none to the two zone-redundant Cool SKUs. The general-purpose v1
@@ -1580,7 +1597,8 @@ class AzureBlobStorage(StorageResource):
                 early_delete = {(t, r) for t, r in early_delete
                                 if t in _BLOB_V1_EARLY_DELETE_TIERS}
             if (tier, replication) in early_delete:
-                metrics["earlyDeleteGb"] = f"{prefix}-Early-Delete-GB"
+                metrics["earlyDeleteGb"] = {
+                    f"{prefix}-Early-Delete-GB": blob_early_delete_months(tier, config)}
         return metrics
 
     def derive_catalog_usage(self, usage: dict[str, float],
