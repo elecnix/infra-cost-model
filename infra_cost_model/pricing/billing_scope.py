@@ -127,3 +127,16 @@ def billing_scope(vendor: Optional[str], service: Optional[str],
         return BillingScope(BILLING_ACCOUNT, metric + (scaling,))
 
     return BillingScope(BILLING_REGION)
+
+
+def query_regions(vendor: Optional[str], service: Optional[str],
+                  usage_metric: str, region: Optional[str]) -> list:
+    """The regions whose rows price one node's quantity, in order of preference.
+
+    A node's own region first, then the regions ``billing_scope`` names for
+    its group: a global service's region with no rows of its own reads the
+    global or us-east-1 rows (#384). The same scope that groups the pools
+    decides this, so the two can't disagree about which rows a metric reads.
+    """
+    scope = billing_scope(vendor, service, usage_metric, region)
+    return [region] + [r for r in scope.price_regions if r != region]
