@@ -20,6 +20,14 @@ class ApplicationLoadBalancer(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["albHours", "processedGb", "newConnections", "activeConnections", "ruleEvaluations"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        return {"albHours": "ALB-Hour",
+                "processedGb": "ALB-LCU-ProcessedBytes",
+                "newConnections": "ALB-LCU-NewConnections",
+                "activeConnections": "ALB-LCU-ActiveConnections",
+                "ruleEvaluations": "ALB-LCU-RuleEvaluations"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["ApplicationLoadBalancer"]:
         if (resource_address.startswith("aws_lb.") or

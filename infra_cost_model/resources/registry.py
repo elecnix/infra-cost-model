@@ -6,9 +6,9 @@ Provides multi-cloud provider dispatch (DP#6).
 """
 
 import warnings
-from typing import Optional, Type, Dict as DictType
+from typing import Iterable, Optional, Type, Dict as DictType
 
-from .types import DerivedCatalogUsage, ResourceType
+from .types import LEGACY_CATALOG_METRICS, DerivedCatalogUsage, ResourceType
 from .lambda_func import LambdaFunction
 from .dynamodb import DynamoDBTable
 from .apigw import APIGatewayHTTP
@@ -121,6 +121,42 @@ class ResourceRegistry:
             if result is not None:
                 return handler
         return None
+
+    @classmethod
+    def valid_metrics_for(cls, resource_address: str) -> Optional[list[str]]:
+        """The logical ``usageMetrics`` names the handler for ``resource_address``
+        accepts, in the order the handler declares them.
+
+        The registry is the single owner of a Node type's metric vocabulary:
+        a model names one of these, never a pricing-catalog row name (#427).
+        Returns ``None`` when no handler matches the address.
+        """
+        handler = cls.from_address(resource_address)
+        if handler is None:
+            return None
+        return list(handler().valid_metrics)
+
+    @classmethod
+    def unknown_metrics(cls, resource_address: str,
+                        metrics: Iterable[str]) -> list[str]:
+        """Names in ``metrics`` that are outside the handler's vocabulary, in the
+        order given, each reported once.
+
+        Advisory: the engine still prices a raw catalog row name it finds rows
+        for, so a model written before the logical vocabulary keeps working.
+        This is what tells such a model to migrate (#427). A node with no
+        handler has no vocabulary, so nothing is reported.
+        """
+        allowed = cls.valid_metrics_for(resource_address)
+        if allowed is None:
+            return []
+        allowed = set(allowed) | LEGACY_CATALOG_METRICS
+        seen, unknown = set(), []
+        for name in metrics:
+            if name not in allowed and name not in seen:
+                seen.add(name)
+                unknown.append(name)
+        return unknown
 
     @classmethod
     def resolve_catalog_metric(cls, resource_address: str,

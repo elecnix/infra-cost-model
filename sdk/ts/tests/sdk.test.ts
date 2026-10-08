@@ -503,8 +503,8 @@ describe("parseYamlDsl on the bundled examples", () => {
       readFileSync(join(EXAMPLES_DIR, "serverless-api.yaml"), "utf8"),
     );
     const metrics = model.nodes["aws_dynamodb_table.items"]!.usageMetrics!;
-    expect(metrics["Dynamo-ReadRequest"]!.edgeType).toBe("read");
-    expect(metrics["Dynamo-WriteRequest"]!.edgeType).toBe("write");
+    expect(metrics["readRequests"]!.edgeType).toBe("read");
+    expect(metrics["writeRequests"]!.edgeType).toBe("write");
   });
 });
 

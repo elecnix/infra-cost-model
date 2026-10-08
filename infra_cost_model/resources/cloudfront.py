@@ -20,6 +20,13 @@ class CloudFrontDistribution(RoutingResource):
     def valid_metrics(self) -> list[str]:
         return ["requests", "dataOutGb"]
 
+    @property
+    def catalog_metrics(self) -> dict[str, str]:
+        # A distribution serves HTTPS by default, which is the split
+        # ``_cloudfront_cost`` takes when the model says nothing.
+        return {"requests": "CloudFront-HTTPS-Request",
+                "dataOutGb": "CloudFront-DataTransfer"}
+
     @classmethod
     def from_address(cls, resource_address: str) -> Optional["CloudFrontDistribution"]:
         if (resource_address.startswith("aws_cloudfront_distribution.") or
