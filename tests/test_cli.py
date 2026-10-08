@@ -1418,6 +1418,21 @@ def test_cli_sync_pricing_fallback_message(monkeypatch, capsys):
     assert "fallback" in out.lower()
 
 
+def test_cli_sync_pricing_states_the_pairs_that_returned_nothing(monkeypatch, capsys):
+    """The summary counts the metric/region pairs whose rows were kept (#482)."""
+    import infra_cost_model.pricing.sources.infracost as ic
+    monkeypatch.setattr(
+        ic, "sync_pricing_catalog",
+        lambda vendor="aws", services=None, regions=None:
+            ic.SyncResult(5, "infracost", empty=["eu-west-1/A", "eu-west-1/B"]))
+    rc = main(["sync-pricing", "--region", "us-east-1", "--region", "eu-west-1"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Synced 5 prices" in out
+    assert "2 metric/region pair(s) returned no prices" in out
+    assert "kept" in out
+
+
 # A node the pricing catalog prices and the model deliberately does not: no
 # `pricingRates` anywhere. Under --no-catalog the engine has nothing to charge
 # and reports $0; under the catalog default it reports a real figure. That gap

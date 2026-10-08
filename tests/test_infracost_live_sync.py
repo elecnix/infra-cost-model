@@ -169,14 +169,82 @@ def test_rejected_sync_keeps_the_previous_live_rows(creds, tmp_path, monkeypatch
     assert _rows(catalog, STORAGE, "infracost") == before
 
 
-def test_resync_with_no_matching_product_removes_the_live_rows(creds, tmp_path):
-    """The metric then falls back to the seed rows."""
+def _stored(catalog, metric):
+    conn = sqlite3.connect(catalog._cache.db_path)
+    try:
+        return conn.execute(
+            "SELECT region, price_usd, start_usage_amount, fetched_at FROM prices "
+            "WHERE usage_metric = ? AND source = 'infracost' "
+            "ORDER BY region, start_usage_amount", (metric,)).fetchall()
+    finally:
+        conn.close()
+
+
+# --- #482: an empty answer keeps the stored rows ------------------------------
+
+def test_resync_with_no_matching_product_keeps_the_live_rows(creds, tmp_path):
+    """A query that matches no product leaves the metric's rows as they were.
+
+    The empty answer can be transient, or the API can have renamed the
+    product. Either way the old rows still price the metric, with their old
+    ``fetched_at``.
+    """
     catalog = PricingCatalog(db_path=tmp_path / "pricing.db", seed=True)
     _sync(catalog, [STORAGE])
-    _sync(catalog, [STORAGE], catalogue=[])
-    assert _rows(catalog, STORAGE, "infracost") == []
+    before = _stored(catalog, STORAGE)
+    assert before
+    client = ic.InfracostClient()
+    with patch.object(ic.requests, "post", side_effect=_fake_post([])):
+        assert client.sync_to_cache(catalog._cache, STORAGE, "us-east-1") == 0
+    assert _stored(catalog, STORAGE) == before
     result = catalog.query("aws", "AmazonCloudWatch", "us-east-1", STORAGE, 10)
     assert result.total_cost == pytest.approx(0.15)
+
+
+def test_resync_with_new_prices_replaces_the_live_rows(creds, tmp_path):
+    """A query that returns rows still replaces the stored ones (#355)."""
+    catalog = PricingCatalog(db_path=tmp_path / "pricing.db")
+    _sync(catalog, [STORAGE])
+    dearer = [_product("Storage Snapshot", {"usagetype": "USE1-TimedStorage-ByteHrs"},
+                       [("0.05", "GB-Mo", "0", "Inf")])]
+    _sync(catalog, [STORAGE], catalogue=dearer)
+    assert [(price, start) for _, price, start, _ in _stored(catalog, STORAGE)] == [
+        (0.0, 0.0), (0.05, 5.0)]
+
+
+def test_sync_pricing_catalog_reports_the_pairs_that_returned_nothing(
+        creds, tmp_path, monkeypatch):
+    """The summary lists each metric and region with no prices, as a skip.
+
+    The us-east-1 catalogue has no eu-west-1 product, so both metrics come
+    back empty there. That is not a failure: no warning, and the eu-west-1
+    rows from an earlier sync stay.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    eu_storage = _product("Storage Snapshot", {"usagetype": "EU-TimedStorage-ByteHrs"},
+                          [("0.03", "GB-Mo", "0", "Inf")])
+    with patch.object(ic.requests, "post", side_effect=_fake_post([eu_storage])):
+        ic.sync_pricing_catalog(services=[STORAGE], regions=["eu-west-1"])
+    alarm = "CloudWatch-Alarm-Month"
+    import warnings
+    with patch.object(ic.requests, "post", side_effect=_fake_post(US_EAST_1)), \
+            warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = ic.sync_pricing_catalog(services=[STORAGE, alarm],
+                                         regions=["us-east-1", "eu-west-1"])
+    count, source = result
+    assert source == "infracost"
+    assert count == 4  # each metric: its $0 tier and one paid tier
+    assert result.empty == (f"eu-west-1/{STORAGE}", f"eu-west-1/{alarm}")
+    from infra_cost_model.pricing.cache import PricingCache
+    conn = sqlite3.connect(PricingCache().db_path)
+    try:
+        eu = conn.execute("SELECT COUNT(*) FROM prices WHERE usage_metric = ? "
+                          "AND region = 'eu-west-1' AND source = 'infracost'",
+                          (STORAGE,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert eu == 2
 
 
 # --- #356: the free allowances survive a live sync ------------------------------
