@@ -102,7 +102,7 @@ def test_dynamodb_extract_cdk():
 
 def test_dynamodb_on_demand_cost(seed_catalog):
     """Test on-demand cost calculation."""
-    cost = _on_demand_cost(1_000_000, 1_000_000, 10.0)
+    cost = _on_demand_cost(1_000_000, 1_000_000, 10.0, catalog=seed_catalog)
 
     # 1M reads = $0.125, 1M writes = $0.625, 10GB = $2.50
     expected = 0.125 + 0.625 + 2.50  # $3.25
@@ -118,7 +118,7 @@ def test_dynamodb_zero_cost():
 
 def test_dynamodb_storage_only(seed_catalog):
     """Test storage-only cost."""
-    cost = _on_demand_cost(0, 0, 100.0)
+    cost = _on_demand_cost(0, 0, 100.0, catalog=seed_catalog)
 
     # 100GB * $0.25 = $25
     assert cost == pytest.approx(25.0, rel=0.01)
@@ -133,7 +133,7 @@ def test_dynamodb_leaf_node_validation():
 
 def test_dynamodb_provisioned_cost(seed_catalog):
     """Test provisioned cost from RCU/WCU hours."""
-    cost = _provisioned_cost(1000, 500, 10.0)
+    cost = _provisioned_cost(1000, 500, 10.0, catalog=seed_catalog)
 
     # 1000 RCU-hours * $0.00013, 500 WCU-hours * $0.00065, 10GB * $0.25
     expected = 1000 * 0.00013 + 500 * 0.00065 + 10 * 0.25
@@ -156,8 +156,7 @@ def test_dynamodb_gsi_on_demand_cost(seed_catalog):
         1_000_000,
         10.0,
         gsi_read_requests=500_000,
-        gsi_write_requests=250_000
-    )
+        gsi_write_requests=250_000, catalog=seed_catalog)
 
     expected = (
         1_500_000 * 0.125e-6
@@ -170,7 +169,7 @@ def test_dynamodb_gsi_on_demand_cost(seed_catalog):
 
 def test_dynamodb_gsi_provisioned_cost(seed_catalog):
     """Global secondary indexes add their own provisioned capacity-unit hours."""
-    cost = _provisioned_cost(1000 + 100, 500 + 50, 10.0)
+    cost = _provisioned_cost(1000 + 100, 500 + 50, 10.0, catalog=seed_catalog)
 
     expected = 1100 * 0.00013 + 550 * 0.00065 + 10 * 0.25
 
