@@ -4,6 +4,14 @@ The engine reads a payload an exporter already wrote — the issue's example is
 the output of `aws ce get-cost-and-usage` — so the package never calls a cloud
 API and a reconciliation can be re-run from a file in a repository.
 
+Group the query by ``SERVICE`` and then ``USAGE_TYPE``, in that order, to get
+one bill line per usage type. The payload does not record the order, so a group
+with two keys is read as ``(service, usage_type)``. A single joined
+``SERVICE/USAGE_TYPE`` key is read the same way:
+
+    aws ce get-cost-and-usage ... \\
+      --group-by Type=DIMENSION,Key=SERVICE Type=DIMENSION,Key=USAGE_TYPE
+
 Six traps the comparison has to survive (#444):
 
 1. Some lines bill once a month and report an explicit ``$0.00`` row for every

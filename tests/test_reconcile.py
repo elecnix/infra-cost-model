@@ -812,3 +812,73 @@ def test_parse_actuals_flags_one_bad_start_among_good_rows():
     assert not actuals.readable
     assert "2026-13-45" in actuals.error
     assert actuals.days == ["2026-01-01"]
+
+
+# --- a group with two keys (#459) -------------------------------------------
+
+
+def two_key_payload():
+    """A query grouped by SERVICE then USAGE_TYPE, with invented values."""
+    return {
+        "ResultsByTime": [
+            {
+                "TimePeriod": {"Start": "2026-01-01", "End": "2026-01-02"},
+                "Groups": [
+                    {
+                        "Keys": ["EC2 - Other", "USW2-NatGateway-Bytes"],
+                        "Metrics": {"UnblendedCost": {"Amount": "12.34", "Unit": "USD"}},
+                    },
+                    {
+                        "Keys": ["EC2 - Other", "USW2-NatGateway-Hours"],
+                        "Metrics": {"UnblendedCost": {"Amount": "1.50", "Unit": "USD"}},
+                    },
+                ],
+            }
+        ]
+    }
+
+
+def test_two_keys_read_as_service_then_usage_type():
+    actuals = parse_actuals(two_key_payload())
+
+    assert actuals.error is None
+    assert actuals.lines[("EC2 - Other", "USW2-NatGateway-Bytes")] == {"2026-01-01": 12.34}
+    assert actuals.lines[("EC2 - Other", "USW2-NatGateway-Hours")] == {"2026-01-01": 1.5}
+
+
+def test_two_key_usage_types_stay_separate_lines():
+    from infra_cost_model.reconcile.actuals import BillLineKey
+
+    actuals = parse_actuals(two_key_payload())
+
+    assert actuals.daily(BillLineKey("EC2 - Other", "USW2-NatGateway-Bytes")) == {"2026-01-01": 12.34}
+    assert actuals.daily(BillLineKey("EC2 - Other")) == {"2026-01-01": 13.84}
+
+
+def test_joined_single_key_form_still_works():
+    payload = two_key_payload()
+    payload["ResultsByTime"][0]["Groups"] = [
+        {
+            "Keys": ["EC2 - Other/USW2-NatGateway-Bytes"],
+            "Metrics": {"UnblendedCost": {"Amount": "12.34", "Unit": "USD"}},
+        }
+    ]
+
+    actuals = parse_actuals(payload)
+
+    assert list(actuals.lines) == [("EC2 - Other", "USW2-NatGateway-Bytes")]
+
+
+def test_an_empty_second_key_is_the_service_wide_line():
+    payload = two_key_payload()
+    payload["ResultsByTime"][0]["Groups"] = [
+        {
+            "Keys": ["EC2 - Other", ""],
+            "Metrics": {"UnblendedCost": {"Amount": "4.00", "Unit": "USD"}},
+        }
+    ]
+
+    actuals = parse_actuals(payload)
+
+    assert actuals.error is None
+    assert list(actuals.lines) == [("EC2 - Other", None)]
