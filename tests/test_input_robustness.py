@@ -180,3 +180,33 @@ def test_extract_reads_the_resources_of_child_modules(tmp_path, capsys):
 def test_a_directory_is_one_error_line(tmp_path, capsys, command):
     assert main(command + [str(tmp_path)]) == 1
     one_error_line(capsys)
+
+
+def test_a_terraform_data_source_is_not_a_cost_node(tmp_path, capsys):
+    """`data.` blocks look up resources that exist; they bill nothing."""
+    data_source = {"address": "data.aws_s3_bucket.existing", "mode": "data",
+                   "type": "aws_s3_bucket", "name": "existing", "values": {}}
+    module_data = {"address": "module.m.data.aws_lambda_function.f", "mode": "data",
+                   "type": "aws_lambda_function", "name": "f", "values": {}}
+    plan = {"values": {"root_module": {"resources": [data_source], "child_modules": [
+        {"address": "module.m", "resources": [module_data]}]}}}
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan))
+    assert main(["extract", str(path), "--from", "terraform", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_a_frequency_must_be_a_number(tmp_path, capsys):
+    data = example()
+    data["workflow"]["frequency"]["value"] = "users"
+    data["workflow"]["parameters"] = {"users": 10}
+    path = write_model(tmp_path, data)
+    assert main(["compute", path, "--pricing", "seed"]) == 1
+    one_error_line(capsys)
+
+
+@pytest.mark.parametrize("stored", ["21", "days", True, -30])
+def test_early_delete_days_must_be_a_count(stored):
+    from infra_cost_model.resources.azure import blob_early_delete_months
+    with pytest.raises(ValueError, match="earlyDeleteDaysStored"):
+        blob_early_delete_months("Cool", {"earlyDeleteDaysStored": stored})

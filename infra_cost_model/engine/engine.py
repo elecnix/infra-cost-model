@@ -270,6 +270,14 @@ def _percentage_metric(node: dict) -> Optional[tuple[str, dict]]:
     return named
 
 
+# The keys a percentage node's pricingRates and transaction metric may state.
+_PERCENTAGE_RATE_KEYS = frozenset({"percentageRate", "fixedPerTransaction", "perCall"})
+_PERCENTAGE_METRIC_KEYS = frozenset({
+    "unit", "description", "value", "volume", "fixed", "edgeType", "shape",
+    "percentage_rate", "fixed_per_transaction", "per_call",
+})
+
+
 def silent_zero_error(address: str, node: dict) -> Optional[str]:
     """Why this node would price as a silent zero, or None if it would not.
 
@@ -295,6 +303,19 @@ def silent_zero_error(address: str, node: dict) -> Optional[str]:
         found = _percentage_metric(node)
         name, metric = found if found is not None else (None, None)
         rates = node.get("pricingRates") or {}
+        # A misspelt rate beside a fee would price the fee alone, so a key
+        # outside the documented ones is refused by name.
+        unknown = sorted(set(rates) - _PERCENTAGE_RATE_KEYS)
+        if metric is not None:
+            unknown += sorted(set(metric) - _PERCENTAGE_METRIC_KEYS)
+        if unknown:
+            return (
+                f"Node '{address}' uses pricingModel 'percentage' with "
+                f"{', '.join(repr(k) for k in unknown)}, which it doesn't read. "
+                f"The rates are 'percentage_rate', 'fixed_per_transaction' and "
+                f"'per_call' on the metric, or 'percentageRate', "
+                f"'fixedPerTransaction' and 'perCall' in pricingRates."
+            )
         has_percentage = (metric is not None and "percentage_rate" in metric) \
             or "percentageRate" in rates
         # A per-call or per-transaction fee charges each transaction on its
@@ -625,10 +646,7 @@ class WorkloadDeriver:
         freq = self.workflow["frequency"]
         if not isinstance(freq, dict):
             raise ValueError("the workflow's frequency must state a value and a unit")
-        value = freq.get("value")
-        if isinstance(value, str):
-            value = self._resolve_value(value)
-        value = _quantity(value, "the workflow's frequency")
+        value = _quantity(freq.get("value"), "the workflow's frequency")
         unit = freq.get("unit")
 
         # Convert to per-second (canonical unit)
@@ -2132,6 +2150,30 @@ class SensitivityAnalyzer:
         self.cost_model = cost_model
         self.catalog = catalog
         self.time_basis = time_basis
+        self._engines: list[CostEngine] = []
+
+    def _engine(self, model: dict, catalog: Optional[PricingCatalog],
+                time_basis: str) -> "CostEngine":
+        """A CostEngine for one point of an analysis, kept for its misses."""
+        engine = CostEngine(model, catalog, time_basis=time_basis)
+        self._engines.append(engine)
+        return engine
+
+    @property
+    def catalog_misses(self) -> list:
+        """The catalog misses of every point this analyzer priced, each once.
+
+        A metric that is 0 at the baseline is priced only at a swept point, so
+        a `--pricing live` run checks these rather than the baseline's alone.
+        """
+        seen, misses = set(), []
+        for engine in self._engines:
+            for miss in engine.catalog_misses:
+                key = (miss.node, miss.metric, miss.provider, miss.service, miss.region)
+                if key not in seen:
+                    seen.add(key)
+                    misses.append(miss)
+        return misses
 
     def what_if(self, parameter: str, value: float) -> float:
         """Run what-if analysis by varying a single parameter.
@@ -2144,7 +2186,7 @@ class SensitivityAnalyzer:
             Total cost with the parameter change.
         """
         modified_model = self._modify_parameter(parameter, value)
-        engine = CostEngine(modified_model, self.catalog, time_basis=self.time_basis)
+        engine = self._engine(modified_model, self.catalog, time_basis=self.time_basis)
         return engine.total_cost()
 
     def _modify_parameter(self, parameter: str, value: float) -> dict:
@@ -2238,7 +2280,7 @@ class SensitivityAnalyzer:
         results = []
         for value in values:
             modified = self._modify_parameter(parameter, value)
-            engine = CostEngine(modified, self.catalog, time_basis=self.time_basis)
+            engine = self._engine(modified, self.catalog, time_basis=self.time_basis)
             node_costs = engine.compute()
             total = sum(node_costs.values())
             results.append({
@@ -2297,13 +2339,13 @@ class SensitivityAnalyzer:
         Raises:
             ValueError: If the parameter name is not supported.
         """
-        engine = CostEngine(self.cost_model, self.catalog, time_basis=self.time_basis)
+        engine = self._engine(self.cost_model, self.catalog, time_basis=self.time_basis)
         baseline = engine.total_cost()
 
         if parameter == "frequency":
             current = self.cost_model["workflow"]["frequency"]["value"]
             new_value = current * (1 + delta)
-            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog,
+            engine_modified = self._engine(self._modify_parameter(parameter, new_value), self.catalog,
                                           time_basis=self.time_basis)
             return engine_modified.total_cost() - baseline
 
@@ -2334,7 +2376,7 @@ class SensitivityAnalyzer:
                     f"Edge '{from_node}->{to_node}' not found in cost model edges."
                 )
             new_value = float(current) * (1 + delta)
-            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog,
+            engine_modified = self._engine(self._modify_parameter(parameter, new_value), self.catalog,
                                           time_basis=self.time_basis)
             return engine_modified.total_cost() - baseline
 
@@ -2343,7 +2385,7 @@ class SensitivityAnalyzer:
         if parameter in params:
             current = params[parameter]
             new_value = current * (1 + delta)
-            engine_modified = CostEngine(self._modify_parameter(parameter, new_value), self.catalog,
+            engine_modified = self._engine(self._modify_parameter(parameter, new_value), self.catalog,
                                           time_basis=self.time_basis)
             return engine_modified.total_cost() - baseline
 

@@ -514,3 +514,24 @@ class TestEveryPricingCommandPinsItsSource:
         assert main(["analyze", model_path, "--json", "--pricing-db", str(live_db)]) == 0
         report = json.loads(capsys.readouterr().out)
         assert report["total_cost"] == pytest.approx(MONTHLY_REQUESTS * LIVE_RATE)
+
+
+def zero_at_baseline_model() -> str:
+    """A metric that is 0 at the baseline, so only a swept point prices it."""
+    data = yaml.safe_load(model(with_embedded_rates=True))
+    data["workflow"]["parameters"] = {"scale": 0}
+    data["nodes"]["fn"]["usageMetrics"]["Lambda-Request"]["value"] = "scale"
+    return yaml.safe_dump(data)
+
+
+@pytest.mark.parametrize("command", [
+    ["whatif", "--parameter", "scale", "--value", "1"],
+    ["what-if", "--param", "scale", "--values", "0,1"],
+])
+def test_a_live_miss_at_a_swept_point_stops_the_run(tmp_path, capsys, command):
+    """The baseline prices nothing here, so every point's misses count."""
+    cold = PricingCache(db_path=tmp_path / "cold.db").db_path
+    model_path = write(tmp_path, zero_at_baseline_model())
+    assert main([command[0], model_path, *command[1:], "--pricing", "live",
+                 "--pricing-db", str(cold)]) == 1
+    assert "Lambda-Request" in capsys.readouterr().err

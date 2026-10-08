@@ -179,6 +179,8 @@ class ResourceRegistry:
             # A Pulumi `id` names no resource type; the URN carries it (#396).
             handler = cls.from_address(resource_data.get("urn", ""))
         if (not handler and source_format == "terraform"
+                and resource_address.startswith("module.")
+                and resource_data.get("mode") != "data"
                 and resource_data.get("type") and resource_data.get("name")):
             # A module's resource is addressed `module.<name>.<type>.<name>`,
             # so its own type and name select the handler.

@@ -327,13 +327,14 @@ def _pricing_catalog(args: argparse.Namespace) -> Optional[PricingCatalog]:
     return PricingCatalog(db_path, sources=args.pricing)
 
 
-def _refuse_live_misses(args: argparse.Namespace, engine: CostEngine) -> None:
+def _refuse_live_misses(args: argparse.Namespace, engine) -> None:
     """Stop a `--pricing live` run whose engine priced a metric off the synced rows.
 
     A pinned live source either answers every metric or the run stops: a
     total that mixes synced rows with embedded rates or bundled rows is the
     one thing the option exists to prevent (#446). Call after the engine
-    has computed.
+    has computed. ``engine`` is a CostEngine, or a SensitivityAnalyzer, whose
+    misses cover every point it priced.
     """
     misses = engine.catalog_misses
     if args.pricing != "live" or not misses:
@@ -1188,6 +1189,7 @@ def cmd_whatif(args: argparse.Namespace) -> int:
         baseline = baseline_engine.total_cost()
         _refuse_live_misses(args, baseline_engine)
         new_cost = analyzer.what_if(args.parameter, args.value)
+        _refuse_live_misses(args, analyzer)
         delta = new_cost - baseline
 
         label = " (monthly)" if args.monthly else " (per second)"
@@ -1223,6 +1225,7 @@ def cmd_sensitivity(args: argparse.Namespace) -> int:
         baseline = baseline_engine.total_cost()
         _refuse_live_misses(args, baseline_engine)
         results = analyzer.sensitivity(args.parameter, args.steps)
+        _refuse_live_misses(args, analyzer)
 
         label = " (monthly)" if args.monthly else " (per second)"
         print(f"Sensitivity: {model['workflow']['name']}{label}")
@@ -1270,16 +1273,6 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
     time_basis = "monthly" if args.monthly else "perSecond"
 
     analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
-    if args.pricing == "live":
-        # A sweep only changes parameter values, so the baseline's metrics
-        # are the ones every point prices.
-        baseline_engine = CostEngine(model, catalog, time_basis=time_basis)
-        try:
-            baseline_engine.compute()
-        except ValueError as e:
-            _print_stderr(f"Error: {e}")
-            return 1
-        _refuse_live_misses(args, baseline_engine)
 
     # Comparison mode
     if args.compare:
@@ -1295,6 +1288,7 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
         except ValueError as e:
             _print_stderr(f"Error: {e}")
             return 1
+        _refuse_live_misses(args, analyzer)
 
         if args.output == "json":
             import json
@@ -1311,6 +1305,7 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
     except ValueError as e:
         _print_stderr(f"Error: {e}")
         return 1
+    _refuse_live_misses(args, analyzer)
 
     if args.output == "json":
         import json

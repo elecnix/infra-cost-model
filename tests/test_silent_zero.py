@@ -303,3 +303,20 @@ class TestModelWithNoNodes:
     def test_silent_zero_errors_tolerates_a_model_without_nodes(self):
         assert silent_zero_errors({}) == []
         assert silent_zero_errors({"nodes": "not a dict"}) == []
+
+
+class TestPercentageWithAnUnknownRateKeyRefuses:
+    """A misspelt percentage key beside a fee would price without it."""
+
+    @pytest.mark.parametrize("node", [
+        {"usageMetrics": {"transactionVolume": {
+            "unit": "USD", "volume": 50, "percentage": 0.029,
+            "fixed_per_transaction": 0.30}}},
+        {"pricingRates": {"percentRate": 0.029, "fixedPerTransaction": 0.30},
+         "usageMetrics": {"transactionVolume": {"unit": "USD", "value": 50}}},
+    ])
+    def test_compute_names_the_key(self, node):
+        with pytest.raises(SilentZeroError, match="percent"):
+            CostEngine(model({
+                "w": {"nodeType": "external", "pricingModel": "percentage", **node},
+            })).compute()
