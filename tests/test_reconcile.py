@@ -882,3 +882,112 @@ def test_an_empty_second_key_is_the_service_wide_line():
 
     assert actuals.error is None
     assert list(actuals.lines) == [("EC2 - Other", None)]
+
+
+# --- billing shape: which divisor rule a line takes (#462) -------------------
+
+def _route53_actuals(tmp_path, days, amounts):
+    key = "Amazon Route 53/DomainRegistration"
+    return load_actuals(write_json(tmp_path, "actuals.json",
+                                   ce_sparse(days, amounts, key=key)))
+
+
+def _route53_report(actuals, **kwargs):
+    model = model_with({"aws_route53_domain.main": node(
+        service="Amazon Route 53", usage_type="DomainRegistration")})
+    return run(model, {"aws_route53_domain.main": 1.03}, actuals, **kwargs)
+
+
+def test_an_annual_charge_projects_at_its_share_of_the_window(tmp_path):
+    """One charge in a 92-day export is not a resource that started that day."""
+    days = month_days(92, start="2026-07-01")
+    actuals = _route53_actuals(tmp_path, days, {"2026-08-15": 12.34})
+
+    line = _route53_report(actuals, window_days=92).groups[0].bill_lines[0]
+
+    assert line.rule == "zero-fill"
+    assert line.divisor_days == 92
+    assert line.projected == pytest.approx(12.34 / 92 * DAYS_PER_MONTH)
+
+
+def test_a_daily_line_that_starts_mid_window_is_new(tmp_path):
+    days = month_days(30)
+    actuals = _route53_actuals(tmp_path, days, {d: 1.0 for d in days[15:]})
+
+    line = _route53_report(actuals).groups[0].bill_lines[0]
+
+    assert line.rule == "new"
+    assert line.divisor_days == 15
+    assert line.projected == pytest.approx(DAYS_PER_MONTH)
+
+
+def test_a_daily_line_shorter_than_the_threshold_zero_fills(tmp_path):
+    days = month_days(30)
+    actuals = _route53_actuals(tmp_path, days, {d: 1.0 for d in days[-6:]})
+
+    line = _route53_report(actuals).groups[0].bill_lines[0]
+
+    assert line.rule == "zero-fill"
+    assert line.divisor_days == 30
+
+
+def test_a_charge_with_a_gap_after_its_first_day_zero_fills(tmp_path):
+    days = month_days(30)
+    amounts = {d: 1.0 for d in days[10:20]}
+    actuals = _route53_actuals(tmp_path, days, amounts)
+
+    line = _route53_report(actuals).groups[0].bill_lines[0]
+
+    assert line.rule == "zero-fill"
+    assert line.divisor_days == 30
+
+
+def test_the_threshold_option_changes_the_outcome(tmp_path):
+    days = month_days(30)
+    actuals = _route53_actuals(tmp_path, days, {d: 1.0 for d in days[-5:]})
+
+    default = _route53_report(actuals).groups[0].bill_lines[0]
+    lowered = _route53_report(actuals, new_line_days=5).groups[0].bill_lines[0]
+
+    assert (default.rule, default.divisor_days) == ("zero-fill", 30)
+    assert (lowered.rule, lowered.divisor_days) == ("new", 5)
+
+
+def test_the_threshold_must_be_positive(tmp_path):
+    days = month_days(30)
+    actuals = _route53_actuals(tmp_path, days, {days[0]: 1.0})
+
+    with pytest.raises(ReconcileError):
+        _route53_report(actuals, new_line_days=0)
+
+
+def test_the_report_names_the_rule_in_json_and_text(tmp_path, capsys):
+    days = month_days(30)
+    actuals = _route53_actuals(tmp_path, days, {d: 1.0 for d in days[15:]})
+
+    report = _route53_report(actuals)
+    assert report.to_dict()["groups"][0]["billLines"][0]["divisorRule"] == "new"
+
+    from infra_cost_model.cli import _print_reconciliation
+    _print_reconciliation(report)
+    assert "new, 15 days" in capsys.readouterr().out
+
+
+def test_the_cli_exposes_the_threshold():
+    from infra_cost_model.cli import _build_parser
+    args = _build_parser().parse_args(
+        ["reconcile", "m.yaml", "--actuals", "a.json", "--new-line-days", "3"])
+    assert args.new_line_days == 3
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "two"])
+def test_the_cli_rejects_a_new_line_days_below_one(tmp_path, capsys, value):
+    model_path = tmp_path / "model.yaml"
+    model_path.write_text(CLI_MODEL)
+    actuals_path = cli_actuals(tmp_path, ON_RATE)
+
+    code = main(["reconcile", str(model_path), "--actuals", str(actuals_path),
+                 "--new-line-days", value])
+
+    assert code == 1
+    assert "--new-line-days" in capsys.readouterr().err
