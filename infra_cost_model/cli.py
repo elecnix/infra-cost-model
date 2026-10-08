@@ -85,13 +85,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_compute = sub.add_parser("compute", help="Compute costs from a cost model")
     p_compute.add_argument("yaml_file", metavar="<yaml-file>", help="Path to cost model YAML file")
     _add_catalog_flags(p_compute)
-    p_compute.add_argument("--pricing", choices=["live", "seed"],
-                           help="Pin the price source: 'live' prices from synced rows only "
-                                "and fails on a metric with none; 'seed' prices from the "
-                                "bundled rows only, never the local cache")
-    p_compute.add_argument("--pricing-db", metavar="<path>",
-                           help="Read prices from this cache file instead of "
-                                "~/.infra-cost-model/pricing.db")
     p_compute.add_argument("--time-basis", choices=["perSecond", "monthly", "yearly"], default="perSecond",
                            help="Time basis for cost reporting (default: perSecond)")
     p_compute.add_argument("--monthly", action="store_true",
@@ -252,6 +245,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_reconcile.add_argument("--json", action="store_true", help="Output in JSON format")
     p_reconcile.add_argument("--fail-on-drift", action="store_true",
                              help="Exit with code 1 if any group fails or is unreadable")
+    _add_catalog_flags(p_reconcile)
     p_reconcile.set_defaults(func=cmd_reconcile)
 
     # import-infracost (blanket long-tail pricing from an Infracost breakdown)
@@ -294,11 +288,63 @@ def _add_catalog_flags(parser: argparse.ArgumentParser) -> None:
                        help="Price from the pricing catalog (default)")
     group.add_argument("--no-catalog", dest="use_catalog", action="store_false",
                        help="Price from the model's embedded pricingRates instead")
+    # Every command that prices a model takes the same source pins (#446), so
+    # a total `compute` checked is the one `whatif` and `reconcile` compare.
+    parser.add_argument("--pricing", choices=["live", "seed"],
+                        help="Pin the price source: 'live' prices from synced rows only "
+                             "and fails on a metric with none; 'seed' prices from the "
+                             "bundled rows only, never the local cache")
+    parser.add_argument("--pricing-db", metavar="<path>",
+                        help="Read prices from this cache file instead of "
+                             "~/.infra-cost-model/pricing.db")
 
 
 def _pricing_catalog(args: argparse.Namespace) -> Optional[PricingCatalog]:
-    """The catalog to price with, or None when `--no-catalog` was passed."""
-    return PricingCatalog() if args.use_catalog else None
+    """The catalog to price with, or None when `--no-catalog` was passed.
+
+    The one constructor of a command's catalog. A combination of flags that
+    would price from somewhere other than what it names prints an error and
+    raises _CLIError.
+    """
+    def refuse(message: str):
+        _print_stderr(f"Error: {message}")
+        raise _CLIError(1)
+
+    if args.pricing and not args.use_catalog:
+        refuse("--pricing picks a catalog source, so it can't be combined with --no-catalog.")
+    if args.pricing_db and not args.use_catalog:
+        refuse("--pricing-db names a catalog file, so it can't be combined with --no-catalog.")
+    if args.pricing == "seed" and args.pricing_db:
+        refuse("--pricing seed reads the bundled price rows, so --pricing-db has no effect.")
+    db_path = Path(args.pricing_db) if args.pricing_db else None
+    if db_path is not None and not db_path.exists():
+        # An empty database would price every metric from the embedded rates,
+        # which is the silent fallback this option exists to avoid (#446).
+        refuse(f"no price cache at {db_path}. Run sync-pricing, "
+               "or point --pricing-db at a file that exists.")
+    if not args.use_catalog:
+        return None
+    return PricingCatalog(db_path, sources=args.pricing)
+
+
+def _refuse_live_misses(args: argparse.Namespace, engine: CostEngine) -> None:
+    """Stop a `--pricing live` run whose engine priced a metric off the synced rows.
+
+    A pinned live source either answers every metric or the run stops: a
+    total that mixes synced rows with embedded rates or bundled rows is the
+    one thing the option exists to prevent (#446). Call after the engine
+    has computed.
+    """
+    misses = engine.catalog_misses
+    if args.pricing != "live" or not misses:
+        return
+    _print_stderr(f"Error: --pricing live found no synced price for {len(misses)} "
+                  f"usage metric{'s' if len(misses) > 1 else ''}:")
+    for miss in misses:
+        _print_stderr(f"  - {miss.node}: {miss.metric} "
+                      f"({miss.provider} {miss.service} {miss.region})")
+    _print_stderr("Run sync-pricing for these, or price with --pricing seed.")
+    raise _CLIError(1)
 
 
 def _load_model(path) -> dict:
@@ -442,12 +488,13 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     actuals = load_actuals(args.actuals)
     config = load_config(config_path)
 
-    engine = CostEngine(model, catalog=PricingCatalog(), time_basis="monthly")
+    engine = CostEngine(model, catalog=_pricing_catalog(args), time_basis="monthly")
     try:
         costs = engine.compute()
     except ValueError as e:
         _print_stderr(f"Error: {e}")
         return 1
+    _refuse_live_misses(args, engine)
 
     report = reconcile(model, costs, actuals, config=config,
                        window_days=args.window_days,
@@ -696,28 +743,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
     model = _load_model(args.yaml_file)
 
     use_catalog = args.use_catalog
-
-    if args.pricing and not use_catalog:
-        _print_stderr("Error: --pricing picks a catalog source, so it can't be "
-                      "combined with --no-catalog.")
-        return 1
-    if args.pricing_db and not use_catalog:
-        _print_stderr("Error: --pricing-db names a catalog file, so it can't be "
-                      "combined with --no-catalog.")
-        return 1
-    if args.pricing == "seed" and args.pricing_db:
-        _print_stderr("Error: --pricing seed reads the bundled price rows, so "
-                      "--pricing-db has no effect.")
-        return 1
-    db_path = Path(args.pricing_db) if args.pricing_db else None
-    if db_path is not None and not db_path.exists():
-        # An empty database would price every metric from the embedded rates,
-        # which is the silent fallback this option exists to avoid (#446).
-        _print_stderr(f"Error: no price cache at {db_path}. Run sync-pricing, "
-                      "or point --pricing-db at a file that exists.")
-        return 1
-
-    catalog = PricingCatalog(db_path, sources=args.pricing) if use_catalog else None
+    catalog = _pricing_catalog(args)
 
     nodes = model.get("nodes", {})
     label_error, selectors = _label_options(nodes, args)
@@ -744,19 +770,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
     try:
         computed = engine.compute()
 
-        # A pinned live source either answers every metric or the run stops:
-        # a total that mixes synced rows with embedded rates or bundled rows
-        # is the one thing this option exists to prevent (#446).
-        if args.pricing == "live" and engine.catalog_misses:
-            _print_stderr(
-                f"Error: --pricing live found no synced price for "
-                f"{len(engine.catalog_misses)} usage metric"
-                f"{'s' if len(engine.catalog_misses) > 1 else ''}:")
-            for miss in engine.catalog_misses:
-                _print_stderr(f"  - {miss.node}: {miss.metric} "
-                              f"({miss.provider} {miss.service} {miss.region})")
-            _print_stderr("Run sync-pricing for these, or price with --pricing seed.")
-            return 1
+        _refuse_live_misses(args, engine)
 
         # A label filter narrows what the report and --budget talk about (#445).
         # The cost it leaves out is still printed, so a filtered total never
@@ -820,6 +834,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     try:
         computed = engine.compute()
+        _refuse_live_misses(args, engine)
         derived = engine.get_derived_usage()
 
         excluded = excluded_addresses(nodes, selectors)
@@ -1138,6 +1153,7 @@ def cmd_whatif(args: argparse.Namespace) -> int:
         analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
         baseline_engine = CostEngine(model, catalog, time_basis=time_basis)
         baseline = baseline_engine.total_cost()
+        _refuse_live_misses(args, baseline_engine)
         new_cost = analyzer.what_if(args.parameter, args.value)
         delta = new_cost - baseline
 
@@ -1172,6 +1188,7 @@ def cmd_sensitivity(args: argparse.Namespace) -> int:
         analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
         baseline_engine = CostEngine(model, catalog, time_basis=time_basis)
         baseline = baseline_engine.total_cost()
+        _refuse_live_misses(args, baseline_engine)
         results = analyzer.sensitivity(args.parameter, args.steps)
 
         label = " (monthly)" if args.monthly else " (per second)"
@@ -1220,6 +1237,16 @@ def cmd_what_if_sweep(args: argparse.Namespace) -> int:
     time_basis = "monthly" if args.monthly else "perSecond"
 
     analyzer = SensitivityAnalyzer(model, catalog, time_basis=time_basis)
+    if args.pricing == "live":
+        # A sweep only changes parameter values, so the baseline's metrics
+        # are the ones every point prices.
+        baseline_engine = CostEngine(model, catalog, time_basis=time_basis)
+        try:
+            baseline_engine.compute()
+        except ValueError as e:
+            _print_stderr(f"Error: {e}")
+            return 1
+        _refuse_live_misses(args, baseline_engine)
 
     # Comparison mode
     if args.compare:

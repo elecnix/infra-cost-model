@@ -6,6 +6,7 @@ node's embedded `pricingRates` when neither has a row. The same model then
 prices from different sources on a laptop and in CI.
 """
 
+import json
 import sqlite3
 
 import pytest
@@ -457,3 +458,59 @@ class TestTheDefaultRunIsUnchanged:
         assert main(["compute", model_path, "--monthly"]) == 0
         assert total(capsys.readouterr().out) == pytest.approx(
             MONTHLY_REQUESTS * 0.5)
+
+
+def swept_model() -> str:
+    """The Lambda model with a parameter the analysis commands can sweep."""
+    data = yaml.safe_load(model(with_embedded_rates=True))
+    data["workflow"]["parameters"] = {"scale": 1}
+    return yaml.safe_dump(data)
+
+
+def every_pricing_command(model_path: str, tmp_path) -> list[list[str]]:
+    """Each command that prices a model, with the arguments it requires."""
+    actuals = tmp_path / "actuals.json"
+    actuals.write_text('{"ResultsByTime": [{"TimePeriod": {"Start": "2026-09-01", '
+                       '"End": "2026-09-02"}, "Groups": []}]}')
+    return [
+        ["compute", model_path],
+        ["analyze", model_path],
+        ["whatif", model_path, "--parameter", "scale", "--value", "2"],
+        ["sensitivity", model_path, "--parameter", "scale", "--steps", "2"],
+        ["what-if", model_path, "--param", "scale", "--values", "1,2"],
+        ["reconcile", model_path, "--actuals", str(actuals)],
+    ]
+
+
+class TestEveryPricingCommandPinsItsSource:
+    """The analysis commands and reconcile take the same price source as compute.
+
+    A total that `compute --pricing-db prod.db` checked would otherwise be
+    compared, by `reconcile` or `whatif`, with one priced from the home cache.
+    """
+
+    @pytest.mark.parametrize("index", range(6))
+    def test_a_missing_pricing_db_is_an_error(self, tmp_path, capsys, index):
+        command = every_pricing_command(write(tmp_path, swept_model()), tmp_path)[index]
+        absent = tmp_path / "nowhere" / "pricing.db"
+        assert main(command + ["--pricing-db", str(absent)]) == 1
+        assert "no price cache" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("index", range(6))
+    def test_a_live_miss_stops_the_run(self, tmp_path, capsys, index):
+        cold = PricingCache(db_path=tmp_path / "cold.db").db_path
+        command = every_pricing_command(write(tmp_path, swept_model()), tmp_path)[index]
+        assert main(command + ["--pricing", "live", "--pricing-db", str(cold)]) == 1
+        err = capsys.readouterr().err
+        assert "--pricing live" in err and "Lambda-Request" in err
+
+    @pytest.mark.parametrize("index", range(6))
+    def test_the_named_file_prices_the_run(self, tmp_path, live_db, index):
+        command = every_pricing_command(write(tmp_path, swept_model()), tmp_path)[index]
+        assert main(command + ["--pricing", "live", "--pricing-db", str(live_db)]) == 0
+
+    def test_analyze_prices_from_the_named_file(self, tmp_path, home_cache, live_db, capsys):
+        model_path = write(tmp_path, swept_model())
+        assert main(["analyze", model_path, "--json", "--pricing-db", str(live_db)]) == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["total_cost"] == pytest.approx(MONTHLY_REQUESTS * LIVE_RATE)
