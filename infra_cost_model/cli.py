@@ -585,6 +585,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for message in edge_type_metric_warnings(model):
         _print_stderr(f"Warning: {message}")
 
+    # A metric named after a catalog row still prices, so this is a warning
+    # too: it names the handler's metric that replaces it (#427).
+    from infra_cost_model.resources.registry import vocabulary_warnings
+    for message in vocabulary_warnings(model):
+        _print_stderr(f"Warning: {message}")
+
     if errors:
         print("Validation errors:")
         for error in errors:
