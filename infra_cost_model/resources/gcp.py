@@ -560,7 +560,9 @@ def matches_gcp_type(resource_address: str, handler: type) -> bool:
     """Whether ``resource_address`` names a Pulumi resource of ``handler``'s type.
 
     Only the URN carries the Pulumi type, as one whole segment of
-    ``urn:pulumi:prod::shop::gcp:storage/bucket:Bucket::assets``.
+    ``urn:pulumi:prod::shop::gcp:storage/bucket:Bucket::assets``. A child of
+    a component resource puts ``$`` before its own type, after its
+    parent's: ``...::my:index:Site$gcp:storage/bucket:Bucket::assets``.
     """
-    return any(f"::{token}::" in resource_address
+    return any(f"::{token}::" in resource_address or f"${token}::" in resource_address
                for token in PULUMI_TYPE_TOKENS.get(handler, ()))

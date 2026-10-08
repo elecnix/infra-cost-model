@@ -237,6 +237,25 @@ class TestPercentageReadsTheMetric:
         assert costs["w"] == pytest.approx(transactional(1, params) / SECONDS_PER_MONTH)
 
 
+class TestPercentageWithOnlyFixedFeesPrices:
+    """A per-call or per-transaction fee is a rate, so the node prices."""
+
+    @pytest.mark.parametrize("node", [
+        {"pricingRates": {"perCall": 0.0075},
+         "usageMetrics": {"transactionVolume": {"unit": "USD", "value": 10}}},
+        {"usageMetrics": {"sms": {"unit": "messages", "value": 1, "per_call": 0.0075}}},
+        {"pricingRates": {"fixedPerTransaction": 0.30},
+         "usageMetrics": {"transactionVolume": {"unit": "USD", "value": 10}}},
+    ])
+    def test_compute_prices_the_fee(self, node):
+        costs = CostEngine(model({
+            "w": {"nodeType": "external", "pricingModel": "percentage", **node},
+        })).compute()
+        fee = (node.get("pricingRates") or {}).get("perCall") or \
+            (node.get("pricingRates") or {}).get("fixedPerTransaction") or 0.0075
+        assert costs["w"] == pytest.approx(fee / SECONDS_PER_MONTH)
+
+
 class TestPercentageWithoutARateRefuses:
     def test_no_rate_anywhere(self):
         with pytest.raises(SilentZeroError) as excinfo:

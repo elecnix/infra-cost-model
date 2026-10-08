@@ -111,8 +111,8 @@ def test_the_minimum_retention_windows_are_azure_s(tier, window):
 
 @pytest.mark.parametrize("tier,window", [("Cool", 30), ("Cold", 90), ("Archive", 180)])
 def test_early_deletion_costs_the_tier_s_whole_window(seed_catalog, tier, window):
-    """Azure prices an early deletion at the tier's storage price for the
-    whole minimum-retention window."""
+    """A blob deleted the day it arrives pays the whole minimum-retention
+    window at the tier's storage price, a month per 30 days."""
     address = "azurerm_storage_account.cold_blobs"
     model = one_node(address, {
         "storageGb": {"unit": "GB", "value": 1, "fixed": True},
@@ -121,8 +121,25 @@ def test_early_deletion_costs_the_tier_s_whole_window(seed_catalog, tier, window
     costs, engine = compute(model, seed_catalog)
     assert costs[address] == pytest.approx(
         price_of(f"Blob-{tier}-LRS-GB-Month")
-        + 100 * price_of(f"Blob-{tier}-LRS-Early-Delete-GB"))
+        + 100 * window / 30 * price_of(f"Blob-{tier}-LRS-Early-Delete-GB"))
     assert engine.unpriced_metrics == []
+
+
+@pytest.mark.parametrize("tier,stored,remaining", [
+    # https://learn.microsoft.com/en-us/azure/storage/blobs/access-tiers-overview:
+    # a Cool blob deleted after 21 days pays 9 days, an Archive one deleted
+    # after 45 days pays 135.
+    ("Cool", 21, 9), ("Archive", 45, 135), ("Cold", 120, 0),
+])
+def test_early_deletion_charges_the_days_left_in_the_window(seed_catalog, tier, stored,
+                                                            remaining):
+    address = "azurerm_storage_account.cold_blobs"
+    model = one_node(address, {
+        "earlyDeleteGb": {"unit": "GB", "value": 100, "fixed": True},
+    }, {"accessTier": tier, "replicationType": "LRS", "earlyDeleteDaysStored": stored})
+    costs, _ = compute(model, seed_catalog)
+    assert costs.get(address, 0.0) == pytest.approx(
+        100 * remaining / 30 * price_of(f"Blob-{tier}-LRS-Early-Delete-GB"))
     assert price_of(f"Blob-{tier}-LRS-Early-Delete-GB") == price_of(
         f"Blob-{tier}-LRS-GB-Month")
 
@@ -138,7 +155,7 @@ def test_only_the_skus_with_an_early_delete_meter(tier, replication, priced):
         {"accessTier": tier, "replicationType": replication})
     assert ("earlyDeleteGb" in metrics) is priced
     if priced:
-        assert metrics["earlyDeleteGb"] in seeded("BlobStorage")
+        assert set(metrics["earlyDeleteGb"]) <= set(seeded("BlobStorage"))
 
 
 def test_early_deletion_of_a_hot_account_is_not_a_metric():
