@@ -217,6 +217,119 @@ def catalog_location_errors(model: dict) -> list[str]:
     return errors
 
 
+class SilentZeroError(ValueError):
+    """A node would price as $0.00 without reporting that nothing priced it.
+
+    A zero quantity is not an unpriced metric, so the engine has nothing to
+    say about a model whose numbers were never there to begin with (#432).
+    """
+
+
+def _percentage_metric(node: dict) -> Optional[tuple[str, dict]]:
+    """The usage metric a percentage node prices from, or None if it has none.
+
+    A metric carrying inline pricing is the one the schema documents for a
+    transactional node. A node that instead states its rates on the node's
+    escape hatch (Principle 9) names its metric for the transaction value,
+    the way the Stripe node in ``examples/ecommerce-microservices.yaml`` does.
+    """
+    metrics = node.get("usageMetrics") or {}
+    named = None
+    for name, metric in metrics.items():
+        if not isinstance(metric, dict):
+            continue
+        inline = any(k in metric for k in ("percentage_rate", "volume",
+                                           "fixed_per_transaction", "per_call"))
+        if inline:
+            return name, metric
+        if named is None and ("volume" in name.lower()
+                              or "transaction" in name.lower()):
+            named = (name, metric)
+    return named
+
+
+def silent_zero_error(address: str, node: dict) -> Optional[str]:
+    """Why this node would price as a silent zero, or None if it would not.
+
+    Pricing is only as good as the numbers it reads, and the engine reads a
+    usage metric's quantity as ``metric["value"]``. A metric that states a
+    ``unit`` and no ``value`` therefore costs $0.00 — with no unpriced metric
+    and no warning, because a zero quantity is not a miss (#432). The same
+    holds for a ``fixed: true`` metric, whose ``value`` is its monthly total,
+    and for a ``percentage`` node that states no percentage rate.
+
+    A number the model states as ``0`` is not a missing number. An empty
+    workload really is free, so ``value: 0``, ``frequency: {value: 0}`` and
+    ``rate: 0`` price as zero without complaint.
+
+    A ``token_based`` node is exempt: it prices token flow that arrives over
+    the DAG, not a per-invocation quantity it reads off the metric. A
+    ``percentage`` node is exempt too, because its quantity is the
+    transaction count the DAG delivers and its rate is checked here.
+    """
+    pricing_model = node.get("pricingModel", "flat")
+
+    if pricing_model == "percentage":
+        found = _percentage_metric(node)
+        name, metric = found if found is not None else (None, None)
+        rates = node.get("pricingRates") or {}
+        has_rate = (metric is not None and "percentage_rate" in metric) \
+            or "percentageRate" in rates
+        if not has_rate:
+            return (
+                f"Node '{address}' uses pricingModel 'percentage' but states "
+                f"no percentage rate. Declare 'percentage_rate' on the "
+                f"transaction usage metric, or 'percentageRate' in the node's "
+                f"pricingRates."
+            )
+        if metric is not None and not ("volume" in metric or "value" in metric):
+            return (
+                f"Node '{address}' prices a transaction whose value is never "
+                f"stated. Declare 'volume' (or 'value') on usage metric "
+                f"'{name}'."
+            )
+        if metric is None and "percentageRate" in rates:
+            # A variable rate with no transaction value to charge it on bills
+            # the whole model at zero, so refuse it the way the metric-without-
+            # volume case above is refused. A node with only the fixed fees
+            # needs no volume and is left alone.
+            return (
+                f"Node '{address}' states a percentage rate but names no usage "
+                f"metric carrying the value of a transaction. Name the metric "
+                f"'volume' or 'transaction', or declare 'percentage_rate' on "
+                f"it."
+            )
+        return None
+
+    if pricing_model == "token_based":
+        return None
+
+    for name, metric in (node.get("usageMetrics") or {}).items():
+        if not isinstance(metric, dict):
+            continue
+        if "value" not in metric:
+            return (
+                f"Node '{address}' declares usage metric '{name}' with no "
+                f"value. The engine reads the quantity from 'value'; without "
+                f"one this node costs $0.00 and reports nothing."
+            )
+    return None
+
+
+def silent_zero_errors(model: dict) -> list[str]:
+    """``silent_zero_error`` for every node of a model."""
+    nodes = model.get("nodes") if isinstance(model, dict) else None
+    if not isinstance(nodes, dict):
+        return []
+    errors = []
+    for address, node in nodes.items():
+        if isinstance(node, dict):
+            error = silent_zero_error(address, node)
+            if error is not None:
+                errors.append(error)
+    return errors
+
+
 class EdgeTypeMetricWarning(UserWarning):
     """A usage metric counts no calls because no edge of its type reaches its node.
 
@@ -1679,10 +1792,14 @@ class CostAggregator:
     def _compute_percentage_cost(self, address: str, node: dict, invocations: float) -> float:
         """Compute percentage-based cost for external services.
 
-        For services like Stripe: 2.9% + $0.30 per transaction. The
-        transactionVolume metric is the value of one transaction (Principle 4),
-        so the cost is invocations × (volume × percentageRate +
-        fixedPerTransaction).
+        For services like Stripe: 2.9% + $0.30 per transaction. The rate and
+        the transaction value are the metric definition the schema documents
+        (``percentage_rate``, ``volume``, ``fixed_per_transaction``,
+        ``per_call``); a node that states its rates on the node's escape hatch
+        (Principle 9) keeps working, and loses to the metric when both are
+        present. The volume metric is the value of one transaction
+        (Principle 4), so the cost is invocations × (volume × percentageRate
+        + fixedPerTransaction + perCall).
 
         Args:
             address: Resource address
@@ -1693,25 +1810,22 @@ class CostAggregator:
             Total cost from percentage pricing.
         """
         pricing_rates = node.get("pricingRates", {})
+        found = _percentage_metric(node)
+        metric = found[1] if found is not None else {}
 
-        # Default: percentage + fixed per transaction
-        percentage_rate = pricing_rates.get("percentageRate", 0.0)
-        fixed_per_tx = pricing_rates.get("fixedPerTransaction", 0.0)
+        percentage_rate = self._resolve_param(
+            metric.get("percentage_rate", pricing_rates.get("percentageRate", 0.0)))
+        fixed_per_tx = self._resolve_param(
+            metric.get("fixed_per_transaction",
+                       pricing_rates.get("fixedPerTransaction", 0.0)))
+        per_call = self._resolve_param(
+            metric.get("per_call", pricing_rates.get("perCall", 0.0)))
 
         # Value of one transaction, from usageMetrics
-        volume = 0.0
-        usage_metrics = node.get("usageMetrics", {})
-        volume_metric = "transactionVolume"
-        for metric_name, metric_def in usage_metrics.items():
-            if "volume" in metric_name.lower() or "transaction" in metric_name.lower():
-                if isinstance(metric_def, dict):
-                    volume = self._resolve_param(metric_def.get("value", 0))
-                else:
-                    volume = self._resolve_param(metric_def)
-                volume_metric = metric_name
-                break
+        volume = self._resolve_param(metric.get("volume", metric.get("value", 0)))
+        volume_metric = found[0] if found is not None else "transactionVolume"
 
-        cost = invocations * (volume * percentage_rate + fixed_per_tx)
+        cost = invocations * (volume * percentage_rate + fixed_per_tx + per_call)
         self._record_metric(address, volume_metric, invocations, cost,
                             node.get("flatOverride", False), "pricingRates")
         return cost
@@ -1792,10 +1906,23 @@ class CostEngine:
                 hold for this engine. Refusing here covers every caller — the
                 CLI, the SDK, and any script that builds an engine — so a
                 model this engine cannot interpret never reports a total.
+            SilentZeroError: If a node would price as $0.00 because the model
+                never states the number the engine reads (#432).
             ValueError: If DAG validation fails or if neither workflow
                         nor workflows is provided.
         """
         require_engine(self.cost_model)
+
+        # The engine prices from numbers the model states. Where one is
+        # missing, the node costs nothing and says nothing — the most
+        # expensive direction for a cost model to be wrong in — so refuse
+        # rather than report a total (#432).
+        silent = silent_zero_errors(self.cost_model)
+        if silent:
+            raise SilentZeroError(
+                "This model prices as $0.00 without saying so:\n"
+                + "\n".join(f"  - {error}" for error in silent)
+            )
 
         if self.workflows:
             return self._compute_multi_workflow()
