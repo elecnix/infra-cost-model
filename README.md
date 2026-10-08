@@ -274,7 +274,7 @@ Each metric reports the quantity the engine priced, the effective price of one u
 
 When nothing priced a metric, it stays out of `costs` and appears in `unpriced` instead, with the same node, metric, provider, service, region and quantity as the stderr warning.
 
-The format is on `compute` rather than `analyze`, because `compute` has `--no-catalog` ([#420](https://github.com/elecnix/infra-cost-model/issues/420)) and so can say whether a run used the catalog or the model's embedded rates. `--format table` stays the default and is unchanged. `schemaVersion` rises when the snapshot's keys change.
+The format is on `compute`, and the snapshot records whether the run priced from the catalog or from the model's embedded rates (`--no-catalog`, [#420](https://github.com/elecnix/infra-cost-model/issues/420)). `--format table` stays the default and is unchanged. `schemaVersion` rises when the snapshot's keys change.
 
 ## Blanket pricing for the long tail
 

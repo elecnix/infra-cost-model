@@ -80,6 +80,8 @@ The flat-vs-derived conflict warning fires only for the genuine case: a **fully-
 
 ## 10. Type-safe SDK from infrastructure-as-code type generation
 
+> **Status:** not implemented yet. The engine has no code generator from infrastructure-as-code schemas ([#430](https://github.com/elecnix/infra-cost-model/issues/430)). The one generation step that runs today turns `cost-model.schema.json` into `sdk/ts/src/types.generated.ts`. This section describes the intended design.
+
 The SDK generates types from your infrastructure definition, so you cannot reference non-existent resources or attributes:
 
 ```mermaid
