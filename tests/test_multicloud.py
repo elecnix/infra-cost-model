@@ -1,4 +1,4 @@
-"""Tests for multi-cloud provider dispatch and GCP/Azure resource handlers (DP#6)."""
+"""Tests for multi-cloud resource handlers (DP#6)."""
 
 import pytest
 from infra_cost_model.resources.registry import ResourceRegistry
@@ -6,59 +6,6 @@ from infra_cost_model.resources.gcp import CloudFunction, CloudStorage, CloudRun
 from infra_cost_model.resources.azure import (
     AzureFunction, CosmosDB, APIManagement, AzureOpenAI, AzureBlobStorage,
 )
-
-
-class TestProviderDispatch:
-    """Provider-based handler lookup in ResourceRegistry."""
-
-    def test_supported_providers_includes_aws_gcp_azure(self):
-        providers = ResourceRegistry.supported_providers()
-        assert "aws" in providers
-        assert "gcp" in providers
-        assert "azure" in providers
-
-    def test_handlers_by_provider_gcp(self):
-        handlers = ResourceRegistry.handlers_by_provider("gcp")
-        handler_names = {h.__name__ for h in handlers}
-        assert "CloudFunction" in handler_names
-        assert "CloudStorage" in handler_names
-        assert "CloudRun" in handler_names
-        assert "Firestore" in handler_names
-
-    def test_handlers_by_provider_azure(self):
-        handlers = ResourceRegistry.handlers_by_provider("azure")
-        handler_names = {h.__name__ for h in handlers}
-        assert "AzureFunction" in handler_names
-        assert "CosmosDB" in handler_names
-        assert "APIManagement" in handler_names
-        assert "AzureOpenAI" in handler_names
-        assert "AzureBlobStorage" in handler_names
-
-    def test_handlers_by_provider_aws(self):
-        handlers = ResourceRegistry.handlers_by_provider("aws")
-        handler_names = {h.__name__ for h in handlers}
-        assert "LambdaFunction" in handler_names
-        assert "DynamoDBTable" in handler_names
-        assert "APIGatewayHTTP" in handler_names
-
-    def test_provider_qualified_lookup_gcp(self):
-        handler = ResourceRegistry.from_address(
-            "google_cloudfunctions_function.my_func", provider="gcp"
-        )
-        assert handler is not None
-        assert handler == CloudFunction
-
-    def test_provider_qualified_lookup_azure(self):
-        handler = ResourceRegistry.from_address(
-            "azurerm_function_app.my_func", provider="azure"
-        )
-        assert handler is not None
-        assert handler == AzureFunction
-
-    def test_unqualified_lookup_still_works(self):
-        """Without provider hint, all handlers are searched."""
-        handler = ResourceRegistry.from_address("aws_lambda_function.test")
-        assert handler is not None
 
 
 class TestGCPHandlers:

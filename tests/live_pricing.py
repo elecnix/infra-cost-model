@@ -12,6 +12,17 @@ from infra_cost_model.pricing.catalog import PricingCatalog
 from infra_cost_model.pricing.global_services import GLOBAL_PRICE_REGIONS
 from infra_cost_model.resources.registry import ResourceRegistry
 
+# Catalog rows are filed under a vendor, and a handler's module is where it
+# lives: gcp.py holds the Google handlers, azure.py the Azure ones, and every
+# other handler bills through AWS. A handler added in a new vendor module needs
+# an entry here or its tests fail looking for rows that were never queried.
+_VENDOR_BY_MODULE = {"gcp": "gcp", "azure": "azure", "external": "external"}
+
+
+def _vendor(handler):
+    """The catalog vendor a handler's rows are filed under."""
+    return _VENDOR_BY_MODULE.get(handler.__module__.rsplit(".", 1)[-1], "aws")
+
 
 def _query(catalog, provider, service, region, metric, quantity):
     """Query a node's region, then the global rows, as the engine does.
@@ -49,7 +60,7 @@ def resource_cost(address: str, service: str, region: str, *,
     handler = ResourceRegistry.from_address(address)
     assert handler is not None, f"no handler owns {address!r}"
 
-    provider = ResourceRegistry._infer_provider(handler)
+    provider = _vendor(handler)
     catalog = catalog if catalog is not None else PricingCatalog(seed=True)
 
     total = 0.0
@@ -85,7 +96,7 @@ def derived_resource_cost(address: str, service: str, region: str, usage: dict,
     handler = ResourceRegistry.from_address(address)
     assert handler is not None, f"no handler owns {address!r}"
 
-    provider = ResourceRegistry._infer_provider(handler)
+    provider = _vendor(handler)
     catalog = catalog if catalog is not None else PricingCatalog(seed=True)
 
     derived = ResourceRegistry.derive_catalog_usage(address, usage, config)
