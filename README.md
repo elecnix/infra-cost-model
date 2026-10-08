@@ -2,6 +2,10 @@
 
 DAG-based infrastructure cost modeling: deriving resource consumption from higher-level parameters through dependency graphs.
 
+[![PyPI](https://img.shields.io/pypi/v/infra-cost-model)](https://pypi.org/project/infra-cost-model/)
+[![Python versions](https://img.shields.io/pypi/pyversions/infra-cost-model)](https://pypi.org/project/infra-cost-model/)
+[![License: MIT](https://img.shields.io/pypi/l/infra-cost-model)](https://github.com/elecnix/infra-cost-model/blob/main/LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-elecnix.github.io-blue)](https://elecnix.github.io/infra-cost-model/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/elecnix/infra-cost-model)
 
 ## Why
@@ -19,13 +23,13 @@ This project specifies a model where usage flows through the graph: a frontend r
 
 ## Install
 
-Install a release from PyPI:
+Install the latest release from [PyPI](https://pypi.org/project/infra-cost-model/). It needs Python 3.10 or later and puts the `infra-cost-model` command on your path:
 
 ```bash
 pip install infra-cost-model
 ```
 
-The first PyPI release is still pending. Until it's out, or to try code that isn't released yet, install from this repository:
+To run the command without adding it to a project, use `pipx install infra-cost-model`. To try code that isn't released yet, install from this repository:
 
 ```bash
 pip install "git+https://github.com/elecnix/infra-cost-model"
