@@ -22,6 +22,7 @@ from infra_cost_model.pricing.catalog import SECONDS_PER_MONTH, PricingCatalog
 from infra_cost_model.pricing.global_services import (
     GLOBAL_PRICE_REGIONS, is_global_metric,
 )
+from infra_cost_model.saas.pricing_shapes import transactional
 from infra_cost_model.version_requirement import require_engine
 
 
@@ -239,6 +240,10 @@ def _percentage_metric(node: dict) -> Optional[tuple[str, dict]]:
     metrics = node.get("usageMetrics") or {}
     named = None
     for name, metric in metrics.items():
+        if isinstance(metric, (int, float)) and not isinstance(metric, bool):
+            # A bare number is the metric's value, as the Python SDK may
+            # state it; only a named transaction metric can carry it.
+            metric = {"value": metric}
         if not isinstance(metric, dict):
             continue
         inline = any(k in metric for k in ("percentage_rate", "volume",
@@ -1728,7 +1733,9 @@ class CostAggregator:
         volume = self._resolve_param(metric.get("volume", metric.get("value", 0)))
         volume_metric = found[0] if found is not None else "transactionVolume"
 
-        cost = invocations * (volume * percentage_rate + fixed_per_tx + per_call)
+        cost = transactional(invocations, {
+            "percentage_rate": percentage_rate, "fixed_per_transaction": fixed_per_tx,
+            "per_call": per_call, "volume": volume})
         self._record_metric(address, volume_metric, invocations, cost,
                             node.get("flatOverride", False), "pricingRates")
         return cost
