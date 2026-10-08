@@ -466,3 +466,34 @@ def test_bundled_examples_use_only_logical_metric_names():
                 if ResourceRegistry.unknown_metrics(resource_address, [name]):
                     offenders.append(f"{path}:{address}: {name}")
     assert offenders == []
+
+
+def _dynamo_model(metric: str) -> str:
+    import yaml
+    return yaml.safe_dump({
+        "version": "1.0",
+        "workflow": {"name": "w", "entry": "aws_dynamodb_table.t",
+                     "frequency": {"unit": "perMonth", "value": 1}},
+        "nodes": {"aws_dynamodb_table.t": {
+            "nodeType": "storage", "resourceAddress": "aws_dynamodb_table.t",
+            "provider": "aws", "service": "AmazonDynamoDB", "region": "us-east-1",
+            "usageMetrics": {metric: {"unit": "requests", "value": 1}}}},
+        "edges": []})
+
+
+def test_validate_tells_a_model_naming_a_catalog_row_to_migrate(tmp_path, capsys):
+    """The vocabulary check is advisory: the model stays valid (#427)."""
+    from infra_cost_model.cli import main
+    path = tmp_path / "m.yaml"
+    path.write_text(_dynamo_model("Dynamo-ReadRequest"))
+    assert main(["validate", str(path)]) == 0
+    err = capsys.readouterr().err
+    assert "Warning" in err and "Dynamo-ReadRequest" in err and "readRequests" in err
+
+
+def test_validate_is_quiet_for_the_handlers_own_names(tmp_path, capsys):
+    from infra_cost_model.cli import main
+    path = tmp_path / "m.yaml"
+    path.write_text(_dynamo_model("readRequests"))
+    assert main(["validate", str(path)]) == 0
+    assert "Warning" not in capsys.readouterr().err
