@@ -699,7 +699,9 @@ def cosmos_throughput_from_arm(resources) -> list:
             continue
         container = arm_type == _ARM_COSMOS_SQL_CONTAINER
         segments = name.split("/")
-        if len(segments) < (3 if container else 2):
+        if name.startswith("[") or len(segments) < (3 if container else 2):
+            # A name still written as an expression, such as
+            # `[concat(parameters('acct'), '/orders')]`, can't be split.
             account, database, name = None, None, None
         elif container:
             account, database, name = segments[0], segments[1], segments[2]
