@@ -9,13 +9,20 @@ class DynamoDBTable(StorageResource):
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["readRequests", "writeRequests", "storageGb"]
+        return ["readRequests", "writeRequests", "storageGb",
+                "readCapacityUnitHours", "writeCapacityUnitHours"]
 
     @property
     def catalog_metrics(self) -> dict[str, str]:
+        # An on-demand table bills requests. A provisioned table bills each
+        # hour of each capacity unit it provisions, the units of its global
+        # secondary indexes included, so a model states readCapacity x 730
+        # hours a month instead of a request count (#441).
         return {"readRequests": "Dynamo-ReadRequest",
                 "writeRequests": "Dynamo-WriteRequest",
-                "storageGb": "Dynamo-Storage"}
+                "storageGb": "Dynamo-Storage",
+                "readCapacityUnitHours": "Dynamo-RCU-Hour",
+                "writeCapacityUnitHours": "Dynamo-WCU-Hour"}
 
     @classmethod
     def from_address(cls, resource_address: str) -> StorageResource | None:

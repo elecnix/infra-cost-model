@@ -463,6 +463,6 @@ def test_bundled_examples_use_only_logical_metric_names():
             if not resource_address:
                 continue
             for name in (node.get("usageMetrics") or {}):
-                offenders += ResourceRegistry.unknown_metrics(resource_address, [name]) and [
-                    f"{path}:{address}: {name}"]
+                if ResourceRegistry.unknown_metrics(resource_address, [name]):
+                    offenders.append(f"{path}:{address}: {name}")
     assert offenders == []
