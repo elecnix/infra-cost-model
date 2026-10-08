@@ -147,6 +147,39 @@ _HOSTING_PLANS = {
 _FLEX_INSTANCE_MB = (512, 2048, 4096)
 
 
+def _always_ready_instances(config: Any) -> float:
+    """The always-ready instances of a Flex Consumption app (#407).
+
+    Zero when the app configures none, which bills every execution at the
+    on-demand rates.
+    """
+    count = (config or {}).get("alwaysReadyInstances")
+    return count if isinstance(count, (int, float)) else 0
+
+
+def _flex_concurrency(config: Any) -> float:
+    """How many executions one Flex Consumption instance runs at once (#407).
+
+    One, which bills each execution its own duration, when the model states
+    no concurrency.
+    """
+    factor = (config or {}).get("concurrency")
+    if isinstance(factor, (int, float)) and factor >= 1:
+        return factor
+    return 1
+
+
+def _always_ready_count(site_config: Any) -> int:
+    """The always-ready instances an ARM site configures (#407).
+
+    Azure states them as a list of ``{name, instanceCount}`` entries.
+    """
+    entries = (site_config or {}).get("alwaysReady") or []
+    return sum(int(entry["instanceCount"]) for entry in entries
+               if isinstance(entry, dict)
+               and isinstance(entry.get("instanceCount"), (int, float)))
+
+
 def hosting_plan(sku: Any, tier: Any) -> Optional[str]:
     """The hosting plan of an App Service plan SKU (#382).
 
@@ -250,14 +283,10 @@ def service_plans_from_tf(resources: list) -> list:
     for resource in resources:
         if not isinstance(resource, dict):
             continue
-        values = resource.get("values") or {}
-        if resource.get("type") == "azurerm_service_plan":
-            sku, tier = values.get("sku_name"), None
-        elif resource.get("type") == "azurerm_app_service_plan":
-            block = _first_block(values.get("sku"))
-            sku, tier = block.get("size"), block.get("tier")
-        else:
+        if resource.get("type") not in ("azurerm_service_plan", "azurerm_app_service_plan"):
             continue
+        values = resource.get("values") or {}
+        sku, tier, _, _ = _tf_plan_settings(values)
         plans.append(ServicePlan(id=values.get("id"), name=values.get("name"),
                                  sku=sku, tier=tier))
     return plans
@@ -298,7 +327,21 @@ class AzureFunction(ComputeResource):
 
     @property
     def valid_metrics(self) -> list[str]:
-        return ["invocations", "avgDurationMs", "memoryMb"]
+        return ["invocations", "avgDurationMs", "memoryMb", "alwaysReadyGBHours"]
+
+    def catalog_metrics_for(self, config: dict) -> dict:
+        """The always-ready baseline of a Flex Consumption app (#407).
+
+        An always-ready instance bills a GB-second for every second it holds
+        its memory ready, idle included, so the ``alwaysReadyGBHours`` usage
+        metric is the always-ready capacity the app keeps: the always-ready
+        instances times the memory of one instance times the hours they stay
+        ready. One GB-hour is 3,600 GB-seconds.
+        """
+        if (config or {}).get("hostingPlan") != "flexConsumption":
+            return {}
+        return {"alwaysReadyGBHours":
+                {"AzureFunctionsFlex-AlwaysReady-Baseline-GB-Second": 3600}}
 
     def derive_catalog_usage(self, usage: dict[str, float],
                              config: Optional[dict] = None) -> Optional[DerivedCatalogUsage]:
@@ -308,10 +351,11 @@ class AzureFunction(ComputeResource):
         and bills at least 100 ms for each execution. On Flex Consumption it
         bills the memory of the instance size (512 MB, 2 GB or 4 GB) at its
         own rates. The handler counts each execution's duration, at least
-        100 ms, and leaves out concurrency: executions that share an
-        instance bill its time once, so this is an upper bound. On an
-        Elastic Premium or dedicated plan, the plan's instances pay for
-        every execution, so the app derives no quantity.
+        100 ms, and divides the total by the ``concurrency`` setting: an
+        instance bills its time once for the executions it runs together, so
+        without that setting this is an upper bound (#407). On an Elastic
+        Premium or dedicated plan, the plan's instances pay for every
+        execution, so the app derives no quantity.
         """
         inputs = ("invocations", "avgDurationMs", "memoryMb")
         if not all(name in usage for name in inputs):
@@ -324,11 +368,17 @@ class AzureFunction(ComputeResource):
         if plan == "flexConsumption":
             memory_mb = next((mb for mb in _FLEX_INSTANCE_MB if usage["memoryMb"] <= mb),
                              _FLEX_INSTANCE_MB[-1])
+            # An app with always-ready instances bills its executions on the
+            # always-ready meters. Which executions land on those instances and
+            # which scale out is not modelled, so a mix is priced at the
+            # always-ready rates (#407).
+            ready = "AlwaysReady-" if _always_ready_instances(config) else ""
             return DerivedCatalogUsage(
                 consumed=frozenset(inputs),
                 quantities={
-                    "AzureFunctionsFlex-Execution": invocations,
-                    "AzureFunctionsFlex-GB-Second": invocations * memory_mb / 1024 * seconds,
+                    f"AzureFunctionsFlex-{ready}Execution": invocations,
+                    f"AzureFunctionsFlex-{ready}GB-Second":
+                        invocations * memory_mb / 1024 * seconds / _flex_concurrency(config),
                 },
             )
         memory_gb = math.ceil(usage["memoryMb"] / 128) * 128 / 1024
@@ -458,17 +508,21 @@ class AzureFunction(ComputeResource):
                                            resource.get(ARM_PARAMETERS_KEY, {}))
         service, plan = cls.hosting(address, plan_ref or properties.get("serverFarmId"),
                                     resource.get(SERVICE_PLANS_KEY, []))
+        always_ready = _always_ready_count(properties.get("siteConfig"))
+        config = {
+            "sku": properties.get("serverFarmId"),
+            "runtime": app_settings.get("FUNCTIONS_WORKER_RUNTIME"),
+            **plan,
+        }
+        if always_ready:
+            config["alwaysReadyInstances"] = always_ready
         return ResourceExtract(
             resource_address=address,
             node_type="compute",
             provider="azure",
             service=service,
             region=arm_region(resource),
-            config={
-                "sku": properties.get("serverFarmId"),
-                "runtime": app_settings.get("FUNCTIONS_WORKER_RUNTIME"),
-                **plan,
-            },
+            config=config,
         )
 
 def _capabilities(value: Any) -> set:
@@ -1614,11 +1668,20 @@ class AzureBlobStorage(StorageResource):
         })
 
 
-# Dedicated App Service plan SKUs with instance-hour rows (#383), by the
+# Dedicated App Service plan SKUs with instance-hour rows (#383, #407), by the
 # name that the metric uses.
 _DEDICATED_SKUS = {sku.lower(): sku for sku in (
     "B1", "B2", "B3", "S1", "S2", "S3", "P1v2", "P2v2", "P3v2", "P0v3", "P1v3", "P2v3",
-    "P3v3", "P1mv3", "P2mv3", "P3mv3", "P4mv3", "P5mv3")}
+    "P3v3", "P1mv3", "P2mv3", "P3mv3", "P4mv3", "P5mv3", "P1", "P2", "P3", "P4", "PC2",
+    "PC3", "PC4", "P0v4", "P1v4", "P2v4", "P3v4", "P1mv4", "P2mv4", "P3mv4", "P4mv4",
+    "P5mv4", "I1", "I2", "I3", "I12", "I13", "I14", "I1v2", "I2v2", "I3v2", "I4v2",
+    "I5v2", "I6v2", "I1mv2", "I2mv2", "I3mv2", "I4mv2", "I5mv2", "I1v4", "I2v4", "I3v4",
+    "I4v4", "I5v4", "I6v4", "I1mv4", "I2mv4", "I3mv4", "I4mv4", "I5mv4")}
+# The dedicated SKUs Azure sells on one operating system only: the classic
+# Premium plans are Windows-only and the Premium container plans (Xenon) run
+# Windows containers (#407).
+_WINDOWS_ONLY_SKUS = frozenset({"p1", "p2", "p3", "p4"})
+_WINDOWS_CONTAINER_SKUS = frozenset({"pc2", "pc3", "pc4"})
 # Elastic Premium SKUs: the vCPUs and GiB of memory of each instance, which
 # Azure bills per hour.
 _ELASTIC_PREMIUM = {"ep1": (1, 3.5), "ep2": (2, 7), "ep3": (4, 14)}
@@ -1633,6 +1696,21 @@ def _plan_sku(sku: Any) -> Optional[str]:
     return _DEDICATED_SKUS.get(compact.lower(), compact)
 
 
+def _dedicated_sku_priced(sku: Any, os_name: str) -> bool:
+    """Whether the metric of the dedicated plan ``sku`` on ``os_name`` has rows (#407).
+
+    Each SKU family has rows for the operating systems Azure sells it on: Linux
+    and Windows for most, Windows alone for the classic Premium plans, and
+    Windows containers for the Premium container (Xenon) plans.
+    """
+    name = (sku or "").lower()
+    if name in _WINDOWS_CONTAINER_SKUS:
+        return os_name == "WindowsContainer"
+    if name in _WINDOWS_ONLY_SKUS:
+        return os_name == "Windows"
+    return name in _DEDICATED_SKUS and os_name in ("Linux", "Windows")
+
+
 def _plan_os(value: Any, reserved: Any = None) -> str:
     """``Linux``, ``Windows`` or ``WindowsContainer`` from an OS type or a kind."""
     text = (_text(value) or "").lower()
@@ -1641,6 +1719,22 @@ def _plan_os(value: Any, reserved: Any = None) -> str:
     if "linux" in text or reserved is True:
         return "Linux"
     return "Windows"
+
+
+def _tf_plan_settings(values: dict) -> tuple:
+    """A Terraform plan's SKU, tier, OS and instance count (#407).
+
+    ``azurerm_service_plan`` states ``sku_name``, ``os_type`` and
+    ``worker_count``; ``azurerm_app_service_plan`` states a ``sku`` block of
+    ``tier``, ``size`` and ``capacity``, and names its OS in ``kind`` with
+    ``reserved``. A plan carries one of the two shapes, so read whichever it
+    has: branching on the resource type is how the two schemas got swapped.
+    """
+    block = _first_block(values.get("sku"))
+    return (block.get("size") or values.get("sku_name"),
+            block.get("tier"),
+            _plan_os(values.get("os_type") or values.get("kind"), values.get("reserved")),
+            block.get("capacity") or values.get("worker_count"))
 
 
 class AppServicePlan(ComputeResource):
@@ -1692,8 +1786,7 @@ class AppServicePlan(ComputeResource):
         config = {"sku": _text(sku), "tier": _text(tier), "hostingPlan": plan,
                   "os": os_name, "instances": instances}
         name = _plan_sku(sku)
-        known = ((plan == "dedicated" and (name or "").lower() in _DEDICATED_SKUS
-                  and os_name != "WindowsContainer")
+        known = ((plan == "dedicated" and _dedicated_sku_priced(name, os_name))
                  or (plan == "premium" and (name or "").lower() in _ELASTIC_PREMIUM)
                  or plan in ("consumption", "flexConsumption"))
         if not known:
@@ -1708,15 +1801,9 @@ class AppServicePlan(ComputeResource):
     @classmethod
     def extract_tf(cls, resource: dict) -> ResourceExtract:
         values = resource.get("values") or {}
-        if resource.get("type") == "azurerm_app_service_plan":
-            block = _first_block(values.get("sku"))
-            return cls._extract(resource.get("address", ""), values.get("location"),
-                                block.get("size"), block.get("tier"),
-                                _plan_os(values.get("kind"), values.get("reserved")),
-                                block.get("capacity"))
+        sku, tier, os_name, instances = _tf_plan_settings(values)
         return cls._extract(resource.get("address", ""), values.get("location"),
-                            values.get("sku_name"), None, _plan_os(values.get("os_type")),
-                            values.get("worker_count"))
+                            sku, tier, os_name, instances)
 
     @classmethod
     def extract_pulumi(cls, resource: dict) -> ResourceExtract:
