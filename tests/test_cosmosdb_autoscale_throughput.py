@@ -386,3 +386,14 @@ def test_the_database_reader_only_takes_sql_resources():
         {"address": "azurerm_cosmosdb_table.t", "type": "azurerm_cosmosdb_table",
          "values": {"account": "orders", "name": "t", "throughput": 400}}])
     assert [(e.name, e.ru_per_second) for e in entries] == [("orders", 400.0)]
+
+def test_a_database_named_by_an_expression_warns_rather_than_costing_nothing():
+    """`[concat(...)]` can't be read for its account, so the entry names none."""
+    template = {"resources": [
+        {"type": "Microsoft.DocumentDB/databaseAccounts", "name": "orders",
+         "location": REGION, "properties": {"databaseAccountOfferType": "Standard"}},
+        {"type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+         "name": "[concat(parameters('acct'), '/orders')]",
+         "properties": {"options": {"throughput": 400}}}]}
+    with pytest.warns(UserWarning, match="name no account"):
+        extract_resources_from_arm(template)

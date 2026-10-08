@@ -183,3 +183,12 @@ def test_the_id_alone_names_no_type():
 def test_an_id_with_a_provider_prefixed_type_still_matches():
     """A handler matched on its Terraform address inside an id keeps working."""
     assert CloudStorage.from_address("google:storage:Bucket:assets") is not None
+
+
+def test_a_child_of_a_component_resource_matches_its_type():
+    """A child's URN puts `$` before its own type, after the parent's."""
+    urn = "urn:pulumi:prod::shop::my:index:Site$gcp:storage/bucket:Bucket::assets"
+    assert matches_gcp_type(urn, CloudStorage)
+    assert not matches_gcp_type(
+        "urn:pulumi:prod::shop::my:index:Site$gcp:storage/bucket:BucketIAM::assets",
+        CloudStorage)
