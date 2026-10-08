@@ -344,3 +344,28 @@ def _solo_cost(catalog, gb: float, basis: str) -> float:
         engine = CostEngine(model, catalog=catalog, time_basis=basis)
         engine.compute()
     return engine.costs["data_transfer.a"]
+
+EXAMPLES = sorted(Path(__file__).resolve().parent.parent.glob("examples/*.yaml"))
+
+
+@pytest.mark.parametrize("time_basis", ["perSecond", "monthly", "yearly"])
+@pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.stem)
+def test_every_example_adds_up_on_every_time_basis(example, time_basis, capsys):
+    """Each printed number keeps six significant digits or six decimals.
+
+    So a node's printed metrics reproduce its printed total within half a
+    unit in the last kept digit of each number, and a per-second cost of
+    6.25e-7 prints as itself rather than as 0.000001.
+    """
+    assert main(["compute", str(example), "--pricing", "seed", "--format", "json",
+                 "--time-basis", time_basis]) == 0
+    report = json.loads(capsys.readouterr().out)
+    for name, node in report["nodes"].items():
+        costs = [m["cost"] for m in node["metrics"].values()]
+        terms = len(costs) + 1
+        assert sum(costs) == pytest.approx(node["total"], rel=terms * 5e-6,
+                                           abs=terms * 5e-7), (name, node)
+        for metric in node["metrics"].values():
+            if metric["quantity"]:
+                assert metric["unitPrice"] == pytest.approx(
+                    metric["cost"] / metric["quantity"], rel=1e-5), (name, metric)

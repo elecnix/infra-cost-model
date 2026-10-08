@@ -16,19 +16,20 @@ from infra_cost_model import __version__
 # The version of the snapshot's own shape, raised when its keys change.
 SNAPSHOT_SCHEMA_VERSION = 1
 
-# Money and quantities keep six decimal places, matching the CLI table. A
-# smaller amount keeps enough significant digits instead of rounding to zero,
-# so a per-second cost stays visible.
+# Money and quantities keep six decimal places, matching the CLI table, or
+# six significant digits, whichever keeps more. A per-second cost or a unit
+# price below a dollar then keeps its digits: 6.25e-7 prints as itself, not
+# as 0.000001, and a node's metrics add up to its total within half a unit
+# in the last digit each number keeps.
 _DECIMALS = 6
 _SIGNIFICANT_DIGITS = 6
 
 
 def _round(value: float) -> float:
-    """Round a number for a snapshot, without losing a small nonzero amount."""
-    rounded = round(value, _DECIMALS)
-    if rounded == 0.0 and value != 0.0:
+    """Round a number for a snapshot, keeping six decimals or six digits."""
+    if value != 0.0 and abs(value) < 1.0:
         return float(f"{value:.{_SIGNIFICANT_DIGITS}g}")
-    return rounded + 0.0
+    return round(value, _DECIMALS) + 0.0
 
 
 def _metric_entry(record) -> dict:
