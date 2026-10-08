@@ -176,3 +176,35 @@ def test_pool_is_skipped_when_no_region_prices_the_total(tmp_path):
         for region in ("us-east-1", "eu-west-1")
     }
     assert _price_billing_scopes(catalog, pools) == {}
+
+
+def test_two_nodes_in_a_region_without_rows_share_the_global_price():
+    """A pool of one region still prices from the global rows (#384).
+
+    Two hosted-zone nodes in eu-west-1, which the seed has no Route 53 rows
+    for, form one pool. The pool's total must price from the rows that
+    priced each node, not from the region's missing rows.
+    """
+    import warnings as _warnings
+
+    from infra_cost_model.engine import CostEngine
+    from infra_cost_model.pricing.catalog import PricingCatalog
+
+    def zone_node(zones):
+        return {"nodeType": "external", "provider": "aws", "service": "AmazonRoute53",
+                "region": "eu-west-1",
+                "usageMetrics": {"Route53-HostedZone": {"unit": "Zones", "value": zones,
+                                                        "fixed": True}}}
+
+    model = {"version": "1.0",
+             "workflow": {"name": "w", "entry": "a",
+                          "frequency": {"unit": "perMonth", "value": 1}},
+             "nodes": {"a": zone_node(20), "b": zone_node(20)},
+             "edges": [{"from": "a", "to": "b", "type": "async", "rate": 1}]}
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        costs = CostEngine(model, catalog=PricingCatalog(seed=True),
+                           time_basis="monthly").compute()
+    # 40 zones: 25 at $0.50 and 15 at $0.10, split evenly.
+    assert costs["a"] == pytest.approx(7.0)
+    assert costs["b"] == pytest.approx(7.0)

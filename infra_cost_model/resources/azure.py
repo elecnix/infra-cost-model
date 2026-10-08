@@ -607,9 +607,10 @@ def cosmos_throughput(entries: list, account: Any) -> dict:
 
     ``entries`` are the databases and containers of the input and
     ``account`` the account's name. Azure bills the throughput of every
-    database and container of an account, and a database shares its
-    throughput with its containers, so a container of a database that sets
-    a throughput is left out. Autoscale bills the highest RU/s of the
+    database and container of an account. A database shares its throughput
+    with the containers that set none, and a container that sets its own
+    bills it on top of the database's
+    (https://learn.microsoft.com/en-us/azure/cosmos-db/set-throughput). Autoscale bills the highest RU/s of the
     hour, so it contributes ``autoscaleMaxRuPerSecond``, which the
     autoscale rows price beside the manual ``throughputRuPerSecond``.
 
@@ -618,12 +619,10 @@ def cosmos_throughput(entries: list, account: Any) -> dict:
     """
     name = account.lower() if isinstance(account, str) else ""
     mine = [e for e in entries if name and e.account and e.account.lower() == name]
-    shared = {(e.name or "").lower() for e in mine
-              if e.database is None and e.bills_throughput()}
-    billed = [e for e in mine
-              if e.database is None or (e.database or "").lower() not in shared]
-    autoscale = sum(e.autoscale_max_ru or 0.0 for e in billed)
-    manual = sum(e.ru_per_second or 0.0 for e in billed)
+    # A container of a shared database that sets no throughput adds nothing,
+    # and one that sets its own bills it on top of the database's.
+    autoscale = sum(e.autoscale_max_ru or 0.0 for e in mine)
+    manual = sum(e.ru_per_second or 0.0 for e in mine)
     return {"throughputRuPerSecond": manual or None,
             "autoscaleMaxRuPerSecond": autoscale or None}
 
@@ -767,14 +766,20 @@ class CosmosDB(StorageResource):
         manual_row = ("CosmosDB-Provisioned-MultiRegionWrite-100RU-Hour"
                       if config.get("multiRegionWrites")
                       else "CosmosDB-Provisioned-100RU-Hour")
-        # Autoscale bills 1.5 times the manual rate, at its maximum RU/s.
-        autoscale_row = "CosmosDB-Autoscale-100RU-Hour"
+        # Autoscale bills 1.5 times the manual rate, at its maximum RU/s. With
+        # multi-region writes the two share one rate, "the same for both
+        # manual and autoscale"
+        # (https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-choose-offer).
+        autoscale_row = (manual_row if config.get("multiRegionWrites")
+                         else "CosmosDB-Autoscale-100RU-Hour")
         if isinstance(autoscale, (int, float)) and isinstance(manual, (int, float)):
             # An account whose databases mix autoscale and manual throughput
             # bills each on its own meter, so both are priced.
+            units: dict[str, float] = {}
+            for row, ru in ((autoscale_row, autoscale), (manual_row, manual)):
+                units[row] = units.get(row, 0.0) + ru / 100
             return {"storageGb": "CosmosDB-Storage-GB-Month",
-                    "throughputHours": {autoscale_row: autoscale / 100,
-                                        manual_row: manual / 100}}
+                    "throughputHours": units}
         throughput = autoscale_row if autoscale is not None else manual_row
         units = cosmos_units(config)
         return {"storageGb": "CosmosDB-Storage-GB-Month",

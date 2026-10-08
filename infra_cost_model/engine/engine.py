@@ -786,10 +786,19 @@ def _price_pooled_charges(catalog: PricingCatalog,
         elif len(members) < 2 or total_quantity <= 0:
             continue
         else:
-            pool_cost = catalog.query(
-                provider, service, region, metric, total_quantity,
-                parameters=members[0].parameters,
-                period_seconds=SECONDS_PER_MONTH).total_cost
+            # The rows that priced each charge price the pool: a global
+            # service's region without rows reads the global ones (#384).
+            result = None
+            for candidate in query_regions(provider, service, metric, region):
+                result = catalog.query(
+                    provider, service, candidate, metric, total_quantity,
+                    parameters=members[0].parameters,
+                    period_seconds=SECONDS_PER_MONTH)
+                if result is not None:
+                    break
+            if result is None:
+                continue
+            pool_cost = result.total_cost
         for charge in members:
             share = pool_cost * charge.quantity / total_quantity
             delta = share - charge.cost
