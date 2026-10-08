@@ -106,7 +106,4 @@ Publishing a GitHub release starts `.github/workflows/publish.yml`, which builds
 1. Set the new version in `infra_cost_model/__init__.py` (`__version__`) and in `sdk/ts/package.json` in the same PR. `tests/test_sdk_version.py` fails when the two differ.
 2. After that PR merges, create a GitHub release on `main` with the tag `vX.Y.Z`, where `X.Y.Z` matches `__version__`. If they differ, the workflow stops before it builds anything.
 
-PyPI accepts the upload through trusted publishing, so the repository doesn't store a PyPI token. Before the first release, the repository owner sets this up once:
-
-1. On pypi.org, add a trusted publisher for the `infra-cost-model` project (a "pending publisher" until the first upload creates the project). Use owner `elecnix`, repository `infra-cost-model`, workflow `publish.yml`, and environment `pypi`.
-2. In the GitHub repository settings, under Environments, create an environment called `pypi`. You can add required reviewers there to approve each upload.
+PyPI accepts the upload through trusted publishing, so the repository doesn't store a PyPI token. The project's trusted publisher on pypi.org names owner `elecnix`, repository `infra-cost-model`, workflow `publish.yml` and environment `pypi`, and the `pypi` environment exists in the repository settings, where you can add required reviewers to approve each upload. If the publish job fails with `invalid-publisher`, check that those four values still match on pypi.org, then rerun the failed job of the release's workflow run.
