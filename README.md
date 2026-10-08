@@ -270,7 +270,7 @@ infra-cost-model compute model.yaml --time-basis monthly --format json > cost-sn
 
 (The amounts above are made up, to show the format.)
 
-Each metric reports the quantity the engine priced, the effective price of one unit of it, the cost, whether it is fixed, and where the price came from (`seed`, `infracost`, `azure-retail`, `vendor`, or the model's own `pricingRates`). When two machines disagree on a total, the snapshot points at the metric and the price source that moved. Keys are sorted, money is rounded to six decimals, and each cost is the engine's own, so a node's printed metrics reproduce its printed total and a diff is empty when nothing changed.
+Each metric reports the quantity the engine priced, the effective price of one unit of it, the cost, whether it is fixed, and where the price came from (`seed`, `infracost`, `azure-retail`, `vendor`, or the model's own `pricingRates`). When two machines disagree on a total, the snapshot points at the metric and the price source that moved. Keys are sorted, each number keeps six decimals, or six digits from its first nonzero one when that keeps more, and each cost is the engine's own. A node's printed metrics then reproduce its printed total within the last kept digit, and a diff is empty when nothing changed.
 
 When nothing priced a metric, it stays out of `costs` and appears in `unpriced` instead, with the same node, metric, provider, service, region and quantity as the stderr warning.
 
