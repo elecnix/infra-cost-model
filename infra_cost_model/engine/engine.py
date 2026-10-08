@@ -100,16 +100,20 @@ class UnpricedMetric:
 class UnpricedMetricWarning(UserWarning):
     """Emitted once per metric the engine could not price.
 
-    ``unpriced`` carries the ``UnpricedMetric`` record.
+    ``unpriced`` carries the ``UnpricedMetric`` record. The record is the
+    warning's only argument, so ``cls(*args)`` and pickle rebuild it, as
+    pytest-xdist does with a worker's warning.
     """
 
     def __init__(self, unpriced: UnpricedMetric):
-        super().__init__(
-            f"Node '{unpriced.node}': no price for metric '{unpriced.metric}' "
-            f"(provider {unpriced.provider}, service {unpriced.service or '-'}, "
-            f"region {unpriced.region}). The total leaves it out."
-        )
+        super().__init__(unpriced)
         self.unpriced = unpriced
+
+    def __str__(self) -> str:
+        unpriced = self.unpriced
+        return (f"Node '{unpriced.node}': no price for metric '{unpriced.metric}' "
+                f"(provider {unpriced.provider}, service {unpriced.service or '-'}, "
+                f"region {unpriced.region}). The total leaves it out.")
 
 
 @dataclass
