@@ -122,6 +122,12 @@ MONTHLY_TOTALS = {
     # $54.79; API $21.92 and egress (219.15 GB - 100 GB free) x $0.09 = $10.72;
     # the rest $110.41.
     "event-driven-fanout.yaml": (1128.76, 1145.54),
+    # The table states operations. Each request reads 0.5 units (an eventual
+    # 900-byte GetItem) plus 0.2 x 3 (a strong 9,000-byte Query, 3 blocks) =
+    # 1.1 units, so 43.83M requests read 48.213M units x $0.125/M = $6.03.
+    # It writes 2 x 1 (PutItem, one block) + 3 x 2 (a transaction, one
+    # block at twice the units) = 8 units, so 350.64M x $0.625/M = $219.15.
+    "dynamodb-operations.yaml": (225.18, 225.18),
     # Bedrock 4.383M calls x (500 x $3/M + 1,000 x $15/M) = $72,319.50;
     # DynamoDB $2.74; API, Lambda and S3 $37.62. The 21.92 GB of egress is
     # inside the free 100 GB.

@@ -135,6 +135,10 @@ export interface UsageMetric {
    */
   value?: number | string;
   /**
+   * Operations the metric counts, in place of a stated `value`. A metric states exactly one of `value` and `operations`. The node's resource turns the operations into the metric's quantity by the provider's billing rule, and from there the metric behaves as if `value` had been that number. Only a DynamoDB table node accepts it: its `readRequests` metric states read kinds and its `writeRequests` metric write kinds, and the quantity is the request units.
+   */
+  operations?: UsageOperation[];
+  /**
    * When true, this metric is a fixed (always-on) monthly total: its value is used directly and is NOT scaled by the derived invocation count. This lets one node carry both a fixed dimension (e.g. NAT gateway hours, ALB-hours) and a usage-driven dimension (e.g. GB processed, LCUs) without splitting into two nodes (Issue #196).
    */
   fixed?: boolean;
@@ -162,6 +166,28 @@ export interface UsageMetric {
    * Flat fee per transaction for transactional shapes, multiplied by the quantity
    */
   fixed_per_transaction?: number;
+}
+export interface UsageOperation {
+  /**
+   * A label for reports and error messages.
+   */
+  name?: string;
+  /**
+   * The operation. A DynamoDB table accepts GetItem, BatchGetItem, Query, Scan and TransactGetItems on `readRequests`, and PutItem, UpdateItem, DeleteItem, BatchWriteItem and TransactWriteItems on `writeRequests`. The resource reports an unknown kind.
+   */
+  kind: string;
+  /**
+   * How a read is consistent: eventual (the default), strong or transactional. A write is standard, or transactional. TransactGetItems is always transactional. The resource reports an unknown value.
+   */
+  consistency?: string;
+  /**
+   * The bytes one call reads or writes: the item for GetItem, PutItem, UpdateItem and DeleteItem, each item for the batch and transaction kinds, and the total one call reads for Query and Scan. A number, a parameter name, or arithmetic over parameters, as `value` accepts.
+   */
+  itemBytes: number | string;
+  /**
+   * How many times the operation runs per invocation, or per month when the metric is fixed. For a batch or a transaction, the number of items. A number, a parameter name, or arithmetic over parameters, as `value` accepts.
+   */
+  count: number | string;
 }
 export interface BillingLine {
   /**

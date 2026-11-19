@@ -357,11 +357,13 @@ def silent_zero_error(address: str, node: dict) -> Optional[str]:
     for name, metric in (node.get("usageMetrics") or {}).items():
         if not isinstance(metric, dict):
             continue
-        if "value" not in metric:
+        if "value" not in metric and "operations" not in metric:
             return (
                 f"Node '{address}' declares usage metric '{name}' with no "
-                f"value. The engine reads the quantity from 'value'; without "
-                f"one this node costs $0.00 and reports nothing."
+                f"value and no operations. The engine reads the quantity "
+                f"from 'value', or from 'operations' on a resource that "
+                f"counts them; without one this node costs $0.00 and reports "
+                f"nothing."
             )
     return None
 
@@ -715,6 +717,10 @@ class _MetricCost:
     cost: float
     fixed: bool
     price_source: str
+    # The operations a metric counted, when it stated them in place of a
+    # value: what each one billed per call. Per invocation, or per month for
+    # a fixed metric. Empty for every other metric.
+    operations: tuple = ()
 
 
 @dataclass
@@ -781,6 +787,7 @@ def _merge_metric_costs(into: dict, costs: dict) -> None:
     for address, metrics in costs.items():
         for metric, record in metrics.items():
             merged = _metric_cost_record(into, address, metric)
+            merged.operations = merged.operations or record.operations
             if record.fixed:
                 merged.quantity = record.quantity
                 merged.cost = record.cost
@@ -1125,6 +1132,8 @@ class CostAggregator:
         # with several workflows can price each shape once (#305).
         self.shape_charges: list[_ShapeCharge] = []
         self._pricing_address: Optional[str] = None
+        # What each metric that states operations counted, by node and metric.
+        self._metric_operations: dict[tuple[str, str], tuple] = {}
 
     def _metric_record(self, address: str, metric: str) -> _MetricCost:
         """The record of one usage metric of one node, created empty if new."""
@@ -1140,6 +1149,8 @@ class CostAggregator:
         record.cost += cost
         record.fixed = fixed
         record.price_source = price_source
+        record.operations = self._metric_operations.get(
+            (address, metric), record.operations)
 
     def _record_unpriced(self, address: str, node: dict, metric: str,
                          quantity: float, fixed: bool) -> None:
@@ -1281,10 +1292,8 @@ class CostAggregator:
         for metric_name, metric_def in node_metrics.items():
             if metric_name in consumed:
                 continue
-            if isinstance(metric_def, dict):
-                per_invocation = self._resolve_param(metric_def.get("value", 0))
-            else:
-                per_invocation = self._resolve_param(metric_def)
+            per_invocation = self._metric_value(
+                address, node, metric_name, metric_def)
 
             metric_fixed = _metric_is_fixed(metric_def, flat_override)
             # Fixed metrics use their value directly; variable metrics scale by
@@ -1392,10 +1401,8 @@ class CostAggregator:
         for metric_name, metric_def in node_metrics.items():
             if metric_name in consumed:
                 continue
-            if isinstance(metric_def, dict):
-                per_invocation = self._resolve_param(metric_def.get("value", 0))
-            else:
-                per_invocation = self._resolve_param(metric_def)
+            per_invocation = self._metric_value(
+                address, node, metric_name, metric_def)
 
             metric_fixed = _metric_is_fixed(metric_def, flat_override)
             total_quantity = (
@@ -1455,8 +1462,8 @@ class CostAggregator:
             if isinstance(metric_def, dict):
                 if metric_def.get("shape") is not None:
                     continue
-                metric_def = metric_def.get("value", 0)
-            usage[name] = self._resolve_param(metric_def) * share
+            usage[name] = self._metric_value(
+                address, node, name, metric_def) * share
         derived = ResourceRegistry.derive_catalog_usage(
             resource_address, usage, node.get("config"))
         if derived is None:
@@ -1626,7 +1633,41 @@ class CostAggregator:
         return ResourceRegistry.resolve_catalog_metric(
             resource_address, logical_metric, node.get("config"))
 
-    def _resolve_param(self, value) -> float:
+    def _metric_value(self, address: str, node: dict, metric_name: str,
+                      metric_def) -> float:
+        """A usage metric's quantity per invocation, whichever way it is stated.
+
+        ``value`` is a number, a parameter name or arithmetic over parameters.
+        ``operations`` hand the quantity to the node's resource, which applies
+        the provider's billing rule, so the engine holds none of it. Either
+        way the caller gets one number and treats the metric the same.
+        """
+        if not (isinstance(metric_def, dict) and "operations" in metric_def):
+            if isinstance(metric_def, dict):
+                return self._resolve_param(metric_def.get("value", 0))
+            return self._resolve_param(metric_def)
+
+        from infra_cost_model.resources.registry import (
+            ResourceRegistry,
+            operation_metric_errors,
+        )
+        errors = operation_metric_errors(address, node, metric_name, metric_def)
+        if errors:
+            raise ValueError("; ".join(errors))
+        resource_address = node.get("resourceAddress") or address
+        handler = ResourceRegistry.from_address(resource_address)()
+        try:
+            result = handler.operations_quantity(
+                metric_name, metric_def["operations"],
+                lambda value, what: self._resolve_param(value, what))
+        except ValueError as error:
+            raise ValueError(
+                f"Node '{address}', usage metric '{metric_name}', {error}"
+            ) from None
+        self._metric_operations[(address, metric_name)] = result.operations
+        return _quantity(result.total, "a usage metric's operations")
+
+    def _resolve_param(self, value, what: str = "a usage metric's value") -> float:
         """Resolve a usage metric value: a number, or arithmetic over parameters.
 
         Per DP#4, a usage metric's ``value`` can reference symbolic parameters
@@ -1647,7 +1688,7 @@ class CostAggregator:
                              f"arithmetic over the workflow's parameters")
         if isinstance(value, str):
             value = evaluate_metric_expression(value, self.parameters)
-        return _quantity(value, "a usage metric's value")
+        return _quantity(value, what)
 
     def _compute_token_cost(self, address: str, node: dict, usage: DerivedUsage) -> float:
         """Compute token-based cost for LLM models (DP#8).
@@ -1893,6 +1934,17 @@ class CostEngine:
                 + "\n".join(f"  - {error}" for error in silent)
             )
 
+        # A metric that states operations is checked by its node's resource
+        # before any pricing, so `compute` and `validate` report the same
+        # errors.
+        from infra_cost_model.resources.registry import operations_errors
+        stated = operations_errors(self.cost_model)
+        if stated:
+            raise ValueError(
+                "Invalid usage metrics:\n"
+                + "\n".join(f"  - {error}" for error in stated)
+            )
+
         if self.workflows:
             return self._compute_multi_workflow()
 
@@ -2056,6 +2108,7 @@ class CostEngine:
                         fixed_multiplier if record.fixed else multiplier),
                     fixed=record.fixed,
                     price_source=record.price_source,
+                    operations=record.operations,
                 )
                 for metric, record in metrics.items()
             }

@@ -150,12 +150,26 @@ def validate_cost_model(model: dict) -> list[str]:
         # _shape_errors reports an unknown shape with a clearer message.
         if error.path and error.path[-1] == "shape" and error.validator == "enum":
             continue
+        # The node's resource reports a missing field of an operation, naming
+        # the operation (see operations_errors below).
+        if error.validator == "required" and "operations" in error.path:
+            continue
         path = ".".join(str(p) for p in error.path)
         errors.append(f"{path}: {error.message}" if path else error.message)
 
     # Semantic provider whitelist (see DP: validate against loaded vendor ids at load time).
     errors.extend(_provider_errors(model))
     errors.extend(_shape_errors(model, known_shapes))
+
+    # Usage metrics that state operations: the one-of rule, and the node's
+    # resource applies its own rule. Imported here because the resources
+    # import this module.
+    from infra_cost_model.engine.engine import silent_zero_errors
+    from infra_cost_model.resources.registry import operations_errors
+    errors.extend(operations_errors(model))
+    # A metric that states neither `value` nor `operations` is the silent zero
+    # that `compute` already refuses, so `validate` reports it too.
+    errors.extend(silent_zero_errors(model))
 
     return errors
 

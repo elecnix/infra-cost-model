@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from infra_cost_model.schema.cost_model_schema import validate_cost_model
 
@@ -35,6 +35,38 @@ class DerivedCatalogUsage:
     """
     consumed: frozenset[str]
     quantities: dict[str, float]
+
+
+@dataclass(frozen=True)
+class OperationUnits:
+    """The units one stated operation contributes to a usage metric.
+
+    A usage metric that states ``operations`` instead of ``value`` gets its
+    quantity from them. ``units_per_call`` is what one call bills under the
+    provider's rule, ``count`` how many calls run per invocation (or per month
+    for a fixed metric), and ``units`` their product. Every number is one the
+    resource code computed, so a report shows where a quantity came from.
+    """
+    name: Optional[str]
+    kind: str
+    consistency: str
+    item_bytes: float
+    count: float
+    units_per_call: float
+
+    @property
+    def units(self) -> float:
+        return self.count * self.units_per_call
+
+
+@dataclass(frozen=True)
+class OperationsQuantity:
+    """The quantity a metric's operations add up to, with each one's share."""
+    operations: tuple[OperationUnits, ...]
+
+    @property
+    def total(self) -> float:
+        return sum(operation.units for operation in self.operations)
 
 
 @dataclass
@@ -113,6 +145,39 @@ class ResourceType(ABC):
         several metrics, such as Lambda GB-seconds from duration and memory.
         """
         return None
+
+    @property
+    def supports_operations(self) -> bool:
+        """Whether a usage metric of this resource can state ``operations``.
+
+        A resource that bills by a rule over operations, such as a DynamoDB
+        table's request units, overrides this together with
+        ``operations_errors`` and ``operations_quantity``. The engine asks the
+        resource to turn the operations into a quantity, so it never holds a
+        provider's billing rule.
+        """
+        return False
+
+    def operations_errors(self, metric_name: str, operations: list) -> list[str]:
+        """Why ``operations`` cannot be a quantity of ``metric_name``.
+
+        Each message names the operation at fault, by its ``name`` or its
+        position. The caller adds the node and the metric. Empty when the
+        operations are valid. Only called when ``supports_operations``.
+        """
+        return []
+
+    def operations_quantity(
+            self, metric_name: str, operations: list,
+            evaluate: Callable[[object, str], float]) -> OperationsQuantity:
+        """The quantity ``operations`` add up to, per invocation.
+
+        ``evaluate(value, what)`` resolves a number, a parameter name or
+        arithmetic over parameters, and raises ``ValueError`` when ``value`` is
+        not a finite count of at least 0. Only called when
+        ``supports_operations``, on operations ``operations_errors`` accepted.
+        """
+        raise ValueError(f"{type(self).__name__} does not state operations")
 
     @classmethod
     @abstractmethod
