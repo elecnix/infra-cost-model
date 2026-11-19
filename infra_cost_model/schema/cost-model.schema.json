@@ -160,6 +160,36 @@
       }
     },
 
+    "usageOperation": {
+      "type": "object",
+      "required": ["kind", "itemBytes", "count"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "A label for reports and error messages."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The operation. A DynamoDB table accepts GetItem, BatchGetItem, Query, Scan and TransactGetItems on `readRequests`, and PutItem, UpdateItem, DeleteItem, BatchWriteItem and TransactWriteItems on `writeRequests`. The resource reports an unknown kind."
+        },
+        "consistency": {
+          "type": "string",
+          "description": "How a read is consistent: eventual (the default), strong or transactional. A write is standard, or transactional. TransactGetItems is always transactional. The resource reports an unknown value."
+        },
+        "itemBytes": {
+          "type": ["number", "string"],
+          "pattern": "^[A-Za-z0-9_.() +*/-]+$",
+          "description": "The bytes one call reads or writes: the item for GetItem, PutItem, UpdateItem and DeleteItem, each item for the batch and transaction kinds, and the total one call reads for Query and Scan. A number, a parameter name, or arithmetic over parameters, as `value` accepts."
+        },
+        "count": {
+          "type": ["number", "string"],
+          "pattern": "^[A-Za-z0-9_.() +*/-]+$",
+          "description": "How many times the operation runs per invocation, or per month when the metric is fixed. For a batch or a transaction, the number of items. A number, a parameter name, or arithmetic over parameters, as `value` accepts."
+        }
+      },
+      "additionalProperties": false
+    },
+
     "usageMetric": {
       "type": "object",
       "required": ["unit"],
@@ -176,6 +206,11 @@
           "minimum": 0,
           "pattern": "^[A-Za-z0-9_.() +*/-]+$",
           "description": "Per-invocation multiplier, or arithmetic over the workflow's parameters. A string is read as a number, one parameter name, or arithmetic over parameter names and numbers with + - * / and parentheses, so 'customers * 40' states a per-customer quantity (DP#4, Issue #448). The pattern rejects a character the grammar never uses; it cannot reject a call or an exponent, which two admitted characters spell, so the engine refuses those and names the operator. Multiplied by the derived invocation count to compute total consumption. When this metric is fixed (or flatOverride is true on the containing node), this value is used directly as a flat monthly total instead."
+        },
+        "operations": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/usageOperation"},
+          "description": "Operations the metric counts, in place of a stated `value`. A metric states exactly one of `value` and `operations`. The node's resource turns the operations into the metric's quantity by the provider's billing rule, and from there the metric behaves as if `value` had been that number. Only a DynamoDB table node accepts it: its `readRequests` metric states read kinds and its `writeRequests` metric write kinds, and the quantity is the request units."
         },
         "fixed": {
           "type": "boolean",

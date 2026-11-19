@@ -34,13 +34,34 @@ def _round(value: float) -> float:
 
 def _metric_entry(record) -> dict:
     """One priced metric, rounded like the rest of the snapshot."""
-    return {
+    entry = {
         "quantity": _round(record.quantity),
         "unitPrice": _round(_unit_price(record)),
         "cost": _round(record.cost),
         "fixed": record.fixed,
         "priceSource": record.price_source,
     }
+    # A metric that states operations shows what each one billed per call, so
+    # a reviewer sees where its quantity came from. Other metrics add no key,
+    # so a snapshot of a model without operations does not change.
+    if record.operations:
+        entry["operations"] = [_operation_entry(o) for o in record.operations]
+    return entry
+
+
+def _operation_entry(operation) -> dict:
+    """One stated operation: its units per call and its units per invocation."""
+    entry = {
+        "kind": operation.kind,
+        "consistency": operation.consistency,
+        "itemBytes": _round(operation.item_bytes),
+        "count": _round(operation.count),
+        "unitsPerCall": _round(operation.units_per_call),
+        "units": _round(operation.units),
+    }
+    if operation.name is not None:
+        entry["name"] = operation.name
+    return entry
 
 
 def _unit_price(record) -> float:

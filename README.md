@@ -93,7 +93,68 @@ nodes:
 Here `MAU` is 1,000 monthly active users for 25 customers, and `SSO-Connection` is one SSO connection per customer. Because the expressions name `customers`, `what-if --param customers` and a sensitivity run over it move both metrics without a pre-processing step that multiplies values and strips a marker before the engine sees the model.
 
 An unknown parameter name, an operator outside `+ - * /`, and a division by zero each raise an error naming the expression. The expression is arithmetic, never code: a call or a conditional in a `value` is refused. Frequency and edge `rate` still take one number or one parameter name.
-=======
+
+## DynamoDB operations
+
+A DynamoDB table can state the operations it serves, and the engine counts the request units. Without this, the author applies DynamoDB's billing rule by hand. A read bills per 4 KB block and by consistency, and a write bills per 1 KB block and doubles in a transaction.
+
+A usage metric states `operations` in place of `value`. Engine 0.4.0 added it, so a model that states operations should set `requiresEngine: ">=0.4.0"`. The metric's quantity is the sum over its operations of `count` times the units of one call. From there the metric behaves as if `value` had been that number. Frequency scaling, `fixed: true`, catalog and `pricingRates` pricing, `billingLines`, what-if and sensitivity runs all work unchanged.
+
+```yaml
+nodes:
+  aws_dynamodb_table.orders:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.orders
+    provider: aws
+    service: AmazonDynamoDB
+    region: us-east-1
+    usageMetrics:
+      readRequests:
+        unit: ReadRequestUnits
+        operations:
+          - { name: get-order,   kind: GetItem, itemBytes: 900, count: 1 }
+          - { name: list-orders, kind: Query, consistency: strong, itemBytes: "orders_per_customer * 900", count: 0.2 }
+      writeRequests:
+        unit: WriteRequestUnits
+        operations:
+          - { name: put-order, kind: PutItem, itemBytes: 900, count: "writes_per_request" }
+          - { name: settle,    kind: TransactWriteItems, itemBytes: 300, count: 3 }
+```
+
+`examples/dynamodb-operations.yaml` holds the full model. With `orders_per_customer` at 10 and `writes_per_request` at 2, each invocation reads 1.1 units and writes 8.
+
+Each operation has these fields:
+
+- `name` is optional. It labels the operation in reports and error messages.
+- `kind` is the DynamoDB call.
+- `consistency` is optional. A read is `eventual` (the default), `strong` or `transactional`. A write is standard, or `transactional`.
+- `itemBytes` is the size one call reads or writes. It is the item for `GetItem`, `PutItem`, `UpdateItem` and `DeleteItem`. It is each item for `BatchGetItem`, `BatchWriteItem`, `TransactGetItems` and `TransactWriteItems`. It is the total bytes one call reads for `Query` and `Scan`.
+- `count` is how many times the operation runs per invocation, or per month when the metric is `fixed`. For a batch or a transaction, it is the number of items.
+
+`itemBytes` and `count` accept everything `value` accepts, so each is a number, a parameter name or arithmetic over parameters. A parameter in `itemBytes` moves the cost in steps, because the units round up to whole blocks.
+
+The units of one call follow the on-demand rule in the Amazon DynamoDB Developer Guide pages "DynamoDB on-demand capacity mode" and "DynamoDB read and write operations". A size under 1 byte counts as 1 byte, because a read that misses still bills the minimum.
+
+| Family | Kinds | Block | Factor |
+| --- | --- | --- | --- |
+| Read | `GetItem`, `BatchGetItem`, `Query`, `Scan` | 4 KB | 0.5 eventual, 1 strong, 2 transactional |
+| Read | `TransactGetItems` | 4 KB | 2, always transactional |
+| Write | `PutItem`, `UpdateItem`, `DeleteItem`, `BatchWriteItem` | 1 KB | 1, or 2 when `transactional` |
+| Write | `TransactWriteItems` | 1 KB | 2 |
+
+Units for one call are the block count, rounded up, times the factor. A 900-byte eventual `GetItem` is 0.5 units. A 4,097-byte strong `GetItem` is 2 units. A 300-byte `TransactWriteItems` is 2 units.
+
+`validate` and `compute` refuse these mistakes. Each message includes the node and the metric:
+
+- A metric states both `value` and `operations`, or neither.
+- An operation has an unknown `kind` or `consistency`, a negative `count` or `itemBytes`, or a missing field.
+- `operations` is an empty list.
+- A metric mixes read and write kinds, or states kinds that belong to the other metric. `readRequests` takes read kinds and `writeRequests` takes write kinds.
+- `TransactGetItems` states a consistency other than `transactional`, or a write states `eventual` or `strong`.
+- A node that is not a DynamoDB table states `operations`.
+
+A message that concerns one operation gives its `name`, or its position when it has none. `compute --format json` lists the units of each operation under the metric's `operations` key.
+
 ## Bill lines
 
 A model prices a node from a catalog service code, and the bill names the

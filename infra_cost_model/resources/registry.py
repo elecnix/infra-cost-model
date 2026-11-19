@@ -539,6 +539,48 @@ def vocabulary_warnings(model: dict) -> list[str]:
     return messages
 
 
+def operation_metric_errors(address: str, node: dict, metric_name: str,
+                            metric) -> list[str]:
+    """Why one usage metric's ``value`` and ``operations`` cannot stand.
+
+    A metric states exactly one of ``value`` and ``operations``. Stating
+    ``operations`` hands the quantity to the node's resource, which checks the
+    operations by its own billing rule. Every message names the node and the
+    metric. A metric with neither is the silent zero that ``silent_zero_error``
+    reports, so it is not repeated here.
+    """
+    if not isinstance(metric, dict) or "operations" not in metric:
+        return []
+    where = f"Node '{address}', usage metric '{metric_name}'"
+    if "value" in metric:
+        return [f"{where}: states both 'value' and 'operations'. State one: "
+                f"'value' is the quantity itself, and 'operations' lets the "
+                f"resource count it."]
+    resource_address = node.get("resourceAddress") or address
+    handler = ResourceRegistry.from_address(resource_address) \
+        if isinstance(resource_address, str) else None
+    if handler is None or not handler().supports_operations:
+        return [f"{where}: 'operations' is accepted only on a DynamoDB table "
+                f"node, and this node is not one. State 'value' instead."]
+    return [f"{where}, {message}" for message in
+            handler().operations_errors(metric_name, metric["operations"])]
+
+
+def operations_errors(model: dict) -> list[str]:
+    """``operation_metric_errors`` for every usage metric of a model."""
+    nodes = model.get("nodes") if isinstance(model, dict) else None
+    if not isinstance(nodes, dict):
+        return []
+    errors: list[str] = []
+    for address, node in nodes.items():
+        metrics = node.get("usageMetrics") if isinstance(node, dict) else None
+        if not isinstance(metrics, dict):
+            continue
+        for metric_name, metric in metrics.items():
+            errors += operation_metric_errors(address, node, metric_name, metric)
+    return errors
+
+
 def known_node_types() -> list[str]:
     """Return list of known node types."""
     return ["compute", "storage", "routing", "external"]

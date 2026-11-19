@@ -88,6 +88,24 @@ class NodeUsage:
         self.metrics[name] = metric
         return self
 
+    def with_operations(self, name: str, operations: list[dict],
+                        unit: Optional[str] = None,
+                        edge_type: Optional[str] = None) -> "NodeUsage":
+        """Add a usage metric that states operations in place of a value.
+
+        Each operation is a mapping with ``kind``, ``itemBytes`` and
+        ``count``, and optionally ``name`` and ``consistency``. The node's
+        resource counts them into the metric's quantity, so only a resource
+        that bills by operations, such as a DynamoDB table, accepts them.
+        """
+        metric: dict = {"operations": operations}
+        if unit:
+            metric["unit"] = unit
+        if edge_type:
+            metric["edgeType"] = edge_type
+        self.metrics[name] = metric
+        return self
+
 
 def _refuse_non_finite(value, path: str) -> None:
     """Raise ValueError at the first NaN or infinity in a parsed model.

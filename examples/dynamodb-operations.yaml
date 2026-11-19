@@ -1,0 +1,46 @@
+# Example: DynamoDB operations
+# Demonstrates: a table whose usage metrics state operations instead of
+# request units. The engine applies DynamoDB's billing rule: a read bills per
+# 4 KB block and by consistency, a write per 1 KB block and doubles in a
+# transaction.
+#
+# Per request, the table serves one eventually consistent GetItem of 900
+# bytes (0.5 read units) and, one request in five, a strongly consistent
+# Query that reads 9,000 bytes (3 read units). It stores one 900-byte order
+# (1 write unit each) and settles a transaction of three 300-byte items
+# (2 write units each).
+
+version: "1.0"
+# Engines before 0.4.0 do not read `operations`, so the model refuses them.
+requiresEngine: ">=0.4.0"
+
+workflow:
+  name: orders-table
+  entry: aws_dynamodb_table.orders
+  frequency:
+    unit: perMinute
+    value: 1000
+  parameters:
+    orders_per_customer: 10
+    writes_per_request: 2
+
+nodes:
+  aws_dynamodb_table.orders:
+    nodeType: storage
+    resourceAddress: aws_dynamodb_table.orders
+    provider: aws
+    service: AmazonDynamoDB
+    region: us-east-1
+    usageMetrics:
+      readRequests:
+        unit: ReadRequestUnits
+        operations:
+          - { name: get-order,   kind: GetItem, itemBytes: 900, count: 1 }
+          - { name: list-orders, kind: Query, consistency: strong, itemBytes: "orders_per_customer * 900", count: 0.2 }
+      writeRequests:
+        unit: WriteRequestUnits
+        operations:
+          - { name: put-order, kind: PutItem, itemBytes: 900, count: "writes_per_request" }
+          - { name: settle,    kind: TransactWriteItems, itemBytes: 300, count: 3 }
+
+edges: []
